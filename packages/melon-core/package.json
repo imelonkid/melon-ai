@@ -1,5 +1,5 @@
 {
-  "name": "melon-core",
+  "name": "@melon-ai/core",
   "version": "0.0.1",
   "description": "Melon AI 内核契约：类型与端口定义。零运行时依赖，所有模块的依赖倒置中心。",
   "type": "module",
@@ -13,10 +13,15 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "test": "node --test"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
 }

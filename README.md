@@ -4,13 +4,13 @@
 通过依赖倒置接入任意宿主应用。
 
 ```
-melon-core        契约层：类型与端口，零运行时依赖
-melon-task        任务状态机（纯 reducer）
-melon-policy      准入矩阵与授权
-melon-tools       工具调用管线
-melon-runtime     调度与编排
-melon-store-*     存储适配器（一期 SQLite）
-melon-agent       组装入口，宿主唯一需要 import 的包
+@melon-ai/core        契约层：类型与端口，零运行时依赖
+@melon-ai/task        任务状态机（纯 reducer）
+@melon-ai/policy      准入矩阵与授权
+@melon-ai/tools       工具调用管线
+@melon-ai/runtime     调度与编排
+@melon-ai/store-*     存储适配器（一期 SQLite）
+@melon-ai/agent       组装入口，宿主唯一需要 import 的包
 ```
 
 ## 文档
@@ -29,4 +29,4 @@ pnpm lint:deps      # 校验分层依赖方向没被破坏
 
 ## 状态
 
-早期开发中。`melon-core` 契约层已定型，其余模块建设中，详见架构文档 §10。
+早期开发中。`@melon-ai/core` 契约层已定型，其余模块建设中，详见架构文档 §10。

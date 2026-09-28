@@ -10,7 +10,7 @@ module.exports = {
   forbidden: [
     {
       name: 'core-is-pure',
-      comment: 'melon-core 是倒置中心，不能依赖任何其他包',
+      comment: '@melon-ai/core 是倒置中心，不能依赖任何其他包',
       severity: 'error',
       from: { path: '^packages/melon-core' },
       to: { path: '^packages/(?!melon-core)' },
@@ -24,7 +24,7 @@ module.exports = {
     },
     {
       name: 'infra-only-core',
-      comment: '适配器只依赖 melon-core，不依赖领域层',
+      comment: '适配器只依赖 @melon-ai/core，不依赖领域层',
       severity: 'error',
       from: { path: ADAPTER },
       to: { path: '^packages/(?!melon-core)' },

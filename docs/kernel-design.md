@@ -9,11 +9,14 @@
 ## 0. 前置
 
 本文假设你已读过 [architecture.md](./architecture.md) 的 §2 设计原则与 §5 假设。
-下面出现的「端口」一律指 `melon-core/src/ports/` 下的接口定义。
+下面出现的「端口」一律指 `@melon-ai/core/src/ports/` 下的接口定义。
 
 ---
 
 ## 1. 全局视图
+
+> 图中省略 `@melon-ai/` 前缀。
+
 
 ```
 ┌──────────────────────── Host Application（宿主，框架不认识它）────────────────┐
