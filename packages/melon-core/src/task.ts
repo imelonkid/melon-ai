@@ -76,6 +76,12 @@ export interface Task {
    * 事件通过 taskId 关联即可。只有代表「一次工作」的事件带 spanId。
    */
   readonly trace: TraceContext;
+  /**
+   * 本 episode 消费过不可信的扩展工具输出。
+   * 一旦置位便不再清除（污点只会扩散，不会自愈），直到 episode 关闭。
+   * 见 policy.ts `TAINT_FORCES_ASK`。
+   */
+  readonly tainted: boolean;
   /** 当前挂起的审批（state=AWAITING_APPROVAL 时非空）。 */
   readonly pendingCall?: ToolCall;
   /** 正在等待的子任务。 */

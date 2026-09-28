@@ -22,16 +22,38 @@ export type SlotName = (typeof SLOT_ORDER)[number];
 /** 各槽位占模型窗口的比例。用比例而非绝对 token 数，以适配不同窗口的模型。 */
 export type BudgetPlan = Readonly<Record<SlotName, number>>;
 
+/**
+ * §2.7 之后 L1 检索改由工具发起，`memories` 槽从 0.10 缩到 0.05 ——
+ * 只留一个**预召回种子**，腾出的预算给最近轮次。
+ *
+ * 种子槽存在的唯一理由是冷启动：第一轮模型对用户一无所知，
+ * 它得先「猜到」值得召回一次，否则 Agent 会显得失忆
+ * （用户说「订个会议室」，模型想不起「这人一直要三楼那间」）。
+ *
+ * 想要严格 tool-only 的宿主可以把它配成 0。
+ */
 export const DEFAULT_BUDGET_PLAN: BudgetPlan = {
   charter: 0.03,
   persona: 0.02,
   toolSchemas: 0.15,
-  memories: 0.10,
+  memories: 0.05,
   summaries: 0.15,
-  recent: 0.30,
+  recent: 0.35,
   volatile: 0.15,
   // 余下 0.10 留给输出
 };
+
+/**
+ * 不可能经由工具获取、必须注入的上下文。
+ *
+ * §2.7 的约束对**模型自主发起的访问**成立，但这几项在物理上做不到：
+ * - `charter` / `persona`：模型得先知道自己是谁才能推理，不可能先调工具去问
+ * - `recent`：如果每轮都要先 `history_read` 才知道刚说了什么，就荒谬了
+ *
+ * 注入的部分**仍须走同一套审计**，只是 `AuditRecord.actor.kind = 'system'`
+ * 而非 `'agent'` —— 原则的目标是「无旁路」，不是「一切皆工具调用」。
+ */
+export const MUST_INJECT: readonly SlotName[] = ['charter', 'persona', 'recent', 'volatile'];
 
 export interface Slot {
   readonly name: SlotName;
