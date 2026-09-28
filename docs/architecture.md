@@ -136,7 +136,64 @@ resource: { kind, ref, contentHash }
 | `Logger` | 严格。字段只接受标量与引用，**禁止 dump 对象** |
 | `EventLog` | 保留**决策所需的最小内容**（thought / summary / answer），大块一律 `artifactRef` |
 
-### 2.5 宿主无关
+### 2.5 删除：按动因分三种，不做全局软删/硬删二选一
+
+**默认不物理删。** 历史是资产：记忆为什么变成现在这样、Agent 曾经做过什么、
+某个决定的依据是什么 —— 这些问题在物理删之后就永远答不出来了。
+
+但**不能全局一刀切**，因为它和 §2.4 在一处直接冲突。§2.4 最强的理由是：
+
+> append-only 的日志无法重写，payload 一旦内联就永远删不掉；引用式则只需删主库那一行。
+
+**这条理由的前提是主库那一行真的被物理删掉。** 若 payload 也软删，
+「忘掉关于 X 的一切」就什么都没忘 —— 数据还在，只是多了个标志位，
+`ResourceTombstone.reason = 'privacy-optout'` 会变成谎话。
+
+所以按**删除的动因**分，而不是按软/硬分：
+
+| 动因 | 做法 | 理由 |
+|---|---|---|
+| **supersede** 纠正或替代（记忆冲突、Agent 改配置） | 版本链 | 要能回答「你为什么以为我喜欢 X」并撤销 |
+| **retention** 运维清理（保留期到期、回收空间） | 归档后物理删 | 留着没价值，只有成本和风险 |
+| **privacy** 用户要求遗忘 / 隐私撤回 | **物理删负载 + 留墓碑** | **软删在这里是合规漏洞，不是保守做法** |
+
+默认软删，`privacy` 是唯一例外 —— 也是不能让的例外。
+
+#### 实现约束一：不要 `deleted_at` 标志位
+
+标志位要求**每个读取方都记得加 `WHERE deleted_at IS NULL`**，漏一次就泄露已删数据 ——
+这是软删最经典的 bug。且唯一约束会破：老的软删行仍占着 `unique(subject)`。
+
+**优先版本链（当前指针 + 历史）或归档表**，让默认查询**天然正确**，
+而不是依赖每个人都记得过滤。L1 记忆已经是版本链（`supersedes`），其余照此办理。
+
+#### 实现约束二：派生数据豁免，应当物理删
+
+向量索引与 FTS 行是派生的、可重建的。一条记忆被 supersede 后，
+其向量条目**必须物理移除** —— 否则会继续被召回、白占上下文预算、拉低检索质量。
+这类数据没有历史价值，留着纯粹有害。
+
+#### 中期方案：加密删除（crypto-shredding）
+
+若将来物理删变得困难（备份删不掉、存储 append-only、有副本），标准解法是
+每个负载用独立密钥加密、密钥单独存放，「删除」= 销毁密钥。
+密文可永久留在 append-only 存储中且不可恢复。
+
+这同时拿到软删的运维简单性与硬删的隐私保证，**并解决备份删不掉的问题** ——
+物理删不会删掉备份中的副本，这是「真正删除」承诺里最易漏的一块。
+
+一期单机 SQLite 不做。但 `ResourceResolver` + 墓碑的抽象**已能容纳它**，
+将来引入不需改接口。
+
+#### 代价（必须认）
+
+1. **无界增长**。桌面端 SQLite 只会变大，向量索引每行成本远高于关系数据；
+   压缩后仍留原文、记忆只增不减 —— 重度用户的库可能到 GB 级。
+   必须有归档层、明确保留期、以及 VACUUM 的说法。
+2. **泄露面变大**。软删意味着一份泄露的 db 文件里包含用户曾问过 Agent 的一切。
+   对本地持有邮件与日程内容的桌面应用，这是实质的风险画像变化。
+
+### 2.6 宿主无关
 
 框架不 import 任何宿主环境的东西（没有 `electron`、没有 `fs` 的硬依赖、没有全局单例）。时间、随机数、日志都是端口（`Clock` / `IdGen` / `Logger`），因为状态机的可测性依赖于此。
 
@@ -347,7 +404,7 @@ L1 记忆的写入与召回、技能注册与注销、策略变更、以及**模
 | 构建 | **tsup**（esbuild）输出 ESM + CJS 双格式 | Jolly 的 Electron 主进程目前是 CJS；双格式省掉未来的迁移 | 多一份产物 |
 | 模块规范 | `NodeNext`，包内一律 `.js` 后缀导入 | 与 Node 原生解析一致，避免打包器魔法 | 写导入路径要带 `.js` |
 | 测试 | `node:test` + `melon-testkit` | 零依赖；状态机是纯函数，不需要重型框架 | 断言库比 vitest 朴素 |
-| 存储（一期） | **SQLite**（`better-sqlite3`）+ `sqlite-vec` | 单文件、同步 API（简化事务）、向量和关系数据同库同事务 | 并发写受限；原生模块要按平台编译 |
+| 存储（一期） | **SQLite**（`better-sqlite3`）+ `sqlite-vec` | 单文件、同步 API（简化事务）、向量和关系数据同库同事务 | 并发写受限；原生模块要按平台编译；**叠加 §2.5 的默认不物理删，库只会变大 —— 归档层与 VACUUM 是 P1 必做项，不是优化** |
 | 参数校验 | `ajv`，但**只在 melon-tools 内部** | 契约层不绑定校验器，将来换 zod/typebox 只动一个包 | 多一层间接 |
 | 依赖方向 | `dependency-cruiser` | 见 §4.3 | CI 多跑一步 |
 
@@ -469,6 +526,10 @@ await agent.resolveApproval(task.id, callId, 'allow');
       `ResourceTombstone`、批量 `ResourceResolver`、`RetentionPolicy` 保留期约束；
       `Logger`/`ToolContext.log` 的字段类型收紧为 `LogField`，
       已用反例验证 `log('x', { email })` 会编译失败（TS2322）
+- [x] 「删除按动因分三种」原则落地（§2.5）：
+      `DeletionMotive`（supersede / retention / privacy）、
+      `Purger`（带 dryRun，privacy 不可逆）、`Archive`（retention 先归档，privacy 不经过）；
+      `MemoryStore.forgetByTask` 明确为 privacy 路径的物理删除
 - [ ] `melon-task` 状态机 reducer + 迁移表
 - [ ] `melon-policy` / `melon-tools` / `melon-runtime`
 - [ ] `melon-store-sqlite` / `melon-testkit` / `melon-agent`

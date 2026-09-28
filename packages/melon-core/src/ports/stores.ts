@@ -4,6 +4,7 @@ import type {
 import type { Task, TaskEvent, TaskState } from '../task.js';
 import type { Entry, Episode, EpisodeSummary, Memory, MemoryQuery } from '../memory.js';
 import type { Grant } from '../policy.js';
+import type { Archive, Purger } from '../deletion.js';
 
 /**
  * ─── 依赖倒置的核心 ───
@@ -42,7 +43,13 @@ export interface MemoryStore {
   supersede(oldId: MemoryId, newId: MemoryId): Promise<void>;
   /** 命中后更新 lastUsedAt / useCount。 */
   touch(ids: readonly MemoryId[], at: number): Promise<void>;
-  /** 按来源任务删除 —— 支撑「忘掉关于 X 的一切」。 */
+  /**
+   * 按来源任务删除 —— 支撑「忘掉关于 X 的一切」。
+   *
+   * 这是 `DeletionMotive = 'privacy'` 路径，**是物理删除，不是软删**，
+   * 且必须一并移除对应的向量与 FTS 条目（见 docs/architecture.md §2.5）。
+   * 其余场景（记忆冲突）走 `supersede`，不走这里。
+   */
   forgetByTask(taskId: TaskId): Promise<number>;
 }
 
@@ -93,6 +100,8 @@ export interface StoreBundle {
   readonly artifacts: ArtifactStore;
   readonly grants: GrantStore;
   readonly vectors: VectorIndex;
+  readonly purger: Purger;
+  readonly archive: Archive;
   /** 跨多个 store 的原子写。单机 SQLite 下就是一个事务。 */
   transaction<T>(fn: () => Promise<T>): Promise<T>;
   close(): Promise<void>;

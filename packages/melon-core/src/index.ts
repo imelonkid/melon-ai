@@ -7,6 +7,7 @@ export * from './model.js';
 export * from './task.js';
 export * from './policy.js';
 export * from './audit.js';
+export * from './deletion.js';
 export * from './prompt.js';
 export * from './trigger.js';
 export * from './context.js';
