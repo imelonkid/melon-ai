@@ -24,9 +24,19 @@ export interface Logger {
   child(fields: Readonly<Record<string, LogField>>): Logger;
 }
 
+/**
+ * 哈希。独立成端口而不是直接用 `node:crypto`，是为了守住 §2.8 宿主无关 ——
+ * 浏览器里可以换纯 JS 实现。审计哈希链依赖它的抗碰撞性，不能用弱哈希。
+ */
+export interface Hasher {
+  /** 返回十六进制摘要。 */
+  sha256(input: string): string;
+}
+
 export interface Platform {
   readonly clock: Clock;
   readonly ids: IdGen;
   readonly logger: Logger;
   readonly tracer: Tracer;
+  readonly hasher: Hasher;
 }

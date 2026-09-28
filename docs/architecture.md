@@ -700,8 +700,34 @@ await agent.resolveApproval(task.id, callId, 'allow');
 - [x] `@melon-ai/testkit`：内存 TaskStore/EventLog、FakeClock、SeqIdGen、
       CapturingLogger、RecordingTracer、ScriptedModel、FakeEmbedder、
       `drive()` / `settle()` 驱动器，8 个测试
-- [ ] `@melon-ai/policy` / `@melon-ai/tools` / `@melon-ai/skills-builtin`
-- [ ] `@melon-ai/audit` / `@melon-ai/runtime` / `@melon-ai/store-sqlite` / `@melon-ai/agent`
+- [x] `@melon-ai/policy`：四道闸（授权→配额→污点→授权匹配/矩阵）、scope 计算，19 个测试
+- [x] `@melon-ai/audit`：哈希链、维度脱敏、保留期校验、跨任务查询，19 个测试
+- [ ] `@melon-ai/tools` / `@melon-ai/skills-builtin`
+- [ ] `@melon-ai/runtime` / `@melon-ai/store-sqlite` / `@melon-ai/agent`
+
+#### policy / audit 阶段的契约修正
+
+7. **`Grant` 的粒度键不该是哈希。** 原设计是 `argsShapeHash`，实现时发现哈希有三个问题：
+   用户无法在设置页复核「我都始终允许过什么」；审计里看不懂；碰撞会授予意外权限。
+   改为**可读的规范化 `scope` 字符串**（如 `to=产品组`）。
+   全量参数的哈希（`ToolCall.argsHash`）是另一回事，只用于循环检测与幂等，不用于授权。
+8. **`ToolDescriptor.scopeKeys`**：没有这个声明，「始终允许」只有两种坏选择 ——
+   按结构匹配太宽（允许发给任何人），按全量参数匹配则永不再命中（只允许发这一封）。
+   由工具作者声明哪些参数承载授权范围。
+9. **`AdmissionOutcome.basis`**：依据在判定那一刻产生，所以由 policy 返回，
+   而不是让 audit 事后去猜。
+10. **`Hasher` 端口**：审计哈希链需要抗碰撞哈希，但领域层不能直接依赖 `node:crypto`
+    （§2.8 宿主无关）。
+11. **`MAX_DIMENSION_LENGTH`**：类型系统挡住了「把对象塞进审计」，
+    挡不住「把邮件正文塞进一个字符串维度」。超限抛错而非截断 ——
+    静默截断会让作者以为自己记下了内容。
+12. **准入四道闸的顺序是有意义的**，写进了 `decide()` 的注释：
+    授权早于一切（未授权的工具不该走到「问用户」，那等于把授权决定推给用户）；
+    配额早于矩阵（矩阵说 ask 但配额已爆时，不该先问用户再失败）；
+    **污点早于授权匹配**（攻击路径正是「污染 → 模型写记忆 → 已有 always 授权自动放行」，
+    污点必须能覆盖 grant）。
+13. `tsx --test` **不做类型检查**，所以测试全绿也可能有类型错误 ——
+    根 `typecheck` 把 `test/**/*` 纳入 include，靠它兜住。
 
 #### 实现阶段发现的契约问题（已修）
 

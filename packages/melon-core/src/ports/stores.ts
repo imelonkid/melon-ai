@@ -85,9 +85,11 @@ export interface ArtifactStore {
 }
 
 export interface GrantStore {
-  find(agentId: AgentId, toolId: string, argsShapeHash: string): Promise<Grant | null>;
+  find(agentId: AgentId, toolId: string, scope: string): Promise<Grant | null>;
   put(grant: Grant): Promise<void>;
-  revoke(agentId: AgentId, toolId: string, argsShapeHash?: string): Promise<void>;
+  /** 不传 scope 则撤销该工具的全部授权。 */
+  revoke(agentId: AgentId, toolId: string, scope?: string): Promise<void>;
+  /** 供设置页展示「我都始终允许过什么」—— scope 可读是这个功能的前提。 */
   listByAgent(agentId: AgentId): Promise<readonly Grant[]>;
 }
 

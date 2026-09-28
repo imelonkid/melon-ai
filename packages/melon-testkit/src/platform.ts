@@ -1,8 +1,9 @@
 import type {
-  Clock, IdGen, LogField, LogLevel, Logger, Platform, Span, SpanKind, SpanStatus,
+  Clock, Hasher, IdGen, LogField, LogLevel, Logger, Platform, Span, SpanKind, SpanStatus,
   TraceContext, TraceId, Tracer,
 } from '@melon-ai/core';
 import { asSpanId, asTraceId } from '@melon-ai/core';
+import { NodeHasher } from './audit.js';
 
 /** 可控时钟。测试里时间必须是输入，不是环境。 */
 export class FakeClock implements Clock {
@@ -82,8 +83,13 @@ export class RecordingTracer implements Tracer {
 }
 
 export function fakePlatform(clock = new FakeClock()): Platform & {
-  clock: FakeClock; ids: SeqIdGen; logger: CapturingLogger; tracer: RecordingTracer;
+  clock: FakeClock; ids: SeqIdGen; logger: CapturingLogger; tracer: RecordingTracer; hasher: Hasher;
 } {
   const ids = new SeqIdGen();
-  return { clock, ids, logger: new CapturingLogger(), tracer: new RecordingTracer(ids) };
+  return {
+    clock, ids,
+    logger: new CapturingLogger(),
+    tracer: new RecordingTracer(ids),
+    hasher: new NodeHasher(),
+  };
 }

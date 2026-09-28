@@ -28,13 +28,22 @@ export const ADMISSION_MATRIX: Readonly<Record<PolicyMode, Readonly<Record<RiskC
 /**
  * 「始终允许」的授权记录。
  *
- * 粒度是 **(agentId, toolId, argsShapeHash)**，不是 (agentId, toolId)。
+ * 粒度是 **(agentId, toolId, scope)**，不是 (agentId, toolId)。
  * 「始终允许周报助手给产品组发邮件」不应该等于「允许它给任何人发邮件」。
+ *
+ * `scope` 不用哈希，用**可读的规范化字符串**（如 `to=产品组`）。三个理由：
+ * 1. 用户要能在设置页复核「我都始终允许过什么」—— 一串哈希对此毫无用处；
+ * 2. 审计记录里 `scope` 直接可读，不必解引用；
+ * 3. 哈希碰撞会授予意料之外的权限，而这里根本不需要承担这个风险。
+ *
+ * 全量参数的哈希（`ToolCall.argsHash`）是另一回事，用于循环检测与幂等，
+ * 不用于授权。
  */
 export interface Grant {
   readonly agentId: AgentId;
   readonly toolId: ToolId;
-  readonly argsShapeHash: string;
+  /** 规范化的授权范围。`*` 表示不限范围（仅用于本身无范围概念的工具）。 */
+  readonly scope: string;
   readonly grantedAt: number;
   readonly expiresAt?: number;
 }
@@ -51,7 +60,7 @@ export interface AdmissionInput {
   readonly agentId: AgentId;
   readonly toolId: ToolId;
   readonly risk: RiskClass;
-  readonly argsShapeHash: string;
+  readonly scope: string;
   readonly mode: PolicyMode;
   /**
    * 本 episode 是否消费过**不可信的扩展工具输出**。
@@ -77,4 +86,10 @@ export interface AdmissionOutcome {
   /** 拒绝或询问的原因，会进事件日志；ask 时也作为给用户的说明。 */
   readonly reason: string;
   readonly matchedGrant?: Grant;
+  /**
+   * 判定依据，原样进 `AuditRecord.basis`。
+   * §4.5 指出「授权决策没记依据」是 EventLog 的窟窿 —— 依据在判定那一刻产生，
+   * 所以由 policy 返回，而不是让 audit 事后去猜。
+   */
+  readonly basis: Readonly<Record<string, string | number | boolean>>;
 }

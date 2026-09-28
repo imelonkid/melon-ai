@@ -107,6 +107,15 @@ export interface AuditRecord {
 /** 写入时不需要调用方提供 seq / prevHash / hash —— 由 melon-audit 补齐。 */
 export type AuditDraft = Omit<AuditRecord, 'seq' | 'prevHash' | 'hash'>;
 
+/**
+ * 单个 dimension 值的长度上限。
+ *
+ * 类型系统已经挡住了「把对象塞进审计」，但挡不住「把邮件正文塞进一个字符串维度」。
+ * 长字符串正是内容泄漏的特征 —— 维度应该只放计数、类型、枚举。
+ * 超限时 recorder 抛错而不是截断：静默截断会让人以为自己记下了内容。
+ */
+export const MAX_DIMENSION_LENGTH = 64;
+
 export interface AuditQuery {
   readonly actor?: AuditActor;
   readonly actions?: readonly AuditAction[];

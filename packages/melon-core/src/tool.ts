@@ -35,6 +35,18 @@ export interface ToolDescriptor {
   readonly risk: RiskClass;
   /** 幂等工具可安全重试；非幂等工具由准入层分配 idempotencyKey。 */
   readonly idempotent: boolean;
+  /**
+   * 承载授权范围的参数名。
+   *
+   * 没有这个声明，「始终允许」只有两种坏选择：
+   * 按结构匹配 → 「允许发邮件给任何人」，太宽；
+   * 按全量参数匹配 → 「允许发这一封」，永不再命中，没用。
+   *
+   * 例：`mail.send` 声明 `['to']`，则授权覆盖「发给产品组」但不限主题与正文。
+   * 不声明则 scope 为 `*`，意味着该工具的「始终允许」不区分参数 ——
+   * 只适用于本身无范围概念的工具（如 `artifact_read`）。
+   */
+  readonly scopeKeys?: readonly string[];
   readonly costHint?: { readonly latencyMs: number; readonly bytesOut: number };
 }
 
