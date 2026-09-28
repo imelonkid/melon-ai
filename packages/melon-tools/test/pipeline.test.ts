@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Task, ToolDescriptor, ToolHandler, ToolResult } from '@melon-ai/core';
+import type { PolicyMode, Task, ToolCall, ToolDescriptor, ToolHandler } from '@melon-ai/core';
 import { BUILTIN_TOOLS, ToolError, asSkillId, asToolId } from '@melon-ai/core';
 import {
   ChainedRecorder, DEFAULT_RETENTION, assertRetention,
@@ -65,11 +65,27 @@ async function harness(opts: {
 const ARGS = { to: '产品组', subject: '周报' };
 const call = () => ({ ...toolCall('mail.send', 'h1'), args: ARGS });
 
+/**
+ * 把两段串起来，模拟运行时的驱动方式。
+ * 返回形状刻意沿用旧的 executed / needs-approval，让测试意图保持可读。
+ */
+async function invokeAll(
+  h: Awaited<ReturnType<typeof harness>>,
+  t: Task,
+  c: ToolCall,
+  mode: PolicyMode,
+) {
+  const a = await h.pipeline.admit(t, c, mode);
+  if (a.kind === 'ask') return { kind: 'needs-approval' as const, request: a.request, admission: a.admission };
+  if (a.kind === 'reject') return { kind: 'executed' as const, result: a.result, admission: a.admission };
+  return { kind: 'executed' as const, result: await h.pipeline.execute(t, c), admission: a.admission };
+}
+
 // ───────────────────── 段的顺序 ─────────────────────
 
 test('①解析失败当成可修复错误回喂，而不是致命错误', async () => {
   const h = await harness();
-  const out = await h.pipeline.invoke(task(), { ...toolCall('nope.tool'), args: {} }, 'all-auto');
+  const out = await invokeAll(h, task(), { ...toolCall('nope.tool'), args: {} }, 'all-auto');
   assert.equal(out.kind, 'executed');
   const r = out.kind === 'executed' ? out.result : null;
   assert.equal(r?.error?.code, 'INVALID_ARGS', '模型可能幻觉工具名，应让它重新找');
@@ -79,7 +95,7 @@ test('①解析失败当成可修复错误回喂，而不是致命错误', async
 test('②校验失败 → INVALID_ARGS，且工具根本没被执行', async () => {
   let ran = false;
   const h = await harness({ handler: async () => { ran = true; return { summary: 'x' }; } });
-  const out = await h.pipeline.invoke(task(), { ...toolCall('mail.send'), args: { subject: '无收件人' } }, 'all-auto');
+  const out = await invokeAll(h, task(), { ...toolCall('mail.send'), args: { subject: '无收件人' } }, 'all-auto');
   assert.equal(out.kind, 'executed');
   assert.equal(out.kind === 'executed' ? out.result.error?.code : '', 'INVALID_ARGS');
   assert.equal(ran, false);
@@ -87,7 +103,7 @@ test('②校验失败 → INVALID_ARGS，且工具根本没被执行', async () 
 
 test('③未授权的技能 → 直接 deny，不弹审批', async () => {
   const h = await harness({ enabled: false });
-  const out = await h.pipeline.invoke(task(), call(), 'ask');
+  const out = await invokeAll(h, task(), call(), 'ask');
   assert.equal(out.kind, 'executed', '不该走 needs-approval');
   assert.equal(out.kind === 'executed' ? out.result.error?.code : '', 'DENIED');
 });
@@ -96,7 +112,7 @@ test('③external + ask 策略 → needs-approval，工具不执行', async () =
   let ran = false;
   const h = await harness({ handler: async () => { ran = true; return { summary: 'x' }; } });
   const c = call();
-  const out = await h.pipeline.invoke(task(), c, 'ask');
+  const out = await invokeAll(h, task(), c, 'ask');
   assert.equal(out.kind, 'needs-approval');
   assert.equal(ran, false, '等审批期间绝不能先执行');
   assert.equal(out.kind === 'needs-approval' ? out.request.risk : '', 'external');
@@ -107,7 +123,7 @@ test('③external + ask 策略 → needs-approval，工具不执行', async () =
 test('③命中 scope 相符的 always 授权 → 直接执行', async () => {
   const h = await harness();
   await h.grants.put({ agentId: task().agentId, toolId: MAIL, scope: 'to=产品组', grantedAt: 0 });
-  const out = await h.pipeline.invoke(task(), call(), 'ask');
+  const out = await invokeAll(h, task(), call(), 'ask');
   assert.equal(out.kind, 'executed');
   assert.equal(out.kind === 'executed' ? out.result.ok : false, true);
   assert.equal(out.kind === 'executed' ? out.admission.basis.gate : '', 'grant');
@@ -116,7 +132,7 @@ test('③命中 scope 相符的 always 授权 → 直接执行', async () => {
 test('③换了收件人则授权不命中，重新要求审批', async () => {
   const h = await harness();
   await h.grants.put({ agentId: task().agentId, toolId: MAIL, scope: 'to=产品组', grantedAt: 0 });
-  const out = await h.pipeline.invoke(task(), { ...call(), args: { to: '全体员工' } }, 'ask');
+  const out = await invokeAll(h, task(), { ...call(), args: { to: '全体员工' } }, 'ask');
   assert.equal(out.kind, 'needs-approval');
 });
 
@@ -124,7 +140,7 @@ test('③污点下写记忆强制审批，即使策略是 all-auto', async () =>
   const h = await harness({
     descriptor: desc({ id: BUILTIN_TOOLS.MEMORY_WRITE, risk: 'write', scopeKeys: [], input: {} }),
   });
-  const out = await h.pipeline.invoke(
+  const out = await invokeAll(h, 
     task({ tainted: true }),
     { ...toolCall(BUILTIN_TOOLS.MEMORY_WRITE), args: {} },
     'all-auto',
@@ -140,14 +156,14 @@ test('④只重试 UPSTREAM，不重试 DENIED', async () => {
   const up = await harness({
     handler: async () => { calls++; throw new ToolError('UPSTREAM', '上游 502'); },
   });
-  await up.pipeline.invoke(task(), call(), 'all-auto');
+  await invokeAll(up, task(), call(), 'all-auto');
   assert.equal(calls, 3, '1 次 + 2 次重试');
 
   let denied = 0;
   const dn = await harness({
     handler: async () => { denied++; throw new ToolError('DENIED', '对端拒绝'); },
   });
-  await dn.pipeline.invoke(task(), call(), 'all-auto');
+  await invokeAll(dn, task(), call(), 'all-auto');
   assert.equal(denied, 1, 'DENIED 不该重试，重试必然再失败');
 });
 
@@ -160,7 +176,7 @@ test('④超时归为 UPSTREAM 并可重试', async () => {
       return { summary: '太慢了' };
     },
   });
-  const out = await h.pipeline.invoke(task(), call(), 'all-auto');
+  const out = await invokeAll(h, task(), call(), 'all-auto');
   assert.equal(out.kind === 'executed' ? out.result.error?.code : '', 'UPSTREAM');
   assert.equal(calls, 3);
 });
@@ -169,7 +185,7 @@ test('④重试次数进 metrics', async () => {
   const h = await harness({
     handler: async () => { throw new ToolError('RATE_LIMITED', '限流'); },
   });
-  const out = await h.pipeline.invoke(task(), call(), 'all-auto');
+  const out = await invokeAll(h, task(), call(), 'all-auto');
   assert.equal(out.kind === 'executed' ? out.result.metrics.retries : -1, 2);
 });
 
@@ -193,7 +209,7 @@ test('熔断器：连续失败后打开，冷却后半开放一次探测', () =>
 test('⑤超长 summary 被截断，且原文落成 artifact 不丢', async () => {
   const long = 'あ'.repeat(SUMMARY_CHAR_LIMIT + 500);
   const h = await harness({ handler: async () => ({ summary: long }) });
-  const out = await h.pipeline.invoke(task(), call(), 'all-auto');
+  const out = await invokeAll(h, task(), call(), 'all-auto');
   const r = out.kind === 'executed' ? out.result : null;
   assert.ok(r!.summary.length <= SUMMARY_CHAR_LIMIT);
   assert.match(r!.summary, /已截断/);
@@ -208,7 +224,7 @@ test('⑤工具自己落的 artifact 会被保留', async () => {
       return { summary: '读了 12 篇文档', artifactRef: ref };
     },
   });
-  const out = await h.pipeline.invoke(task(), call(), 'all-auto');
+  const out = await invokeAll(h, task(), call(), 'all-auto');
   const r = out.kind === 'executed' ? out.result : null;
   assert.equal(r!.summary, '读了 12 篇文档');
   assert.equal(h.artifacts.text(r!.artifactRef!), '12 篇文档全文');
@@ -218,7 +234,7 @@ test('⑤失败也有 summary —— 它要作为 observation 回喂', async () 
   const h = await harness({
     handler: async () => { throw new ToolError('NOT_FOUND', '收件人不存在', { hint: '换个收件人' }); },
   });
-  const out = await h.pipeline.invoke(task(), call(), 'all-auto');
+  const out = await invokeAll(h, task(), call(), 'all-auto');
   const r = out.kind === 'executed' ? out.result : null;
   assert.match(r!.summary, /NOT_FOUND/);
   assert.match(r!.summary, /换个收件人/);
@@ -228,7 +244,7 @@ test('⑤失败也有 summary —— 它要作为 observation 回喂', async () 
 
 test('⑥准入与执行各写一条审计，且哈希链完整', async () => {
   const h = await harness();
-  await h.pipeline.invoke(task(), call(), 'all-auto');
+  await invokeAll(h, task(), call(), 'all-auto');
   const actions = h.sink.rows.map((r) => r.action);
   assert.deepEqual(actions, ['approval.decide', 'tool.invoke']);
   assert.equal(await h.audit.verify(), null);
@@ -236,7 +252,7 @@ test('⑥准入与执行各写一条审计，且哈希链完整', async () => {
 
 test('⑥审计只存引用与维度，不存参数内容', async () => {
   const h = await harness();
-  await h.pipeline.invoke(task(), call(), 'all-auto');
+  await invokeAll(h, task(), call(), 'all-auto');
   const json = JSON.stringify(h.sink.rows);
   assert.ok(!json.includes('周报'), '参数内容（subject）不该出现在审计里');
   assert.ok(json.includes('mail.send'), '工具名作为维度应该在');
@@ -246,7 +262,7 @@ test('⑥审计只存引用与维度，不存参数内容', async () => {
 
 test('⑥准入依据落进审计 basis', async () => {
   const h = await harness();
-  await h.pipeline.invoke(task(), call(), 'ask');
+  await invokeAll(h, task(), call(), 'ask');
   const rec = h.sink.rows.find((r) => r.action === 'approval.decide');
   assert.equal(rec?.outcome, 'ask');
   assert.equal(rec?.basis?.gate, 'matrix');
@@ -262,8 +278,8 @@ test('幂等短路：重放不会真的再发一次', async () => {
     idempotency: true,
   });
   const c = call();
-  await h.pipeline.invoke(task(), c, 'all-auto');
-  await h.pipeline.invoke(task(), c, 'all-auto');
+  await invokeAll(h, task(), c, 'all-auto');
+  await invokeAll(h, task(), c, 'all-auto');
   assert.equal(sent, 1, '同一个 callId 重放必须短路 —— effect 重跑不能重复发邮件');
   assert.equal(h.idem.hits.length, 1);
 });
@@ -276,19 +292,19 @@ test('幂等工具不分配 key，不写缓存', async () => {
     idempotency: true,
   });
   const c = { ...toolCall('doc.read'), args: {} };
-  await h.pipeline.invoke(task(), c, 'all-auto');
-  await h.pipeline.invoke(task(), c, 'all-auto');
+  await invokeAll(h, task(), c, 'all-auto');
+  await invokeAll(h, task(), c, 'all-auto');
   assert.equal(n, 2, '幂等工具本来就能重复调，不必走缓存');
   assert.equal(h.idem.hits.length, 0);
 });
 
 // ───────────────────── resume ─────────────────────
 
-test('审批通过后 resume 直接执行，不重判准入', async () => {
+test('审批通过后 execute 直接执行，不重判准入', async () => {
   const h = await harness();
-  const out = await h.pipeline.invoke(task(), call(), 'ask');
+  const out = await invokeAll(h, task(), call(), 'ask');
   assert.equal(out.kind, 'needs-approval');
-  const r = await h.pipeline.resume(task(), call());
+  const r = await h.pipeline.execute(task(), call());
   assert.equal(r.ok, true);
   // 只有第一次 invoke 写了 approval.decide；resume 只写 tool.invoke
   assert.deepEqual(h.sink.rows.map((x) => x.action), ['approval.decide', 'tool.invoke']);

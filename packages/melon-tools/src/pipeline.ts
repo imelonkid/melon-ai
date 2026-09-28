@@ -1,7 +1,7 @@
 import type {
   AdmissionOutcome, AgentId, ApprovalRequest, AuditDraft, AuditRecorder, ArtifactStore,
   Clock, GrantStore, Hasher, IdempotencyStore, LogField, Logger, PolicyMode, QuotaSnapshot,
-  ResolvedTool, SchemaValidator, Task, ToolCall, ToolContext, ToolResolver, ToolResult, Tracer,
+  ResolvedTool, RiskClass, SchemaValidator, Task, ToolCall, ToolContext, ToolResolver, ToolResult, Tracer,
 } from '@melon-ai/core';
 import { computeScope, decide } from '@melon-ai/policy';
 import { CircuitBreaker } from './breaker.js';
@@ -30,14 +30,19 @@ export interface PipelineDeps {
 }
 
 /**
- * 管线的返回。
+ * 准入段（①②③）的返回。
  *
- * `needs-approval` 是唯一的特殊分支 —— 拒绝走 `executed`（带 DENIED 错误的 ToolResult），
- * 这样运行时对「被拒」和「执行失败」用同一条路径处理，不必分叉。
+ * **管线刻意分成两次调用**：`admit()` 走 ①②③，`execute()` 走 ④⑤⑥。
+ * 因为状态机在第三段与第四段之间插入了一个 `AdmissionResolved` 事件，
+ * 而「等用户审批」可能持续数小时 —— 中间必须能落盘，不能把六段捆在一次调用里。
+ *
+ * `reject` 涵盖解析失败、校验失败与准入拒绝三种，都归一成带错误的 `ToolResult`，
+ * 这样运行时对它们与「执行失败」用同一条路径处理，不必分叉。
  */
-export type InvokeOutcome =
-  | { readonly kind: 'executed'; readonly result: ToolResult; readonly admission: AdmissionOutcome }
-  | { readonly kind: 'needs-approval'; readonly request: ApprovalRequest; readonly admission: AdmissionOutcome };
+export type AdmitOutcome =
+  | { readonly kind: 'allow'; readonly admission: AdmissionOutcome; readonly risk: RiskClass }
+  | { readonly kind: 'ask'; readonly request: ApprovalRequest; readonly admission: AdmissionOutcome; readonly risk: RiskClass }
+  | { readonly kind: 'reject'; readonly result: ToolResult; readonly admission: AdmissionOutcome; readonly risk: RiskClass };
 
 /**
  * 工具调用管线。
@@ -57,7 +62,8 @@ export class ToolPipeline {
 
   constructor(private readonly deps: PipelineDeps) {}
 
-  async invoke(task: Task, call: ToolCall, mode: PolicyMode): Promise<InvokeOutcome> {
+  /** ①②③ 解析 → 校验 → 准入。不执行任何工具。 */
+  async admit(task: Task, call: ToolCall, mode: PolicyMode): Promise<AdmitOutcome> {
     const span = this.deps.tracer.startSpan(`tool:${call.toolId}`, 'tool', task.trace);
     const t0 = this.deps.clock.now();
     try {
@@ -113,8 +119,9 @@ export class ToolPipeline {
 
       if (admission.decision === 'ask') {
         return {
-          kind: 'needs-approval',
+          kind: 'ask',
           admission,
+          risk: descriptor.risk,
           request: {
             callId: call.callId,
             toolId: call.toolId,
@@ -128,22 +135,27 @@ export class ToolPipeline {
           code: 'DENIED', message: admission.reason, retriable: false,
           hint: '不要重试这个调用，换一种方式或向用户说明',
         }, emptyMetrics(this.deps.clock.now() - t0));
-        return { kind: 'executed', result, admission };
+        return { kind: 'reject', result, admission, risk: descriptor.risk };
       }
 
-      return { kind: 'executed', admission, result: await this.run(task, call, resolved, t0) };
+      return { kind: 'allow', admission, risk: descriptor.risk };
     } finally {
       span.end({ ok: true });
     }
   }
 
-  /** 审批通过后继续。跳过准入 —— 已经判过了，重判可能因配额变化得出不同结果。 */
-  async resume(task: Task, call: ToolCall): Promise<ToolResult> {
+  /**
+   * ④⑤⑥ 执行 → 归一化 → 记录。
+   *
+   * **不重判准入** —— 已经判过了，重判可能因配额变化得出不同结果，
+   * 而用户刚刚批准的是当时那个判定。
+   */
+  async execute(task: Task, call: ToolCall): Promise<ToolResult> {
     const t0 = this.deps.clock.now();
     const resolved = await this.deps.resolver.resolve(call.toolId, task.toolset);
     if (!resolved) {
       return normalizeErr({
-        code: 'FATAL', message: `审批后工具 ${call.toolId} 已不可解析`, retriable: false,
+        code: 'FATAL', message: `工具 ${call.toolId} 已不可解析（审批期间工具集可能变了）`, retriable: false,
       }, emptyMetrics(this.deps.clock.now() - t0));
     }
     return this.run(task, call, resolved, t0);
@@ -203,11 +215,13 @@ export class ToolPipeline {
     return result;
   }
 
-  private fail(call: ToolCall, error: Parameters<typeof normalizeErr>[0], t0: number): InvokeOutcome {
+  /** 解析/校验失败。risk 用 `read` 占位 —— 它只用于构造审批请求，而这条路永不询问。 */
+  private fail(call: ToolCall, error: Parameters<typeof normalizeErr>[0], t0: number): AdmitOutcome {
     const result = normalizeErr(error, emptyMetrics(this.deps.clock.now() - t0));
     return {
-      kind: 'executed',
+      kind: 'reject',
       result,
+      risk: 'read',
       admission: { decision: 'deny', reason: error.message, basis: { gate: 'validate' } },
     };
   }

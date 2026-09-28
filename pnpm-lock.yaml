@@ -42,6 +42,28 @@ importers:
         specifier: workspace:*
         version: link:../melon-core
 
+  packages/melon-runtime:
+    dependencies:
+      '@melon-ai/core':
+        specifier: workspace:*
+        version: link:../melon-core
+      '@melon-ai/task':
+        specifier: workspace:*
+        version: link:../melon-task
+      '@melon-ai/tools':
+        specifier: workspace:*
+        version: link:../melon-tools
+    devDependencies:
+      '@melon-ai/audit':
+        specifier: workspace:*
+        version: link:../melon-audit
+      '@melon-ai/policy':
+        specifier: workspace:*
+        version: link:../melon-policy
+      '@melon-ai/testkit':
+        specifier: workspace:*
+        version: link:../melon-testkit
+
   packages/melon-task:
     dependencies:
       '@melon-ai/core':

@@ -372,6 +372,50 @@ vs「推理开始前框架必须准备好的东西」**。
 
 ---
 
+### 3.1 事务边界与静止状态
+
+这是运行时最重要的一条规则，也是崩溃恢复能做得简单的原因。
+
+> **一个事务 = 一个原子输入批次 + 它纯粹派生出的所有事件。**
+
+「原子输入批次」是：一个宿主触发的事件（`Started` / `ApprovalResolved` / `Cancelled`），
+**或者**一个 effect 产出的全部事件。
+
+后半句不是细节。`InvokeTool` 产出 `[ToolCallStarted, ToolCallFinished, Observed]`，
+三者**必须同批提交**：
+
+- 拆开提交会让 `OBSERVING` 成为静止状态；
+- 而崩在 `ToolCallFinished` 与 `Observed` 之间，工具结果就彻底丢了 ——
+  它只存在于内存里，日志里既没有结果也没有「还没拿到结果」的痕迹。
+
+`Emit` 型 effect 是「纯粹派生」：不需要 I/O，只是状态机把一个事实推导成下一个事实
+（`Observed` → `BudgetExhausted` → `Settled`）。它们在同一事务内被吸收。
+需要 I/O 的 effect 推迟到提交之后执行。
+
+#### 换来什么：静止状态集合是有限且明确的
+
+| 静止状态 | 运行时欠的动作 |
+|---|---|
+| `PENDING` | `Started` |
+| `PLANNING` | `CallPlanner` |
+| `ADMITTING` | `Admit`（纯判定 + 一条审计，重跑安全） |
+| `EXECUTING` | `InvokeTool`（靠 `IdempotencyStore` 兜住不重复发送） |
+| `AWAITING_APPROVAL` | 无 —— 等人，可能等数小时 |
+| `SUSPENDED` | `ScheduleWake` |
+| 终态 | 无 |
+
+`OBSERVING` **不在表里** —— 它只作为事务内的中间状态存在。
+
+于是崩溃恢复退化成一个纯函数 `resumeEffects(task)`：
+不必回放整条日志去重建「运行时当时欠什么」，看一眼状态就够。
+`apply()` 在落盘前会断言状态属于静止集合，破了立刻抛错而不是留下一个无法恢复的现场。
+
+#### 代价
+
+所有重发的 effect 必须幂等（§2.3 已有此要求，这里把它变成了硬约束）。
+`ADMITTING` 重跑会多写一条审计记录 —— 这是**诚实的历史**（「我们因为崩溃判定了两次」），
+不是缺陷。
+
 ## 4. 模块划分
 
 ### 4.1 模块清单
@@ -704,8 +748,28 @@ await agent.resolveApproval(task.id, callId, 'allow');
 - [x] `@melon-ai/audit`：哈希链、维度脱敏、保留期校验、跨任务查询，19 个测试
 - [x] `@melon-ai/tools`：六段固定管线、分类重试、每工具熔断、幂等短路、
       summary 截断留 artifact，22 个测试
+- [x] `@melon-ai/runtime`：`apply` 事务边界、`EffectRunner`、`KeyedMutex` 串行化、
+      `watch` 回放转实时、崩溃恢复，12 个端到端测试（含 **P0 验收**）
 - [ ] `@melon-ai/skills-builtin`
-- [ ] `@melon-ai/runtime` / `@melon-ai/store-sqlite` / `@melon-ai/agent`
+- [ ] `@melon-ai/store-sqlite` / `@melon-ai/agent`
+
+#### runtime 阶段的设计修正
+
+21. **管线拆成 `admit()` + `execute()` 两次调用**（原为一次 `invoke()`）。
+    状态机在第三段与第四段之间插入了 `AdmissionResolved` 事件，
+    而「等用户审批」可能持续数小时 —— 中间必须能落盘，不能把六段捆在一次调用里。
+    六段本身不变，只是驱动方式变成两段。已同步 kernel-design.md §5。
+22. **新增 `resumeEffects(task)`（在 `@melon-ai/task`）。** 它与 reducer 回答不同问题：
+    reducer 是「收到这个事件会怎样」，`resumeEffects` 是「从这个静止状态出发运行时欠什么」。
+    不是重复。
+23. **确立事务边界规则，新增 §3.1。** 实现时先写成「一个事件一个事务」，
+    结果 `InvokeTool` 的三个事件被拆成三次提交，`OBSERVING` 落盘 ——
+    `apply()` 里的落盘自检当场抓到了。改为「一个原子输入批次」。
+24. **`Runtime.drain()`**：`submit` 不能等整条推进链跑完（那会阻塞到任务结束），
+    但测试与优雅关闭需要一个确定的收敛点，所以把 fire-and-forget 的 promise 收集起来。
+25. **`watch` 必须先订阅再回放**，并按 seq 去重。反过来会漏掉两个动作之间新追加的事件。
+26. **effect 执行失败不静默吞掉**，而是让任务 `FAILED` ——
+    否则任务会永久卡在中间状态，既不推进也不报错。
 
 #### tools 阶段的契约与设计修正
 

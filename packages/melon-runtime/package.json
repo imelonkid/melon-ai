@@ -1,0 +1,27 @@
+{
+  "name": "@melon-ai/runtime",
+  "version": "0.0.1",
+  "description": "调度器、EffectRunner 与 AgentEngine 实现。把纯状态机接到真实的 I/O 上。",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@melon-ai/core": "workspace:*",
+    "@melon-ai/task": "workspace:*",
+    "@melon-ai/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@melon-ai/testkit": "workspace:*",
+    "@melon-ai/audit": "workspace:*",
+    "@melon-ai/policy": "workspace:*"
+  },
+  "publishConfig": { "access": "public" },
+  "license": "MIT"
+}
