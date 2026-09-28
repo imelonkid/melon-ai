@@ -778,6 +778,19 @@ await agent.resolveApproval(task.id, callId, 'allow');
 - [ ] `@melon-ai/skills-builtin`（等 memory / context）
 - [ ] `@melon-ai/context` / `@melon-ai/memory`（宿主目前用最小实现顶着）
 
+#### 人工验收暴露的问题
+
+40. **工具名的点号会被供应商拒绝。** `ToolId` 是 `${skillId}.${name}`（强制命名空间），
+    但 OpenAI 兼容接口要求 `^[a-zA-Z0-9_-]+$`，Anthropic 同样限制
+    `^[a-zA-Z0-9_-]{1,64}$` —— 实际调用直接 400。
+    这是**传输层细节，不该反过来污染命名空间设计**：新增 `toolNameCodec`，
+    适配器发送前编码、收到工具调用时解码。截断与替换都可能碰撞，
+    所以带去重后缀 —— 碰撞会让模型的调用无法反解，那是静默的错路由。
+
+    **两个 LLM 适配器此前一个测试都没有**，所以这条路完全没被覆盖。
+    已补 9 个测试（含转码往返、碰撞去重、超长截断、HTTP 错误码映射、
+    工具参数非法 JSON）。
+
 #### 接真模型时暴露的问题
 
 36. **`ChatModel` 契约没法返回工具调用。** `GenerateResult` 只有 `text` ——

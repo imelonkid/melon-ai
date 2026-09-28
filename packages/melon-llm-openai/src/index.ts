@@ -1,7 +1,7 @@
 import type {
   ChatModel, GenerateRequest, GenerateResult, ModelCapabilities, ModelToolCall, Usage,
 } from '@melon-ai/core';
-import { ToolError } from '@melon-ai/core';
+import { ToolError, toolNameCodec } from '@melon-ai/core';
 
 /**
  * 预置的 OpenAI 兼容服务。
@@ -79,6 +79,8 @@ export class OpenAICompatibleChatModel implements ChatModel {
     if (!this.apiKey) {
       throw new ToolError('FATAL', `${this.id} 缺少 API key`, { hint: '在设置里填入，或设对应环境变量' });
     }
+    // 供应商不接受工具名里的点号，转码后发送、收到调用时再映射回来
+    const codec = toolNameCodec(req.tools ?? []);
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), this.opts.timeoutMs ?? 120_000);
     if (req.signal) req.signal.addEventListener('abort', () => ctl.abort(), { once: true });
@@ -98,9 +100,9 @@ export class OpenAICompatibleChatModel implements ChatModel {
             role: m.role === 'tool' ? 'user' : m.role,
             content: m.content,
           })),
-          ...(req.tools && req.tools.length > 0
+          ...(codec.tools.length > 0
             ? {
-                tools: req.tools.map((t) => ({
+                tools: codec.tools.map((t) => ({
                   type: 'function',
                   function: { name: t.name, description: t.description, parameters: t.input },
                 })),
@@ -118,7 +120,7 @@ export class OpenAICompatibleChatModel implements ChatModel {
       // 工具参数是字符串，必须 JSON.parse —— 不同供应商的转义策略不同，不能做字符串匹配
       const toolCalls: ModelToolCall[] = (choice?.message?.tool_calls ?? []).map((c) => ({
         id: c.id,
-        name: c.function.name,
+        name: codec.decode(c.function.name),
         args: safeParse(c.function.arguments),
       }));
 

@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type {
   ChatModel, GenerateRequest, GenerateResult, Message, ModelCapabilities, ModelToolCall, Usage,
 } from '@melon-ai/core';
-import { ToolError } from '@melon-ai/core';
+import { ToolError, toolNameCodec } from '@melon-ai/core';
 
 /**
  * 模型目录。
@@ -81,6 +81,8 @@ export class AnthropicChatModel implements ChatModel {
   async generate(req: GenerateRequest): Promise<GenerateResult> {
     const system = req.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const rest = req.messages.filter((m) => m.role !== 'system');
+    // Anthropic 的工具名同样限制为 ^[a-zA-Z0-9_-]{1,64}$，点号会被拒
+    const codec = toolNameCodec(req.tools ?? []);
 
     try {
       const res = await this.client.messages.create({
@@ -93,9 +95,9 @@ export class AnthropicChatModel implements ChatModel {
             }
           : {}),
         messages: rest.map((m) => ({ role: roleOf(m), content: m.content })),
-        ...(req.tools && req.tools.length > 0
+        ...(codec.tools.length > 0
           ? {
-              tools: req.tools.map((t) => ({
+              tools: codec.tools.map((t) => ({
                 name: t.name,
                 description: t.description,
                 input_schema: t.input as Anthropic.Tool['input_schema'],
@@ -126,7 +128,7 @@ export class AnthropicChatModel implements ChatModel {
 
       const toolCalls: ModelToolCall[] = res.content
         .filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
-        .map((b) => ({ id: b.id, name: b.name, args: b.input }));
+        .map((b) => ({ id: b.id, name: codec.decode(b.name), args: b.input }));
 
       return {
         text,
