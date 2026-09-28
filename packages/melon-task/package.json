@@ -1,0 +1,29 @@
+{
+  "name": "@melon-ai/task",
+  "version": "0.0.1",
+  "description": "任务模型与纯状态机 reducer。不做任何 I/O。",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@melon-ai/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@melon-ai/testkit": "workspace:*"
+  },
+  "publishConfig": { "access": "public" },
+  "license": "MIT"
+}

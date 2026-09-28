@@ -8,6 +8,16 @@ import type { SpanId, TraceContext } from './trace.js';
 export type TaskState =
   | 'PENDING'            // 待执行
   | 'PLANNING'           // 运行中 · Thought
+  /**
+   * 运行中 · 准入判定。
+   *
+   * 这个状态是实现 reducer 时发现必须加的：reducer 是纯函数，**拿不到准入结果**
+   * （准入要查 grant、查配额，是 I/O）。所以准入决策必须以事件形式回到状态机。
+   *
+   * 它也让崩溃恢复更省：崩在准入阶段，重启后只需重跑准入（幂等、便宜），
+   * 而不必重跑模型（贵）。
+   */
+  | 'ADMITTING'
   | 'AWAITING_APPROVAL'  // 待确认
   | 'EXECUTING'          // 运行中 · Act
   | 'OBSERVING'          // 运行中 · Observation
@@ -47,6 +57,32 @@ export interface BudgetUsage {
 
 export type BudgetDimension = 'steps' | 'tokens' | 'cost' | 'wallclock';
 
+/**
+ * 守卫窗口。循环检测与无进展检测是 ReAct 在生产中最常见的两种失败模式，
+ * 必须在内核层拦，不能指望模型自觉。
+ */
+export interface GuardWindow {
+  /** 最近若干次工具调用的 `${toolId}#${argsHash}`，用于循环检测。 */
+  readonly recentCalls: readonly string[];
+  /** 连续多少步没有新事实进入 L2。 */
+  readonly stagnantSteps: number;
+}
+
+export interface GuardThresholds {
+  /** 同一调用连续出现多少次算循环。 */
+  readonly loopRepeats: number;
+  /** 连续多少步无进展就干预。 */
+  readonly stagnantSteps: number;
+  /** recentCalls 保留多长。 */
+  readonly windowSize: number;
+}
+
+export const DEFAULT_GUARDS: GuardThresholds = {
+  loopRepeats: 3,
+  stagnantSteps: 4,
+  windowSize: 8,
+};
+
 export interface TaskSpec {
   readonly agentId: AgentId;
   readonly kind: TaskKind;
@@ -82,6 +118,8 @@ export interface Task {
    * 见 policy.ts `TAINT_FORCES_ASK`。
    */
   readonly tainted: boolean;
+  /** 守卫窗口。纯 reducer 只能看到 task，循环与无进展检测所需的历史必须挂在这里。 */
+  readonly guard: GuardWindow;
   /** 当前挂起的审批（state=AWAITING_APPROVAL 时非空）。 */
   readonly pendingCall?: ToolCall;
   /** 正在等待的子任务。 */
@@ -132,11 +170,21 @@ export type TaskEvent =
       readonly promptRef?: PromptRef; readonly modelId?: string;
       readonly spanId?: SpanId }
   | { readonly t: 'SkillsInjected'; readonly skillIds: readonly string[] }
+  /**
+   * 准入判定结果。`basis` 是事后举证的关键 ——
+   * §4.5 指出「授权决策没记依据」是 EventLog 的窟窿之一，这里补上。
+   */
+  | { readonly t: 'AdmissionResolved'; readonly callId: CallId;
+      readonly decision: 'allow' | 'ask' | 'deny'; readonly reason: string;
+      /** 判定针对的风险等级。reducer 拿不到工具描述，构造 ApprovalRequest 需要它。 */
+      readonly risk: RiskClass;
+      readonly basis?: Readonly<Record<string, string | number | boolean>> }
   | { readonly t: 'ApprovalRequested'; readonly request: ApprovalRequest }
   | { readonly t: 'ApprovalResolved'; readonly callId: CallId; readonly decision: ApprovalDecision }
   | { readonly t: 'ToolCallStarted'; readonly call: ToolCall; readonly spanId?: SpanId }
   | { readonly t: 'ToolCallFinished'; readonly callId: CallId; readonly meta: ToolResultMeta; readonly spanId?: SpanId }
-  | { readonly t: 'Observed'; readonly callId: CallId; readonly summary: string; readonly artifactRef?: ArtifactRef }
+  /** callId 可缺省：守卫注入的纠偏 observation 没有对应的真实工具调用。 */
+  | { readonly t: 'Observed'; readonly callId?: CallId; readonly summary: string; readonly artifactRef?: ArtifactRef }
   | { readonly t: 'ChildSpawned'; readonly childId: TaskId }
   | { readonly t: 'ChildSettled'; readonly childId: TaskId; readonly outcome: Outcome }
   | { readonly t: 'Suspended'; readonly until?: number; readonly waitFor?: readonly TaskId[] }
@@ -157,8 +205,16 @@ export type TaskEventType = TaskEvent['t'];
  * 副作用以描述的形式返回，由 EffectRunner 执行。
  * 换来的是：可单测（不碰模型和数据库）、可重放、崩溃可恢复。
  */
+/**
+ * 副作用。
+ *
+ * **所有 Effect 必须幂等。** 崩溃恢复的规则是「重新 reduce 最后一条事件、
+ * 重跑它产生的 effects」—— 因为 reducer 是纯函数，这是最省的恢复方式，
+ * 但它要求重跑不会造成重复的外部后果。
+ */
 export type Effect =
   | { readonly k: 'CallPlanner'; readonly taskId: TaskId }
+  | { readonly k: 'Admit'; readonly taskId: TaskId; readonly call: ToolCall }
   | { readonly k: 'InvokeTool'; readonly taskId: TaskId; readonly call: ToolCall }
   | { readonly k: 'AskUser'; readonly taskId: TaskId; readonly request: ApprovalRequest }
   | { readonly k: 'RecallSkills'; readonly taskId: TaskId; readonly query: string }

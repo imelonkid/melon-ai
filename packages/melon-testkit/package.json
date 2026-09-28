@@ -1,7 +1,7 @@
 {
-  "name": "@melon-ai/core",
+  "name": "@melon-ai/testkit",
   "version": "0.0.1",
-  "description": "Melon AI 内核契约：类型与端口定义。零运行时依赖，所有模块的依赖倒置中心。",
+  "description": "内存适配器与假件。也是对 core 端口设计的第一道验证：端口若在内存里都难实现，就是设计坏了。",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -18,10 +18,16 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "test": "echo \"@melon-ai/core 是纯类型与端口定义，无运行时行为可测；契约由下游包的测试验证\""
+    "test": "tsx --test test/*.test.ts"
   },
-  "license": "MIT",
+  "dependencies": {
+    "@melon-ai/core": "workspace:*"
+  },
   "publishConfig": {
     "access": "public"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@melon-ai/core": "workspace:*"
   }
 }

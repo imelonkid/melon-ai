@@ -7,14 +7,15 @@
   },
   "scripts": {
     "build": "pnpm -r --filter './packages/*' run build",
-    "typecheck": "pnpm -r --filter \"./packages/*\" exec tsc --noEmit",
-    "test": "pnpm -r --filter './packages/*' run test",
+    "typecheck": "pnpm run build && pnpm -r --filter './packages/*' exec tsc --noEmit",
+    "test": "pnpm run build && pnpm -r --filter './packages/*' run test",
     "lint:deps": "depcruise packages --config .dependency-cruiser.cjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",
     "dependency-cruiser": "^16.10.0",
     "tsup": "^8.5.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.3"
   }
 }

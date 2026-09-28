@@ -696,6 +696,23 @@ await agent.resolveApproval(task.id, callId, 'allow');
       `DURABLE_WRITE_TOOLS`、`TAINT_FORCES_ASK` 污点覆盖、`Task.tainted`、
       `MUST_INJECT` 注入白名单；`memories` 预算 0.10→0.05（只留冷启动种子），
       腾给 `recent` 0.30→0.35
-- [ ] `@melon-ai/task` 状态机 reducer + 迁移表
-- [ ] `@melon-ai/policy` / `@melon-ai/tools` / `@melon-ai/runtime`
-- [ ] `@melon-ai/store-sqlite` / `@melon-ai/testkit` / `@melon-ai/agent`
+- [x] `@melon-ai/task`：纯 reducer + 迁移表 + 预算核算 + 守卫（循环/无进展），22 个测试
+- [x] `@melon-ai/testkit`：内存 TaskStore/EventLog、FakeClock、SeqIdGen、
+      CapturingLogger、RecordingTracer、ScriptedModel、FakeEmbedder、
+      `drive()` / `settle()` 驱动器，8 个测试
+- [ ] `@melon-ai/policy` / `@melon-ai/tools` / `@melon-ai/skills-builtin`
+- [ ] `@melon-ai/audit` / `@melon-ai/runtime` / `@melon-ai/store-sqlite` / `@melon-ai/agent`
+
+#### 实现阶段发现的契约问题（已修）
+
+1. **缺 `ADMITTING` 状态**。reducer 是纯函数，**拿不到准入结果**（查 grant、查配额都是 I/O），
+   所以准入决策必须以 `AdmissionResolved` 事件回到状态机。
+   顺带好处：崩在准入阶段，重启只需重跑准入（幂等、便宜），不必重跑模型（贵）。
+2. **缺 `GuardWindow`**。循环与无进展检测需要历史，而纯 reducer 只能看到 `task` ——
+   滚动窗口必须挂在 `Task` 上。文档里提过 `cursor`，契约里从没定义。
+3. **`AdmissionResolved` 需带 `risk`**。构造 `ApprovalRequest` 要它，而 reducer 拿不到工具描述。
+4. **`Observed.callId` 改为可选**。守卫注入的纠偏 observation 没有对应的真实工具调用。
+5. **`Effect` 必须幂等**，因为崩溃恢复的规则是「重新 reduce 最后一条事件、重跑其 effects」——
+   这是纯 reducer 带来的最省恢复方式，但它对 effect 提出了要求。已写进契约注释。
+6. **构建顺序**：下游包解析上游的 `dist`，改了上游不重建就 typecheck 会得到一堆误导性错误。
+   根 `typecheck` / `test` 脚本改为先 `build`。
