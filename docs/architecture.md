@@ -603,9 +603,25 @@ L1 记忆的写入与召回、技能注册与注销、策略变更、以及**模
 | 构建 | **tsup**（esbuild）输出 ESM + CJS 双格式 | Jolly 的 Electron 主进程目前是 CJS；双格式省掉未来的迁移 | 多一份产物 |
 | 模块规范 | `NodeNext`，包内一律 `.js` 后缀导入 | 与 Node 原生解析一致，避免打包器魔法 | 写导入路径要带 `.js` |
 | 测试 | `node:test` + `@melon-ai/testkit` | 零依赖；状态机是纯函数，不需要重型框架 | 断言库比 vitest 朴素 |
-| 存储（一期） | **SQLite**（`better-sqlite3`）+ `sqlite-vec` | 单文件、同步 API（简化事务）、向量和关系数据同库同事务 | 并发写受限；原生模块要按平台编译；**叠加 §2.5 的默认不物理删，库只会变大 —— 归档层与 VACUUM 是 P1 必做项，不是优化** |
+| 存储（一期） | **SQLite**（`better-sqlite3`），FTS5 做关键词检索 | 单文件、向量与关系数据同库同事务 | 原生模块要按平台编译（Electron 里要 rebuild）；**叠加 §2.5 的默认不物理删，库只会变大 —— 归档层与 VACUUM 是 P1 必做项，不是优化**；见下方「全局写锁」 |
+| 向量检索 | **暴力余弦**，不用 `sqlite-vec` | `sqlite-vec` 是原生扩展，Electron 里要为每个平台打包二进制并处理扩展加载，成本不低；而桌面端单用户量级（O(10k) 条 × 384 维）暴力算一遍约十几毫秒，够用 | 到 10 万条以上会明显变慢 —— 届时换 `sqlite-vec`，只换 `SqliteVectorIndex` 一个类 |
 | 参数校验 | `ajv`，但**只在 @melon-ai/tools 内部** | 契约层不绑定校验器，将来换 zod/typebox 只动一个包 | 多一层间接 |
 | 依赖方向 | `dependency-cruiser` | 见 §4.3 | CI 多跑一步 |
+
+#### 全局写锁：SQLite + async 端口的必然结果
+
+`better-sqlite3` 的 `db.transaction(fn)` **只支持同步 fn**，
+而存储端口全是 async（`StoreBundle.transaction<T>(fn: () => Promise<T>)`）。
+
+于是只能手写 `BEGIN IMMEDIATE` / `COMMIT`。但 `await` 会让出事件循环 ——
+另一个任务的 `apply()` 可能在事务中间插进来执行 `BEGIN`，
+造成嵌套事务错误，或者更糟：它的写入被卷进别人的事务里一起回滚。
+
+**对策：一把全局写锁串行化所有事务。** 单机单用户、活跃任务 O(10)（假设 A3），
+这比任何精细方案都可靠。要撑更高并发就该换 Postgres，那时 `WriteLock` 整体消失。
+
+注意这与 `@melon-ai/runtime` 的 `KeyedMutex` 是**两层不同的串行化**：
+后者按任务串行（保证事件日志单写者语义），前者按数据库串行（保证事务不交错）。
 
 ### 6.2 明确不选什么
 
@@ -625,25 +641,25 @@ L1 记忆的写入与召回、技能注册与注销、策略变更、以及**模
 
 ## 7. 集成契约
 
-宿主应用看到的全部 API 就这些。这是「可被集成到任何应用」的具体含义：
+宿主应用看到的全部 API 就这些。这是「可被集成到任何应用」的具体含义 ——
+以下代码与 `@melon-ai/agent` 的集成测试**逐字一致**，不是示意。
 
 ```ts
-import { createAgent } from '@melon-ai/agent';
+import { createAgent, nodePlatform } from '@melon-ai/agent';
 import { openSqliteStores } from '@melon-ai/store-sqlite';
-import { ReActPlanner } from '@melon-ai/planner-react';
 
-const agent = createAgent({
-  stores:   await openSqliteStores({ file: './jolly.db' }),  // 换 Postgres 只改这一行
-  router:   myModelRouter,      // 宿主自己的模型路由（Jolly 的「AI 源」）
-  embedder: myEmbedder,
-  planner:  new ReActPlanner(), // 换规划策略只改这一行
-  skills:   [mailSkill, docSkill],
-  providers:[mcpProvider],      // 动态技能来源
-  policy:   { mode: 'ask' },    // 对应「Agent 执行权限」三档
-  platform: { clock, ids, logger },
+const stores = openSqliteStores({ file: './jolly.db' });   // 换基础设施只改这一行
+
+const agent = await createAgent({
+  stores,
+  planner:   new ReActPlanner(router),  // 换规划策略只改这一行
+  resolver:  skillRegistry,             // 实现 ToolResolver
+  validator: ajvValidator,              // 实现 SchemaValidator
+  platform:  nodePlatform(),            // 浏览器宿主传自己的实现
+  policy:    'ask',                     // 或 (task) => PolicyMode，按 Agent 分档
 });
 
-await agent.start();
+await agent.start();                    // 内含崩溃恢复
 
 // 提交任务
 const task = await agent.submit({
@@ -654,23 +670,24 @@ const task = await agent.submit({
 });
 
 // 订阅事件驱动 UI —— 框架不假设任何渲染方式
-for await (const ev of agent.watch(task.id)) {
-  switch (ev.value.t) {
-    case 'ApprovalRequested': showPermissionCard(ev.value.request); break;
-    case 'Observed':          appendStep(ev.value.summary);         break;
-    case 'Settled':           renderAnswer(ev.value.outcome);       break;
+for await (const { value: e } of agent.watch(task.id)) {
+  switch (e.t) {
+    case 'ApprovalRequested': showPermissionCard(e.request); break;
+    case 'Observed':          appendStep(e.summary);          break;
+    case 'Settled':           renderAnswer(e.outcome);        break;
   }
 }
 
-// 用户在权限卡上点了「允许」
+// 用户在权限卡上点了「允许」—— 可以在应用重启之后才调用
 await agent.resolveApproval(task.id, callId, 'allow');
 ```
 
 三个要点：
 
 1. **只吐事件，不碰 UI**。宿主决定怎么渲染，框架不知道有没有界面。
-2. **换基础设施 = 换一行**。`stores` 和 `router` 都是端口。
-3. **审批是异步的、可持久的**。`resolveApproval` 可以在应用重启之后调用 —— 任务状态在库里等着。
+2. **换基础设施 = 换一行**。`stores` / `planner` / `platform` 都是端口。
+3. **审批是异步的、可持久的**。`resolveApproval` 可以在应用重启之后调用 ——
+   任务状态在库里等着，工具一次都没执行（已由集成测试的 P0 验收覆盖）。
 
 ---
 
@@ -750,8 +767,33 @@ await agent.resolveApproval(task.id, callId, 'allow');
       summary 截断留 artifact，22 个测试
 - [x] `@melon-ai/runtime`：`apply` 事务边界、`EffectRunner`、`KeyedMutex` 串行化、
       `watch` 回放转实时、崩溃恢复，12 个端到端测试（含 **P0 验收**）
-- [ ] `@melon-ai/skills-builtin`
-- [ ] `@melon-ai/store-sqlite` / `@melon-ai/agent`
+- [x] `@melon-ai/store-sqlite`：11 张表全套端口实现 + **一致性测试**
+      （同一组断言跑内存版与 SQLite 版两遍），22 个测试
+- [x] `@melon-ai/agent`：`createAgent()` facade + `nodePlatform()`，5 个集成测试
+      （含**真数据库的 P0 完整验收**）
+- [ ] `@melon-ai/skills-builtin`（等 memory / context）
+
+**P0 完成。** 全量：129 个测试通过，typecheck 通过，depcruise 72 modules 143 deps 0 violations。
+
+#### store-sqlite / agent 阶段的修正
+
+27. **放弃 `sqlite-vec`，改用暴力余弦。** 已同步 §6.1 选型表。
+28. **必须有全局写锁。** `better-sqlite3` 的事务助手只支持同步函数，
+    而端口是 async；手写 `BEGIN` 时 `await` 会让别的任务插进同一个事务。已同步 §6.1。
+29. **`.dependency-cruiser.cjs` 的规则一直是坏的。** 早期只有 `melon-core` 有文件，
+    所以跨包判定从未真正触发过；`melon-store-sqlite` 内部文件互相 import 时
+    同时匹配了 `from` 与 `to`，被误报成「适配器之间互相依赖」。
+    改用捕获组 + `pathNot: '^packages/$1/'` 排除同包导入，
+    并显式枚举包名（嵌套可选组会被判为不安全正则）。
+    **修完专门造了一个违规文件验证规则真能拦住**，不再假设它有效。
+30. **一致性测试**：同一组断言同时跑内存版与 SQLite 版。
+    测试全部用内存适配器写，若两者并发语义不一致（乐观并发、单写者 `expectedSeq`），
+    测试会全绿而线上出错 —— 所以把语义本身变成被测对象。
+31. **`createAgent` 要求显式传 `platform`**，不提供默认值：
+    默认使用 `node:crypto` 会让 `@melon-ai/agent` 变成 Node 专属，违反 §2.8。
+    提供 `nodePlatform()` 让 Node 宿主一行接入，浏览器宿主传自己的实现。
+32. **artifact 负载落文件系统**，表里只存元信息 ——
+    大 blob 塞进 SQLite 会让数据库文件膨胀、VACUUM 变慢，而 artifact 恰恰是最大的一块。
 
 #### runtime 阶段的设计修正
 

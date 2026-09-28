@@ -578,7 +578,12 @@ interface EpisodeSummary {
 
 ## 8. 存储与数据模型
 
-SQLite，单文件。表结构（省略索引）：
+SQLite，单文件。下面是设计意图；**真实 DDL 见 `packages/melon-store-sqlite/src/db.ts`**
+（11 张表，含 `tombstones` / `archive` / `idempotency` / `memories_fts` / `vectors`）。
+
+一处与初稿不同：`tasks` 表只把需要索引或查询的字段拉成列
+（`state` / `parent_id` / `deadline` / `version` …），其余整体存 `body` JSON ——
+它们只被整体读写，拆成列除了迁移负担没有别的好处。表结构（省略索引）：
 
 ```sql
 tasks(id PK, parent_id, root_id, agent_id, kind, goal, state, trigger_json,

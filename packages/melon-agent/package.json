@@ -1,0 +1,29 @@
+{
+  "name": "@melon-ai/agent",
+  "version": "0.0.1",
+  "description": "组装入口。宿主唯一需要 import 的包。",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@melon-ai/audit": "workspace:*",
+    "@melon-ai/core": "workspace:*",
+    "@melon-ai/policy": "workspace:*",
+    "@melon-ai/runtime": "workspace:*",
+    "@melon-ai/task": "workspace:*",
+    "@melon-ai/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@melon-ai/store-sqlite": "workspace:*",
+    "@melon-ai/testkit": "workspace:*"
+  },
+  "publishConfig": { "access": "public" },
+  "license": "MIT"
+}
