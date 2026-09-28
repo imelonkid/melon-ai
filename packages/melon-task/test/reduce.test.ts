@@ -289,3 +289,39 @@ test('derived 迁移不能走到 allowed 之外的状态', () => {
   assert.equal(r.task.state, 'SUSPENDED');
   assert.ok(TRANSITIONS['PLANNING+PlanProduced']?.allowed?.includes('SUSPENDED'));
 });
+
+// ───────── pendingCall 生命周期（集成 Jolly 时暴露的 bug）─────────
+
+test('pendingCall 只在 AWAITING_APPROVAL / ADMITTING / EXECUTING 期间存在', () => {
+  const call = toolCall('mail.send', 'h1');
+  const events: TaskEvent[] = [
+    { t: 'Started' },
+    { t: 'PlanProduced', step: { kind: 'tool_call', thought: 't', call }, usage: usage() },
+    { t: 'AdmissionResolved', callId: call.callId, decision: 'ask', reason: 'r', risk: 'external' },
+    { t: 'ApprovalResolved', callId: call.callId, decision: 'allow' },
+    { t: 'ToolCallStarted', call },
+    { t: 'ToolCallFinished', callId: call.callId, meta: { ok: true, metrics: { ms: 1, bytes: 0, retries: 0 } } },
+    { t: 'Observed', callId: call.callId, summary: '已发送' },
+    { t: 'PlanProduced', step: { kind: 'final', thought: 'done', answer: 'ok' }, usage: usage() },
+  ];
+  const r = settle(reduce, fresh(), events, NOW);
+
+  // 关键：终态不能还挂着 pendingCall，否则宿主会把已完成的任务当成待审批
+  assert.equal(r.task.state, 'SUCCEEDED');
+  assert.equal(r.task.pendingCall, undefined,
+    '跑完后 pendingCall 必须清掉 —— 否则宿主会对终态任务发 ApprovalResolved');
+});
+
+test('被拒绝后也要清掉 pendingCall', () => {
+  const call = toolCall();
+  const r = R(fresh({ state: 'AWAITING_APPROVAL', pendingCall: call }), {
+    t: 'ApprovalResolved', callId: call.callId, decision: 'deny',
+  });
+  assert.equal(r.task.pendingCall, undefined);
+});
+
+test('取消后也要清掉 pendingCall', () => {
+  const call = toolCall();
+  const r = R(fresh({ state: 'AWAITING_APPROVAL', pendingCall: call }), { t: 'Cancelled' });
+  assert.equal(r.task.pendingCall, undefined);
+});

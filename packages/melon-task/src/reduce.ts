@@ -11,6 +11,21 @@ export interface ReduceOptions {
   readonly guards?: GuardThresholds;
 }
 
+/**
+ * 清除 `pendingCall`。
+ *
+ * `Task.pendingCall` 的契约是「state=AWAITING_APPROVAL 时非空」，
+ * 但初版 reducer 从不清除它 —— 任务跑完后它还挂着，宿主按它查找待审批任务
+ * 会找到已完成的任务，然后对终态发 ApprovalResolved 而抛 IllegalTransitionError。
+ * 这是集成 Jolly 时才暴露出来的。
+ *
+ * `exactOptionalPropertyTypes` 下不能赋 undefined，必须省略这个键。
+ */
+const clearPending = (t: Task): Task => {
+  const { pendingCall: _dropped, ...rest } = t;
+  return rest;
+};
+
 const settle = (taskId: Task['id'], outcome: Outcome): Effect => ({
   k: 'Emit',
   taskId,
@@ -35,12 +50,13 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
   const transition = lookup(task.state, event.t);
   if (!transition) throw new IllegalTransitionError(task.state, event.t);
 
-  const patch = (next: Partial<Task>, state?: TaskState): Task => {
+  const patch = (next: Partial<Task>, state?: TaskState, drop = false): Task => {
     const s = state ?? (transition.to === 'derived' ? task.state : transition.to);
     if (transition.to === 'derived' && transition.allowed && !transition.allowed.includes(s)) {
       throw new IllegalTransitionError(`${task.state}(derived)`, `${event.t}->${s}`);
     }
-    return { ...task, ...next, state: s, updatedAt: opts.now, version: task.version + 1 };
+    const base = { ...task, ...next, state: s, updatedAt: opts.now, version: task.version + 1 };
+    return drop ? clearPending(base) : base;
   };
 
   switch (event.t) {
@@ -63,7 +79,7 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
       switch (step.kind) {
         case 'skill_query':
           return {
-            task: patch({ usage: withUsage }, 'PLANNING'),
+            task: patch({ usage: withUsage }, 'PLANNING', true),
             effects: [{ k: 'RecallSkills', taskId: task.id, query: step.query }],
           };
         case 'tool_call': {
@@ -87,12 +103,12 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
         }
         case 'spawn':
           return {
-            task: patch({ usage: withUsage, waitingFor: [] }, 'SUSPENDED'),
+            task: patch({ usage: withUsage, waitingFor: [] }, 'SUSPENDED', true),
             effects: [{ k: 'SpawnChildren', parentId: task.id, specs: step.specs }],
           };
         case 'final':
           return {
-            task: patch({ usage: withUsage }, 'PLANNING'),
+            task: patch({ usage: withUsage }, 'PLANNING', true),
             effects: [settle(task.id, { status: 'SUCCEEDED', answer: step.answer })],
           };
       }
@@ -119,7 +135,7 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
         case 'deny':
           // 拒绝不是错误，是给模型的信息 —— 当成一次 observation 回喂，让它改道
           return {
-            task: patch({}, 'OBSERVING'),
+            task: patch({}, 'OBSERVING', true),
             effects: [{
               k: 'Emit', taskId: task.id,
               event: { t: 'Observed', callId: event.callId, summary: `准入拒绝：${event.reason}` },
@@ -134,7 +150,7 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
     case 'ApprovalResolved': {
       if (event.decision === 'deny') {
         return {
-          task: patch({}, 'OBSERVING'),
+          task: patch({}, 'OBSERVING', true),
           effects: [{
             k: 'Emit', taskId: task.id,
             event: { t: 'Observed', callId: event.callId, summary: '用户拒绝了这次操作。' },
@@ -157,7 +173,7 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
         task: patch({
           usage: addUsage(task.usage, event.meta.metrics.costUSD !== undefined
             ? { costUSD: event.meta.metrics.costUSD } : {}),
-        }),
+        }, undefined, true),
         effects: [],
       };
 
@@ -244,7 +260,7 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
 
     case 'Cancelled':
       return {
-        task: patch({ outcome: { status: 'CANCELLED', ...(event.reason !== undefined ? { reason: event.reason } : {}) } }, 'CANCELLED'),
+        task: patch({ outcome: { status: 'CANCELLED', ...(event.reason !== undefined ? { reason: event.reason } : {}) } }, 'CANCELLED', true),
         effects: task.parentId !== undefined
           ? [{ k: 'NotifyParent', parentId: task.parentId, childId: task.id, outcome: { status: 'CANCELLED' } }]
           : [],
@@ -258,7 +274,7 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
       // 任务收敛后做内务：压缩本次 episode、把事实提升进 L1
       effects.push({ k: 'Compact', taskId: task.id, episodeId: task.episodeId });
       effects.push({ k: 'PromoteMemory', taskId: task.id, episodeId: task.episodeId });
-      return { task: patch({ outcome: event.outcome }, event.outcome.status), effects };
+      return { task: patch({ outcome: event.outcome }, event.outcome.status, true), effects };
     }
   }
 }

@@ -21,15 +21,18 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@melon-ai/core": "workspace:*",
-    "better-sqlite3": "^11.8.1"
+    "@melon-ai/core": "workspace:*"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
-    "@melon-ai/testkit": "workspace:*"
+    "@melon-ai/testkit": "workspace:*",
+    "better-sqlite3": "^11.8.1"
   },
   "publishConfig": {
     "access": "public"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "peerDependencies": {
+    "better-sqlite3": ">=11"
+  }
 }

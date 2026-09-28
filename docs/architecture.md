@@ -773,6 +773,25 @@ await agent.resolveApproval(task.id, callId, 'allow');
       （含**真数据库的 P0 完整验收**）
 - [ ] `@melon-ai/skills-builtin`（等 memory / context）
 
+#### 集成 Jolly 时暴露的问题（P3 提前做了一部分）
+
+33. **`Task.pendingCall` 从不清除 —— reducer 违反了自己的契约。**
+    字段注释写的是「state=AWAITING_APPROVAL 时非空」，但初版 reducer 只写不清。
+    宿主按 `pendingCall` 查找待审批任务时会命中**已完成**的任务，
+    然后对终态发 `ApprovalResolved`，直接抛 `IllegalTransitionError`。
+    已在工具调用结束、被拒、取消、收敛、改走别的 plan 这五处清除，并补 3 个测试。
+    **这类 bug 单测抓不到** —— 单测只断言状态与 effect，不会去问「残留字段会不会误导宿主」。
+34. **`better-sqlite3` 应当是 `peerDependency`。**
+    原生模块 + 符号链接的本地包 = 宿主 Electron 与框架 Node 的 ABI 冲突。
+    更麻烦的是 pnpm 默认用硬链接共享 store，宿主为 Electron 重建会**直接改坏**
+    框架仓库的那份（`NODE_MODULE_VERSION 130` vs `115`）。
+    对策：改 peer；宿主侧 `.npmrc` 设 `package-import-method=copy`；
+    并提供 `pnpm run rebuild:node` 把框架这边切回 Node ABI。
+    打包后不存在这个问题 —— electron-builder 会把真实文件拷进 asar。
+35. **`ask` 档位会为只读工具弹审批。** 矩阵本身是对的（每次询问就是每次都问），
+    但产品上用户点一次「运行」要批两次。这正是「低风险自动执行」单独成一档的理由 ——
+    集成时把宿主默认策略改成了 `low-risk-auto`。
+
 **P0 完成。** 全量：129 个测试通过，typecheck 通过，depcruise 72 modules 143 deps 0 violations。
 
 #### store-sqlite / agent 阶段的修正
