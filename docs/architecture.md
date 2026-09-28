@@ -65,7 +65,78 @@
 换来：不碰模型和数据库就能测完全部状态迁移；事件日志可重放；崩溃可恢复。
 代价：比直接 `await` 多一层间接。**接受**。
 
-### 2.4 宿主无关
+### 2.4 引用优先于负载
+
+**所有日志只关联资源 id，不内联 payload。** 需要具体内容时，用 id 去主库解引用。
+
+好处：
+
+1. **日志不会变成敏感数据的第二份副本**。日志库的访问控制和保留期通常与主库不同，
+   内联 payload 等于在一个防护更弱、留存更久的地方复制一份敏感数据。
+2. **让「删除」真正可达**。append-only 的日志无法重写，payload 一旦内联就永远删不掉，
+   「忘掉关于 X 的一切」在物理上就做不到。引用式则只需删主库那一行。
+3. 日志体积小、索引快、追加便宜。
+4. 负载只有一个家，不存在日志副本与主库漂移。
+
+但照字面执行会踩三个坑，必须有配套：
+
+#### 坑一：哈希链会保护错东西
+
+只存 `ref` 时，哈希链证明的是「**这条记录没被改**」，**不是**「被引用的东西还是当初那个」。
+能写主库的人可以事后替换 payload，而审计链毫无察觉 —— 防篡改形同虚设。
+
+配套：引用上带**内容哈希**。
+
+```ts
+resource: { kind, ref, contentHash }
+```
+
+哈希链管记录完整性，`contentHash` 管被引用负载的完整性。
+哈希不可逆、不含 PII，**不影响可删除性** —— 否则就和本原则的隐私目标自相矛盾了。
+解引用结果里带 `contentHashMatches`，让调用方知道对不对得上。
+
+#### 坑二：payload 删除后日志退化为无意义的指针
+
+这是好处 2 的反面。两个必要配套：
+
+**1. 日志存「维度」，不存「内容」。** 真正的分界线不是「不存 payload」，而是：
+
+```
+存  ：action=tool.invoke, tool=mail.send, recipient_count=6, outcome=allow
+不存：收件人地址、邮件正文
+```
+
+这样常见查询（「上个月这个 Agent 对外发了多少封邮件」）能**只靠日志回答，无需解引用**；
+而且 payload 被删后记录仍然有意义 —— 仍可证明「这件事发生过」，只是不再知道「对什么」。
+
+**2. 墓碑。** referent 消失时要能区分「从未存在」（可能是数据损坏）与「已被删除」（正常隐私操作），
+并记下删除原因：用户要求 / 保留期到期 / 关闭了数据改进授权。
+
+#### 坑三：保留期不协调会让审计整体失效
+
+审计留 2 年、payload 90 天清一次，结果 90% 的审计轨迹解不开。
+**被审计资源的 payload 保留期必须 ≥ 审计保留期**，否则只能靠坑二的「维度」兜底。
+这条要写进统一的保留策略，不能让两边各自配置。
+
+另有一个原子性问题：payload 写主库与日志追加是两次写。
+一期 SQLite 同库同事务可解（`StoreBundle.transaction`），
+但审计若送外部 SIEM 就没有事务了 —— 那时要么接受崩在中间会丢日志条目，要么上 outbox。
+
+#### 适用范围：EventLog 是特例
+
+本原则对审计日志和应用日志严格执行，但 **`EventLog` 不适用 —— 它不是日志，是状态**。
+
+状态机重放依赖它：`PlanProduced` 的 `thought`、`Observed` 的 `summary`、`Settled` 的 `answer`
+都是内容，且都是重放所必需的。若换成 id，payload 一删历史任务就无法重放，
+而可重放性是整个状态机设计的基石，不能为日志一致性牺牲。
+
+| 载体 | 约束 |
+|---|---|
+| `AuditRecord` | 严格。只存引用 + `contentHash` + 非敏感维度 |
+| `Logger` | 严格。字段只接受标量与引用，**禁止 dump 对象** |
+| `EventLog` | 保留**决策所需的最小内容**（thought / summary / answer），大块一律 `artifactRef` |
+
+### 2.5 宿主无关
 
 框架不 import 任何宿主环境的东西（没有 `electron`、没有 `fs` 的硬依赖、没有全局单例）。时间、随机数、日志都是端口（`Clock` / `IdGen` / `Logger`），因为状态机的可测性依赖于此。
 
@@ -392,6 +463,12 @@ await agent.resolveApproval(task.id, callId, 'allow');
       （`AuditRecorder` / `AuditSink` / `PromptRegistry` / `TriggerSource`；
        `ModelRouter.select` 改为返回候选序列 + 出境标识；
        `PlanProduced` 事件补 `promptRef` 与 `modelId`，否则重放对不上历史）
+- [x] 「引用优先于负载」原则落地（§2.4）：
+      `ResourceRef` 带 `contentHash`（否则哈希链保护不到被引用的负载）、
+      `AuditRecord.dimensions`（payload 删除后记录仍可用，常见查询不必解引用）、
+      `ResourceTombstone`、批量 `ResourceResolver`、`RetentionPolicy` 保留期约束；
+      `Logger`/`ToolContext.log` 的字段类型收紧为 `LogField`，
+      已用反例验证 `log('x', { email })` 会编译失败（TS2322）
 - [ ] `melon-task` 状态机 reducer + 迁移表
 - [ ] `melon-policy` / `melon-tools` / `melon-runtime`
 - [ ] `melon-store-sqlite` / `melon-testkit` / `melon-agent`

@@ -1,5 +1,6 @@
 import type { ArtifactRef, CallId, SkillId, TaskId, ToolId } from './ids.js';
 import type { ToolErrorShape } from './errors.js';
+import type { LogField } from './ports/platform.js';
 
 /**
  * 风险等级。决定准入层要不要拦。顺序即严重程度。
@@ -57,7 +58,8 @@ export interface ToolContext {
   readonly idempotencyKey?: string;
   /** 大结果写这里，返回句柄，不要塞进 summary。 */
   putArtifact(data: Uint8Array | string, meta: { mime: string; summary: string }): Promise<ArtifactRef>;
-  log(level: 'debug' | 'info' | 'warn' | 'error', msg: string, fields?: Record<string, unknown>): void;
+  /** 字段只接受标量与资源引用，禁止 dump 对象。见 docs/architecture.md §2.4。 */
+  log(level: 'debug' | 'info' | 'warn' | 'error', msg: string, fields?: Readonly<Record<string, LogField>>): void;
 }
 
 /** 工具作者实现这个。返回值还会经过归一化阶段，不需要自己拼信封。 */
