@@ -1,0 +1,36 @@
+{
+  "name": "@melon-ai/tools",
+  "version": "0.0.1",
+  "description": "工具调用管线：解析 → 校验 → 准入 → 执行 → 归一化 → 记录。内置与扩展工具走同一条链，没有快速通道。",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@melon-ai/core": "workspace:*",
+    "@melon-ai/policy": "workspace:*"
+  },
+  "devDependencies": {
+    "@melon-ai/testkit": "workspace:*",
+    "@melon-ai/audit": "workspace:*",
+    "@melon-ai/task": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

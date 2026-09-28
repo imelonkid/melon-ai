@@ -58,6 +58,25 @@ importers:
         specifier: workspace:*
         version: link:../melon-core
 
+  packages/melon-tools:
+    dependencies:
+      '@melon-ai/core':
+        specifier: workspace:*
+        version: link:../melon-core
+      '@melon-ai/policy':
+        specifier: workspace:*
+        version: link:../melon-policy
+    devDependencies:
+      '@melon-ai/audit':
+        specifier: workspace:*
+        version: link:../melon-audit
+      '@melon-ai/task':
+        specifier: workspace:*
+        version: link:../melon-task
+      '@melon-ai/testkit':
+        specifier: workspace:*
+        version: link:../melon-testkit
+
 packages:
 
   '@esbuild/aix-ppc64@0.27.7':

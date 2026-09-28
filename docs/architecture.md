@@ -702,8 +702,30 @@ await agent.resolveApproval(task.id, callId, 'allow');
       `drive()` / `settle()` 驱动器，8 个测试
 - [x] `@melon-ai/policy`：四道闸（授权→配额→污点→授权匹配/矩阵）、scope 计算，19 个测试
 - [x] `@melon-ai/audit`：哈希链、维度脱敏、保留期校验、跨任务查询，19 个测试
-- [ ] `@melon-ai/tools` / `@melon-ai/skills-builtin`
+- [x] `@melon-ai/tools`：六段固定管线、分类重试、每工具熔断、幂等短路、
+      summary 截断留 artifact，22 个测试
+- [ ] `@melon-ai/skills-builtin`
 - [ ] `@melon-ai/runtime` / `@melon-ai/store-sqlite` / `@melon-ai/agent`
+
+#### tools 阶段的契约与设计修正
+
+14. **「中间件链」改成「固定管线」。** §5 原文写的是统一中间件链，实现时改了 ——
+    通用中间件链允许把某一段插到准入之前、或整段跳过，
+    而 §2.7 的全部安全收益正建立在「没有旁路」之上。
+    现在段的顺序**不可配置**：想扩展就包装整条管线，或在段内注入依赖。
+15. **新增三个端口**：`ToolResolver`（管线因此不依赖 `melon-skills`，两者在端口相遇）、
+    `SchemaValidator`（不在管线里内置 ajv —— 宿主往往已有校验器，
+    Electron 里多打一个 ajv 是实打实的体积）、`IdempotencyStore`。
+16. **`ToolResolver.resolve` 必须按任务的 toolset 快照解析**，否则任务执行期间
+    MCP server 更新会让同一个 `toolId` 含义变化，事件日志就不可重放。
+17. **「记录」段只写审计，不写事件。** 事件日志是单写者，管线并发调多个工具时
+    不能各自往里追加 —— 事件由运行时统一追加。
+18. **解析失败按 `INVALID_ARGS` 回喂**，不是 `FATAL`。模型会幻觉出不存在的工具名，
+    这是可修复的，应该让它用 `skill_find` 重新查。
+19. **summary 超限截断而非抛错**（与审计维度相反）。它是模型可读文本而非记录，
+    但截断必须**可见**（留标记）且**无损**（原文自动落 artifact）。
+20. **执行段每次重试要给 handler 新的 `AbortSignal`** —— 上一次超时中止的 signal
+    不能复用，否则第二次尝试会立刻被判中止。
 
 #### policy / audit 阶段的契约修正
 
