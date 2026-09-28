@@ -1,4 +1,4 @@
-import type { JSONSchema, ToolSignature } from './tool.js';
+import type { JSONSchema } from './tool.js';
 
 export interface Usage {
   readonly inputTokens: number;
@@ -20,9 +20,35 @@ export interface Message {
   readonly cacheBoundary?: boolean;
 }
 
+/**
+ * 给模型看的工具定义。
+ *
+ * 与 `ToolSignature`（常驻上下文的廉价签名）不同，这里带**全量 schema** ——
+ * 供应商原生的 tool use 需要完整 schema 才能约束参数。
+ *
+ * 这不与 §7.5 的两级 schema 冲突：两级优化解决的是「工具太多」，
+ * 而经过技能召回后进入 `availableTools` 的只有 2~3 个，全量发送是划算的。
+ */
+export interface ModelTool {
+  /** 工具 id。供应商侧的 tool name。 */
+  readonly name: string;
+  readonly description: string;
+  readonly input: JSONSchema;
+}
+
+/** 模型选择的工具调用。 */
+export interface ModelToolCall {
+  /** 供应商给的调用 id，回传 tool_result 时要用。 */
+  readonly id: string;
+  readonly name: string;
+  readonly args: unknown;
+}
+
 export interface GenerateRequest {
   readonly messages: readonly Message[];
-  readonly tools?: readonly ToolSignature[];
+  readonly tools?: readonly ModelTool[];
+  /** 要求模型必须选一个工具。部分模型（Opus 5.5 / Fable 5.1）不支持强制，适配器需降级。 */
+  readonly toolChoice?: 'auto' | 'required';
   /** 要求模型按此 schema 输出。不支持的适配器需降级为提示词约束。 */
   readonly responseSchema?: JSONSchema;
   readonly maxOutputTokens?: number;
@@ -32,8 +58,11 @@ export interface GenerateRequest {
 
 export interface GenerateResult {
   readonly text: string;
+  /** 模型选择的工具调用。原生 tool use 比解析文本可靠得多。 */
+  readonly toolCalls?: readonly ModelToolCall[];
   readonly usage: Usage;
   readonly modelId: string;
+  /** `filtered` 表示被安全分类器拒绝（Anthropic 的 `stop_reason: refusal`）。 */
   readonly stopReason: 'stop' | 'length' | 'tool' | 'filtered' | 'error';
 }
 

@@ -177,12 +177,26 @@ class WriteLock {
   }
 }
 
+/** `better-sqlite3` 的构造函数类型（只取我们用到的部分）。 */
+export type SqliteDriver = new (file: string, opts?: { readonly?: boolean }) => Db;
+
 export interface OpenOptions {
   /** 数据库文件路径，`:memory:` 用于测试。 */
   readonly file: string;
   /** artifact 负载的落盘目录。默认取数据库同级的 `artifacts/`。 */
   readonly artifactDir?: string;
   readonly readonly?: boolean;
+  /**
+   * 注入 `better-sqlite3` 的构造函数。
+   *
+   * 为什么需要它：原生模块的 ABI 与运行时绑定。本包被符号链接进 Electron 宿主时，
+   * Node 按**真实路径**解析，会加载本仓库那份（Node ABI）而不是宿主那份（Electron ABI）——
+   * 于是两边要反复重建，互相踩坏。
+   *
+   * 宿主传 `require('better-sqlite3')` 即可根治：用的就是它自己那份。
+   * 不传则回退到本包的依赖，本仓库测试走这条路。
+   */
+  readonly driver?: SqliteDriver;
 }
 
 export class SqliteContext {
@@ -191,7 +205,8 @@ export class SqliteContext {
   private readonly lock = new WriteLock();
 
   constructor(opts: OpenOptions) {
-    this.db = new Database(opts.file, opts.readonly ? { readonly: true } : {});
+    const Driver = opts.driver ?? (Database as unknown as SqliteDriver);
+    this.db = new Driver(opts.file, opts.readonly ? { readonly: true } : {});
     this.db.exec(DDL);
     const cur = this.db.prepare('SELECT v FROM meta WHERE k = ?').get('schema_version') as { v: string } | undefined;
     if (!cur) {

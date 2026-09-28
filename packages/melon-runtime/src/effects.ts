@@ -1,6 +1,6 @@
 import type {
-  Effect, EpisodeStore, IdGen, Logger, Planner, PolicyMode, Task, TaskEvent, TaskSpec, TaskStore,
-  ToolCall, Tracer, ContextBundle, ToolSignature,
+  ContextBundle, Effect, EpisodeStore, IdGen, Logger, ModelTool, Planner, PolicyMode, Task,
+  TaskEvent, TaskSpec, TaskStore, ToolCall, Tracer,
 } from '@melon-ai/core';
 import type { ToolPipeline } from '@melon-ai/tools';
 
@@ -22,7 +22,8 @@ export interface EffectDeps {
   readonly policyMode: (task: Task) => PolicyMode;
   /** 组装上下文。P0 先给一个最小实现，@melon-ai/context 就位后替换。 */
   readonly buildContext: (task: Task) => Promise<ContextBundle>;
-  readonly availableTools: (task: Task) => Promise<readonly ToolSignature[]>;
+  /** 本轮可用的工具，带全量 schema —— 供应商原生 tool use 需要。 */
+  readonly availableTools: (task: Task) => Promise<readonly ModelTool[]>;
   /** 召回技能。P0 可以是空实现。 */
   readonly recallSkills?: (task: Task, query: string) => Promise<readonly string[]>;
   /** 创建子任务。由 engine 注入，避免 EffectRunner 反向依赖 engine。 */

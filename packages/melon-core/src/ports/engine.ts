@@ -1,13 +1,14 @@
 import type { Sequenced, TaskId } from '../ids.js';
 import type { ApprovalDecision, PlanStep, Task, TaskEvent, TaskSpec } from '../task.js';
 import type { ContextBundle } from '../context.js';
-import type { ToolSignature } from '../tool.js';
+import type { ModelTool } from '../model.js';
 import type { TraceContext } from '../trace.js';
 
 export interface PlanInput {
   readonly task: Task;
   readonly context: ContextBundle;
-  readonly availableTools: readonly ToolSignature[];
+  /** 本轮可用的工具，带全量 schema —— 供应商原生 tool use 需要。 */
+  readonly availableTools: readonly ModelTool[];
   /**
    * 本次规划的 span。
    * ⚠️ Planner **不得**把 traceId 写进 `context.messages` ——

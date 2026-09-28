@@ -1,0 +1,12 @@
+{
+  "name": "@melon-ai/router",
+  "version": "0.0.1",
+  "description": "模型路由：按用途 × 策略 × 健康 × 配额选模型，返回候选序列。",
+  "type": "module",
+  "main": "./dist/index.cjs", "module": "./dist/index.js", "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup src/index.ts --format esm,cjs --dts --clean", "test": "tsx --test test/*.test.ts" },
+  "dependencies": { "@melon-ai/core": "workspace:*" },
+  "publishConfig": { "access": "public" }, "license": "MIT"
+}

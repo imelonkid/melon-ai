@@ -13,7 +13,7 @@ const ADAPTER_PKGS = ['melon-store-sqlite', 'melon-llm-anthropic', 'melon-llm-op
 const DOMAIN_PKGS = [
   'melon-task', 'melon-tools', 'melon-skills', 'melon-skills-builtin',
   'melon-memory', 'melon-context', 'melon-policy', 'melon-router',
-  'melon-prompt', 'melon-audit',
+  'melon-prompt', 'melon-audit', 'melon-planner-react',
 ];
 const group = (names) => `^packages/(${names.join('|')})/`;
 const ADAPTER_PKG = group(ADAPTER_PKGS);

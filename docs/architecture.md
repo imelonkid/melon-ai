@@ -433,12 +433,13 @@ vs「推理开始前框架必须准备好的东西」**。
 | **@melon-ai/skills-builtin** | 内置工具集：`memory_recall/write/forget`、`history_search/read`、`artifact_read`、`skill_find`、`tool_describe`。§2.7 的落地面 | core | P0 |
 | **@melon-ai/audit** | 审计记录：哈希链、脱敏、跨任务查询、独立保留期。**与事件日志是两件事**，见 §4.5 | core | P0 |
 | **@melon-ai/context** | 上下文装配、预算分配、episode 压缩 | core, memory, skills | P1 |
-| **@melon-ai/router** | 模型路由：按用途 × 策略 × 健康 × 配额选模型，返回候选序列。见 §4.6 | core | P1 |
+| **@melon-ai/router** | 模型路由：按用途 × 策略 × 健康 × 配额选模型，返回候选序列。见 §4.6 | core | **已完成** |
 | **@melon-ai/prompt** | 版本化提示词模板的注册与渲染。**只做注册渲染，不做 DSL**，见 §4.7 | core | P1 |
 | **@melon-ai/memory** | L0/L1/L2 管理，检索融合、提升、冲突消解 | core | P1 |
 | **@melon-ai/skills** | 技能注册表、召回、动态注册与健康检查 | core | P1 |
-| **@melon-ai/planner-react** | ReAct 规划器 + 意图分类短路 | core, context | P1 |
-| **@melon-ai/llm-\*** | 模型适配器（anthropic / openai / …） | core | P1 |
+| **@melon-ai/planner-react** | ReAct 规划器 + 意图分类短路。**用供应商原生 tool use**，不解析文本 | core | **已完成** |
+| **@melon-ai/llm-anthropic** | Claude 适配器：Messages API、原生 tool use、prompt caching | core | **已完成** |
+| **@melon-ai/llm-openai** | OpenAI 兼容适配器。一个适配器覆盖 OpenAI / DeepSeek / 通义千问 / Kimi | core | **已完成** |
 | **@melon-ai/mcp** | MCP 协议适配为 `SkillProvider` | core | P2 |
 | **@melon-ai/trigger** | 定时与事件触发的编排。`TriggerSource` 端口在 core，cron 内置，外部事件源做适配器 | core | P2 |
 
@@ -771,7 +772,29 @@ await agent.resolveApproval(task.id, callId, 'allow');
       （同一组断言跑内存版与 SQLite 版两遍），22 个测试
 - [x] `@melon-ai/agent`：`createAgent()` facade + `nodePlatform()`，5 个集成测试
       （含**真数据库的 P0 完整验收**）
+- [x] `@melon-ai/router`：策略路由 + 健康降权 + CJK 感知分词，9 个测试
+- [x] `@melon-ai/planner-react`：ReAct + 意图短路，11 个测试
+- [x] `@melon-ai/llm-anthropic` / `@melon-ai/llm-openai`：两个真实模型适配器
 - [ ] `@melon-ai/skills-builtin`（等 memory / context）
+- [ ] `@melon-ai/context` / `@melon-ai/memory`（宿主目前用最小实现顶着）
+
+#### 接真模型时暴露的问题
+
+36. **`ChatModel` 契约没法返回工具调用。** `GenerateResult` 只有 `text` ——
+    接原生 tool use 时才发现这个硬缺口。补 `ModelTool`（带全量 schema）、
+    `ModelToolCall`、`GenerateResult.toolCalls`、`GenerateRequest.toolChoice`。
+    `PlanInput.availableTools` 从 `ToolSignature[]` 改为 `ModelTool[]` ——
+    这不与 §7.5 的两级 schema 冲突：两级优化解决的是「工具太多」，
+    而经过技能召回后进入 `availableTools` 的只有 2~3 个，全量发送划算。
+37. **规划器用原生 tool use，不解析文本。** 让模型输出 `Action: ...` 再正则解析是
+    ReAct 论文时代的做法；原生 tool use 能保证参数符合 schema、动作不会被写进正文。
+    文本解析的失败模式（漏字段、JSON 截断、动作写进思考）在生产里极常见，
+    每次失败都要烧一轮预算。
+38. **历史以纯文本回传，不复原 tool_use / tool_result 块。** `Message.content` 是字符串。
+    好处是跨供应商一致、契约不必引入块结构；代价是模型看不到自己上一轮的结构化调用。
+39. **`store-sqlite` 支持注入驱动（`OpenOptions.driver`）。** 这是第 34 条的根治办法：
+    宿主传 `require('better-sqlite3')`，用的就是它自己那份，
+    两个仓库不必再为 ABI 反复互相重建。第 34 条的 `rebuild:node` 变为可选。
 
 #### 集成 Jolly 时暴露的问题（P3 提前做了一部分）
 

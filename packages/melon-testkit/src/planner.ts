@@ -1,4 +1,4 @@
-import type { ContextBundle, PlanInput, PlanStep, Planner, ToolSignature } from '@melon-ai/core';
+import type { ContextBundle, ModelTool, PlanInput, PlanStep, Planner } from '@melon-ai/core';
 
 /**
  * 按脚本依次产出 PlanStep 的假规划器。
@@ -30,4 +30,4 @@ export function stubContext(tokens = 100): ContextBundle {
   };
 }
 
-export const noTools: readonly ToolSignature[] = [];
+export const noTools: readonly ModelTool[] = [];

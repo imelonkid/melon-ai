@@ -1,0 +1,35 @@
+{
+  "name": "@melon-ai/llm-anthropic",
+  "version": "0.0.1",
+  "description": "Claude 的 ChatModel 适配器：Messages API、原生 tool use、prompt caching。",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean"
+  },
+  "dependencies": {
+    "@melon-ai/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.128"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.128.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

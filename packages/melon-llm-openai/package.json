@@ -1,0 +1,15 @@
+{
+  "name": "@melon-ai/llm-openai",
+  "version": "0.0.1",
+  "description": "OpenAI 兼容接口的 ChatModel 适配器。一个适配器覆盖 OpenAI / DeepSeek / 通义千问 / Kimi。",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup src/index.ts --format esm,cjs --dts --clean" },
+  "dependencies": { "@melon-ai/core": "workspace:*" },
+  "publishConfig": { "access": "public" },
+  "license": "MIT"
+}

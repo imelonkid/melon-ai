@@ -1,7 +1,7 @@
 import type {
-  AgentEngine, AgentId, AuditRecorder, AuditSink, ContextBundle, IdempotencyStore, Planner,
-  Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, SchemaValidator, StoreBundle, Task,
-  ToolResolver, ToolSignature, ToolsetSnapshot,
+  AgentEngine, AgentId, AuditRecorder, AuditSink, ContextBundle, IdempotencyStore, ModelTool,
+  Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, SchemaValidator, StoreBundle,
+  Task, ToolResolver, ToolsetSnapshot,
 } from '@melon-ai/core';
 import { ChainedRecorder, DEFAULT_RETENTION, assertRetention } from '@melon-ai/audit';
 import { ToolPipeline } from '@melon-ai/tools';
@@ -27,7 +27,8 @@ export interface CreateAgentOptions {
   readonly quotaOf?: (agentId: AgentId) => Promise<QuotaSnapshot | null>;
   /** 上下文装配。P0 未提供时用最小实现，`@melon-ai/context` 就位后传真的。 */
   readonly buildContext?: (task: Task) => Promise<ContextBundle>;
-  readonly availableTools?: (task: Task) => Promise<readonly ToolSignature[]>;
+  /** 本轮可用的工具，带全量 schema。默认空数组 —— 不给工具模型就只能直答。 */
+  readonly availableTools?: (task: Task) => Promise<readonly ModelTool[]>;
   readonly recallSkills?: (task: Task, query: string) => Promise<readonly string[]>;
   readonly pollIntervalMs?: number;
   readonly execute?: { timeoutMs?: number; maxRetries?: number; backoffBaseMs?: number };
