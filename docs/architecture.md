@@ -22,8 +22,6 @@
 - 不是 LangChain 那类「链式胶水」。我们要的是内核 —— 状态、预算、准入、可重放，而不是把 prompt 拼起来。
 - 不是多租户服务。一期假设单机单用户（见 §5 假设 A3）。
 
-**首个宿主是 Jolly**（AI 工作台桌面应用），但框架里不应出现任何 Jolly 的痕迹。Jolly 特有的东西（周报助手、AI 源页面、看板 UI）留在 Jolly 侧。
-
 ---
 
 ## 2. 设计原则
@@ -88,10 +86,12 @@
 │ Tier 2  运行时层                                                     │
 │   melon-runtime        调度器 + EffectRunner + AgentEngine 实现       │
 │   melon-planner-react  ReAct 规划器（Planner 的一种实现）             │
+│   melon-trigger        定时与事件触发源的编排（源本身是适配器）        │
 ├─────────────────────────────────────────────────────────────────────┤
 │ Tier 1  领域层               （只依赖 melon-core）                    │
-│   melon-task      melon-tools     melon-skills                      │
-│   melon-memory    melon-context   melon-policy                      │
+│   melon-task      melon-tools     melon-skills    melon-router      │
+│   melon-memory    melon-context   melon-policy    melon-prompt      │
+│   melon-audit                                                        │
 ├─────────────────────────────────────────────────────────────────────┤
 │ Tier 0  契约层                                                       │
 │   melon-core           类型 + 端口。零运行时依赖。倒置中心            │
@@ -116,12 +116,16 @@
 | **melon-store-sqlite** | 全套存储端口的 SQLite 实现（含向量） | core | P0 |
 | **melon-testkit** | 内存适配器、假模型、事件日志断言工具 | core | P0 |
 | **melon-agent** | facade：`createAgent(deps)`，宿主唯一入口 | 全部 | P0 |
+| **melon-audit** | 审计记录：哈希链、脱敏、跨任务查询、独立保留期。**与事件日志是两件事**，见 §4.5 | core | P0 |
 | **melon-context** | 上下文装配、预算分配、episode 压缩 | core, memory, skills | P1 |
+| **melon-router** | 模型路由：按用途 × 策略 × 健康 × 配额选模型，返回候选序列。见 §4.6 | core | P1 |
+| **melon-prompt** | 版本化提示词模板的注册与渲染。**只做注册渲染，不做 DSL**，见 §4.7 | core | P1 |
 | **melon-memory** | L0/L1/L2 管理，检索融合、提升、冲突消解 | core | P1 |
 | **melon-skills** | 技能注册表、召回、动态注册与健康检查 | core | P1 |
 | **melon-planner-react** | ReAct 规划器 + 意图分类短路 | core, context | P1 |
 | **melon-llm-\*** | 模型适配器（anthropic / openai / …） | core | P1 |
 | **melon-mcp** | MCP 协议适配为 `SkillProvider` | core | P2 |
+| **melon-trigger** | 定时与事件触发的编排。`TriggerSource` 端口在 core，cron 内置，外部事件源做适配器 | core | P2 |
 
 ### 4.2 为什么一个组件一个模块
 
@@ -145,7 +149,7 @@ forbidden: [
     to:   { path: '^packages/(?!melon-core)' } },          // core 不依赖任何人
 
   { name: 'domain-no-infra',
-    from: { path: '^packages/melon-(task|tools|skills|memory|context|policy)' },
+    from: { path: '^packages/melon-(task|tools|skills|memory|context|policy|router|prompt|audit)' },
     to:   { path: '^packages/melon-(store|llm|mcp)-' } },   // 领域层不碰适配器
 
   { name: 'infra-only-core',
@@ -170,6 +174,82 @@ forbidden: [
 > 注：包名没有加 npm scope。如果将来要发到 npm，`@melon-ai/core` 比 `melon-core` 更安全（避免抢名、便于统一权限）。这条**待定**，见 §8。
 
 ---
+
+### 4.5 melon-audit：为什么审计不能靠事件日志
+
+初稿里写过「事件日志同时满足操作日志，不需要另做审计」。**这个判断是错的。**
+两者目的不同，形状也不同：
+
+| | 事件日志 `EventLog` | 审计日志 `Audit` |
+|---|---|---|
+| 目的 | 驱动状态机、可重放 | 合规、追责、事后取证 |
+| 内容 | 状态迁移所需的**最小**信息 | 谁 · 何时 · 对什么 · 做了什么 · **依据** · 结果 |
+| 分片 | 按 `taskId` | 按主体 / 资源 / 时间 / 动作 |
+| 保留 | 可随任务归档清理 | **独立保留期**，可能长于任务本身 |
+| 完整性 | append-only | append-only **且需防篡改** |
+
+只靠 `EventLog` 会留下五个窟窿：
+
+1. **回答不了跨任务的问题**。按 `taskId` 分片，「上个月这个 Agent 对外发了多少封邮件」「谁批准了那次删除」都查不出来 —— 缺 `(actor, action, resource, time)` 维度的索引。
+2. **授权决策没记依据**。`ApprovalResolved` 只有 `decision`，没记命中了哪条 `Grant`、当时 `PolicyMode` 是什么。事后无法证明某次自动执行是合规的。
+3. **记忆读写零覆盖**。L1 存的是用户个人事实。谁写入、被谁召回、被哪个 Agent 用过 —— 这是隐私合规的核心，而**召回根本不产生事件**。
+4. **技能注册是安全事件**。一个新 MCP server 进入系统必须留痕，`EventLog` 里没有这个概念。
+5. **保留期冲突**。用户删掉一个会话，事件日志应当随之清理；但「该 Agent 曾对外发过邮件」这条记录可能需要保留更久。
+
+分层上不让 audit 变成所有人都依赖的中心：
+
+```
+melon-core     AuditRecord 类型
+               AuditRecorder 端口  ← 领域模块调这个
+               AuditSink 端口      ← 持久化
+melon-audit    实现 AuditRecorder：哈希链、脱敏、关联 id、查询、保留期
+melon-store-*  实现 AuditSink
+领域模块        只依赖 core 里的 AuditRecorder 端口
+```
+
+**必须审计的动作**：工具调用（`external` / `spend` / `irreversible` 一律记）、审批决策**及其依据**、
+L1 记忆的写入与召回、技能注册与注销、策略变更、以及**模型路由中涉及数据出境的选择**。
+
+> 最后一条不是凑数。产品侧已经把「数据不出境」作为模型选择的卖点写进界面了 ——
+> 一旦 router 能把数据发往不同供应商，「哪份数据被哪个供应商看到过」就是硬合规要求。
+
+**一条硬约束：审计记录里存引用，不存 payload**（`artifactRef` / `memoryId`，而非内容本身）。
+否则审计库会变成敏感数据的第二份副本，反而扩大了暴露面。
+
+期次定在 **P0**：审计是最难事后补的东西，工具管线第一天就得往里写。
+
+### 4.6 melon-router：为什么放领域层而不是运行时层
+
+它在执行期被调用、持有健康与配额状态、还要跨供应商降级 —— 看着像运行时层。
+但它的**形状**和 `melon-policy` 是同一类：给定输入产出一个决策。
+
+- `melon-policy`：risk × mode → `allow | ask | deny`
+- `melon-router`：intent × 策略 × 健康 × 配额 → 选哪个模型
+
+两者都只依赖 `melon-core`，都不碰任务机械。放同一层更一致。
+
+**分界线**：如果 router 只负责「选」，它属于领域层；如果它还拥有跨供应商的重试与降级**执行循环**，
+就该进运行时层。
+
+**取前者**。让 `select()` 返回一个候选序列（primary + fallbacks），真正的重试和熔断
+由 `melon-tools` 已有的那套机制统一执行 —— 不要在系统里养两套重试逻辑。
+
+### 4.7 melon-prompt：只做注册与渲染，不做 DSL
+
+现状是提示词散在三处：`melon-planner-react` 的 ReAct 提示、`melon-memory` 的抽取提示、
+`melon-context` 的压缩提示。收拢的理由不只是整洁：
+
+- 提示词是整个系统里**改动最频繁**的东西，集中才可能做版本对比和 A/B。
+- **可重放性要求它版本化**：重放一条 `PlanProduced` 事件时，必须知道当时用的是哪一版提示词，
+  否则重放结果和历史对不上，事件日志的可重放性就名存实亡。
+
+两条边界，不守住这个包就会变成负债：
+
+1. **不做提示词 DSL。** 提示词框架的通病是把最终发给模型的文本藏在多层抽象后面，
+   调试时看不见真正发出去的东西。这里只做「命名 + 版本化模板 + 变量渲染」。
+2. **模板和解析器不跨包分离。** 提示词的输出格式与读它的 parser 之间是一份隐式契约，
+   拆到两个包里必然悄悄漂移。做法：`melon-prompt` 只拥有文本与版本号，
+   **parser 留在消费方**，消费方按 `(name, version)` 引用，版本号进事件日志。
 
 ## 5. 假设
 
@@ -282,16 +362,16 @@ await agent.resolveApproval(task.id, callId, 'allow');
 ## 9. 分期
 
 **P0 · 骨架能跑通一次真实的工具调用**
-`melon-core` / `melon-task` / `melon-policy` / `melon-tools` / `melon-runtime` / `melon-store-sqlite` / `melon-testkit` / `melon-agent`。
+`melon-core` / `melon-task` / `melon-policy` / `melon-tools` / `melon-audit` / `melon-runtime` / `melon-store-sqlite` / `melon-testkit` / `melon-agent`。
 上下文先用固定窗口不压缩，记忆先只有 L0 + 朴素 L2。
 **验收**：一个带审批的两步任务，能卡在 `AWAITING_APPROVAL`，进程重启后从事件日志恢复并继续执行完。
 
 **P1 · 记忆与上下文**
-`melon-memory` / `melon-context` / `melon-skills` / `melon-planner-react` / 首个 LLM 适配器。
+`melon-memory` / `melon-context` / `melon-skills` / `melon-router` / `melon-prompt` / `melon-planner-react` / 首个 LLM 适配器。
 **验收**：40 轮以上长会话不炸窗口；跨会话记得用户偏好；技能召回把 tool schema 控制在预算内。
 
 **P2 · 扩展生态**
-`melon-mcp` + 动态注册 + 健康检查熔断。
+`melon-mcp` + `melon-trigger` + 动态注册 + 健康检查熔断。
 **验收**：装一个第三方 MCP server，不重启即可用，且**绕不过准入层**。
 
 **P3 · 集成 Jolly**
@@ -308,6 +388,10 @@ await agent.resolveApproval(task.id, callId, 'allow');
        我们用 tsup 逐包构建、不走 project references，所以直接去掉 composite，
        `typecheck` 改为逐包 `tsc --noEmit`。）
 - [x] `.dependency-cruiser.cjs` 分层规则落地并通过
+- [x] 补齐 `melon-audit` / `melon-router` / `melon-prompt` / `melon-trigger` 的端口
+      （`AuditRecorder` / `AuditSink` / `PromptRegistry` / `TriggerSource`；
+       `ModelRouter.select` 改为返回候选序列 + 出境标识；
+       `PlanProduced` 事件补 `promptRef` 与 `modelId`，否则重放对不上历史）
 - [ ] `melon-task` 状态机 reducer + 迁移表
 - [ ] `melon-policy` / `melon-tools` / `melon-runtime`
 - [ ] `melon-store-sqlite` / `melon-testkit` / `melon-agent`

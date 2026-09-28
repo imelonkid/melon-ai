@@ -2,6 +2,7 @@ import type { AgentId, ArtifactRef, CallId, EpisodeId, TaskId } from './ids.js';
 import type { ToolCall, ToolResultMeta, RiskClass } from './tool.js';
 import type { ToolsetSnapshot } from './skill.js';
 import type { Usage } from './model.js';
+import type { PromptRef } from './prompt.js';
 
 export type TaskState =
   | 'PENDING'            // 待执行
@@ -114,7 +115,9 @@ export type PlanStep =
 export type TaskEvent =
   | { readonly t: 'Created'; readonly spec: TaskSpec }
   | { readonly t: 'Started' }
-  | { readonly t: 'PlanProduced'; readonly step: PlanStep; readonly usage: Usage }
+  | { readonly t: 'PlanProduced'; readonly step: PlanStep; readonly usage: Usage;
+      /** 当时用的提示词版本。缺了它重放结果会和历史对不上。 */
+      readonly promptRef?: PromptRef; readonly modelId?: string }
   | { readonly t: 'SkillsInjected'; readonly skillIds: readonly string[] }
   | { readonly t: 'ApprovalRequested'; readonly request: ApprovalRequest }
   | { readonly t: 'ApprovalResolved'; readonly callId: CallId; readonly decision: ApprovalDecision }

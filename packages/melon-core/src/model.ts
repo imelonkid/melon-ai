@@ -67,8 +67,25 @@ export type RouteIntent =
   | 'extract'     // 记忆抽取，便宜优先
   | 'answer';     // 最终作答
 
+/**
+ * 路由决策。返回**候选序列**而不是单个模型：
+ * router 只负责「选」，真正的重试与熔断由 melon-tools 那套统一机制执行 ——
+ * 不要在系统里养两套重试逻辑。理由见 docs/architecture.md §4.6。
+ */
+export interface RouteDecision {
+  readonly primary: ChatModel;
+  readonly fallbacks: readonly ChatModel[];
+  readonly reason: string;
+  /**
+   * 数据将被发往的供应商标识。**必须记审计** ——
+   * 产品侧已把「数据不出境」作为模型选择的卖点，
+   * 「哪份数据被哪个供应商看到过」是硬合规要求。
+   */
+  readonly egress: readonly string[];
+}
+
 export interface ModelRouter {
-  select(intent: RouteIntent): Promise<ChatModel>;
+  select(intent: RouteIntent, signal?: AbortSignal): Promise<RouteDecision>;
   tokenizerFor(model: ChatModel): Tokenizer;
 }
 

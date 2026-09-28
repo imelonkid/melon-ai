@@ -6,5 +6,8 @@ export * from './memory.js';
 export * from './model.js';
 export * from './task.js';
 export * from './policy.js';
+export * from './audit.js';
+export * from './prompt.js';
+export * from './trigger.js';
 export * from './context.js';
 export * from './ports/index.js';
