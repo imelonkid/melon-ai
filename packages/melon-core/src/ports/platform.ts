@@ -1,4 +1,5 @@
 import type { ResourceRef } from '../audit.js';
+import type { Tracer } from '../trace.js';
 
 /** 把时间、随机、日志这些不纯的东西也做成端口 —— 状态机的可测性依赖于此。 */
 export interface Clock {
@@ -27,4 +28,5 @@ export interface Platform {
   readonly clock: Clock;
   readonly ids: IdGen;
   readonly logger: Logger;
+  readonly tracer: Tracer;
 }

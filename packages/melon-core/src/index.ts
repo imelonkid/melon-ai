@@ -1,4 +1,5 @@
 export * from './ids.js';
+export * from './trace.js';
 export * from './errors.js';
 export * from './tool.js';
 export * from './skill.js';

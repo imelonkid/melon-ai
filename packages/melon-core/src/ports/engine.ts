@@ -2,11 +2,18 @@ import type { Sequenced, TaskId } from '../ids.js';
 import type { ApprovalDecision, PlanStep, Task, TaskEvent, TaskSpec } from '../task.js';
 import type { ContextBundle } from '../context.js';
 import type { ToolSignature } from '../tool.js';
+import type { TraceContext } from '../trace.js';
 
 export interface PlanInput {
   readonly task: Task;
   readonly context: ContextBundle;
   readonly availableTools: readonly ToolSignature[];
+  /**
+   * 本次规划的 span。
+   * ⚠️ Planner **不得**把 traceId 写进 `context.messages` ——
+   * 会破坏稳定前缀，prompt cache 收益归零。
+   */
+  readonly trace: TraceContext;
 }
 
 /**

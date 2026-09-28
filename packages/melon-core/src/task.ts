@@ -3,6 +3,7 @@ import type { ToolCall, ToolResultMeta, RiskClass } from './tool.js';
 import type { ToolsetSnapshot } from './skill.js';
 import type { Usage } from './model.js';
 import type { PromptRef } from './prompt.js';
+import type { SpanId, TraceContext } from './trace.js';
 
 export type TaskState =
   | 'PENDING'            // 待执行
@@ -70,6 +71,11 @@ export interface Task {
   readonly usage: BudgetUsage;
   readonly toolset: ToolsetSnapshot;
   readonly episodeId: EpisodeId;
+  /**
+   * 链路上下文。traceId 在任务内不变，**所以不要往每条事件上复制** ——
+   * 事件通过 taskId 关联即可。只有代表「一次工作」的事件带 spanId。
+   */
+  readonly trace: TraceContext;
   /** 当前挂起的审批（state=AWAITING_APPROVAL 时非空）。 */
   readonly pendingCall?: ToolCall;
   /** 正在等待的子任务。 */
@@ -117,12 +123,13 @@ export type TaskEvent =
   | { readonly t: 'Started' }
   | { readonly t: 'PlanProduced'; readonly step: PlanStep; readonly usage: Usage;
       /** 当时用的提示词版本。缺了它重放结果会和历史对不上。 */
-      readonly promptRef?: PromptRef; readonly modelId?: string }
+      readonly promptRef?: PromptRef; readonly modelId?: string;
+      readonly spanId?: SpanId }
   | { readonly t: 'SkillsInjected'; readonly skillIds: readonly string[] }
   | { readonly t: 'ApprovalRequested'; readonly request: ApprovalRequest }
   | { readonly t: 'ApprovalResolved'; readonly callId: CallId; readonly decision: ApprovalDecision }
-  | { readonly t: 'ToolCallStarted'; readonly call: ToolCall }
-  | { readonly t: 'ToolCallFinished'; readonly callId: CallId; readonly meta: ToolResultMeta }
+  | { readonly t: 'ToolCallStarted'; readonly call: ToolCall; readonly spanId?: SpanId }
+  | { readonly t: 'ToolCallFinished'; readonly callId: CallId; readonly meta: ToolResultMeta; readonly spanId?: SpanId }
   | { readonly t: 'Observed'; readonly callId: CallId; readonly summary: string; readonly artifactRef?: ArtifactRef }
   | { readonly t: 'ChildSpawned'; readonly childId: TaskId }
   | { readonly t: 'ChildSettled'; readonly childId: TaskId; readonly outcome: Outcome }

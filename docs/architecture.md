@@ -193,7 +193,74 @@ resource: { kind, ref, contentHash }
 2. **泄露面变大**。软删意味着一份泄露的 db 文件里包含用户曾问过 Agent 的一切。
    对本地持有邮件与日程内容的桌面应用，这是实质的风险画像变化。
 
-### 2.6 宿主无关
+### 2.6 一切执行都挂链路上下文
+
+**每一次执行都关联 `traceId`**，便于排障。但只有 traceId 不够 ——
+对 Agent 而言会退化成一堆没有结构的日志行。
+
+#### 为什么必须同时有 spanId
+
+Agent 的因果结构比普通 Web 请求深得多：
+
+```
+trace（一次触发）
+├─ task#1 conversation
+│  ├─ step 1
+│  │  ├─ context.build
+│  │  ├─ model.call   ← planner
+│  │  └─ tool.invoke  mail.list
+│  ├─ step 2 …
+│  └─ task#2 子任务
+└─ task#9 maintenance（异步，在 task#1 结束之后才跑）
+```
+
+一个 24 步的 ReAct 循环会产生上百行日志。扁平的 traceId 看不出
+**哪次模型调用属于哪一步**、**工具 B 是在第 3 步里面跑的**。
+而 Agent 排障的问题几乎总是「它**为什么**决定调这个工具」——
+需要的正是这棵因果树。`spanId` + `parentSpanId` 两个字段即可。
+
+#### 边界 = 一次触发
+
+不是一个任务，也不是一个会话：
+
+- 用户发一条消息 → 新 trace。子任务继承，**异步派生的 maintenance 任务也继承**
+  （否则丢掉「这条记忆是哪次对话写进去的」，而这是隐私排查最常问的问题）
+- 定时任务跑 52 次 → **52 个 trace**，不是一个横跨一年的 trace
+
+#### 挂在流动的对象上，不用 AsyncLocalStorage
+
+ALS 是隐式状态，与 §2.3「纯函数优先」冲突，且跨 EffectRunner 边界容易断。
+改为给本来就在流动的对象加字段：
+
+| 载体 | 字段 |
+|---|---|
+| `Task` | `trace: TraceContext` —— traceId 任务内不变，**不往每条事件上复制** |
+| `TaskEvent` | 只有代表「一次工作」的事件带 `spanId`（`PlanProduced` / `ToolCall*`） |
+| `ToolContext` / `PlanInput` | `trace` —— 本就由运行时构造 |
+| `AuditRecord` | `traceId` + `spanId?` |
+
+`AuditRecord.correlationId` 已并入 `traceId` —— 同一个概念不留两个名字，否则迟早各自漂移。
+
+#### 两个坑
+
+**1. traceId 绝不能进入提示词。**
+
+这个坑很隐蔽。kernel-design.md §7.2 要求上下文按「稳定性递减」排列以吃满 prompt cache。
+traceId 每次都变 —— 一旦有人为排障把它塞进系统提示，**整个前缀每轮失效，缓存收益归零**，
+一个 20 步任务的成本差是数倍。写死：traceId 只进日志与 span，不进 `Message`。
+
+**2. 重放必须发新 traceId，并链回原始。**
+
+从事件日志重放历史任务时若复用原 traceId，重放产生的 span 会污染原始 trace，
+看起来像当时真跑了两遍。`TraceContext.replayOf` 指回原始。
+
+#### 对外传播
+
+工具调用会打到 MCP server 与外部 HTTP API，按 **W3C Trace Context**
+（`traceparent` 头 / MCP metadata）传下去，使 Agent 的工具调用能与对端日志对上。
+`Tracer` 是端口，默认实现写日志即可；接 OpenTelemetry 只需另做适配器，内核不变。
+
+### 2.7 宿主无关
 
 框架不 import 任何宿主环境的东西（没有 `electron`、没有 `fs` 的硬依赖、没有全局单例）。时间、随机数、日志都是端口（`Clock` / `IdGen` / `Logger`），因为状态机的可测性依赖于此。
 
@@ -530,6 +597,10 @@ await agent.resolveApproval(task.id, callId, 'allow');
       `DeletionMotive`（supersede / retention / privacy）、
       `Purger`（带 dryRun，privacy 不可逆）、`Archive`（retention 先归档，privacy 不经过）；
       `MemoryStore.forgetByTask` 明确为 privacy 路径的物理删除
+- [x] 链路上下文落地（§2.6）：`TraceContext`（traceId + spanId + parentSpanId + replayOf）、
+      `Tracer` / `Span` / `TracePropagator` 端口，挂到
+      `Task` / `ToolContext` / `PlanInput` / `AuditRecord` 上；
+      `correlationId` 并入 `traceId`
 - [ ] `melon-task` 状态机 reducer + 迁移表
 - [ ] `melon-policy` / `melon-tools` / `melon-runtime`
 - [ ] `melon-store-sqlite` / `melon-testkit` / `melon-agent`

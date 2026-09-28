@@ -1,6 +1,7 @@
 import type { ArtifactRef, CallId, SkillId, TaskId, ToolId } from './ids.js';
 import type { ToolErrorShape } from './errors.js';
 import type { LogField } from './ports/platform.js';
+import type { TraceContext } from './trace.js';
 
 /**
  * 风险等级。决定准入层要不要拦。顺序即严重程度。
@@ -53,6 +54,8 @@ export interface ToolCall {
 export interface ToolContext {
   readonly taskId: TaskId;
   readonly callId: CallId;
+  /** 这次调用的 span。对外请求应按 W3C Trace Context 把它传下去。 */
+  readonly trace: TraceContext;
   readonly signal: AbortSignal;
   /** 非幂等工具的重放保护键；幂等工具为 undefined。 */
   readonly idempotencyKey?: string;

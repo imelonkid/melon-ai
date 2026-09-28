@@ -1,4 +1,5 @@
 import type { TaskId } from './ids.js';
+import type { SpanId, TraceId } from './trace.js';
 
 /**
  * ─── 审计 ───
@@ -91,8 +92,13 @@ export interface AuditRecord {
    */
   readonly basis?: Readonly<Record<string, string | number | boolean>>;
   readonly taskId?: TaskId;
-  /** 把一次用户意图下的所有记录串起来，跨任务追踪。 */
-  readonly correlationId: string;
+  /**
+   * 把一次触发下的所有记录串起来，跨任务追踪。
+   * 与链路的 traceId 是**同一个概念，同一个值** —— 不再单设 correlationId，
+   * 两个名字迟早会各自漂移。
+   */
+  readonly traceId: TraceId;
+  readonly spanId?: SpanId;
   /** 前一条记录的哈希，构成防篡改链。 */
   readonly prevHash?: string;
   readonly hash: string;
@@ -107,7 +113,7 @@ export interface AuditQuery {
   readonly resourceKind?: string;
   readonly resourceRef?: string;
   readonly taskId?: TaskId;
-  readonly correlationId?: string;
+  readonly traceId?: TraceId;
   readonly from?: number;
   readonly to?: number;
   readonly limit: number;
