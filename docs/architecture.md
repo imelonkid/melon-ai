@@ -783,8 +783,13 @@ await agent.resolveApproval(task.id, callId, 'allow');
 `@melon-ai/mcp` + `@melon-ai/trigger` + 动态注册 + 健康检查熔断。
 **验收**：装一个第三方 MCP server，不重启即可用，且**绕不过准入层**。
 
+> 实际执行顺序与此不同：`@melon-ai/trigger` 的**定时**部分在 P3 中途提前做了 ——
+> 宿主要做「每天 9 点跑周报」，而在宿主里自己写 `setInterval` 会把调度语义
+> （补跑、时区、版本链）沉淀在应用层，换个宿主要重写一遍。事件触发源仍在 P2。
+
 **P3 · 集成 Jolly**
 把 Jolly 现有原型的看板、权限卡、AI 源接到 `AgentEngine` 的事件流上。
+**进行中** —— 逐项进度见 §10.1，下一步见 §10.2。
 
 ---
 
@@ -836,8 +841,69 @@ await agent.resolveApproval(task.id, callId, 'allow');
 - [x] `@melon-ai/router`：策略路由 + 健康降权 + CJK 感知分词，9 个测试
 - [x] `@melon-ai/planner-react`：ReAct + 意图短路，11 个测试
 - [x] `@melon-ai/llm-anthropic` / `@melon-ai/llm-openai`：两个真实模型适配器
+- [x] `@melon-ai/trigger`：定时编排。`nextFireAt` / `advancePast` 为纯函数
+      （DST 回拨 25 小时、前跳 23 小时、不存在的本地时刻都有断言），
+      `Scheduler` 管版本链与补跑策略，26 个测试
+- [x] 依赖方向检查**真正生效**：专用 `tsconfig.depcruise.json` 把 `@melon-ai/*`
+      映射到各包 src。此前跨包导入全被 `dist` 的 exclude 吃掉，
+      规则空转（见下方第 46 条）。修后依赖数 153 → 223，零违规
 - [ ] `@melon-ai/skills-builtin`（等 memory / context）
 - [ ] `@melon-ai/context` / `@melon-ai/memory`（宿主目前用最小实现顶着）
+
+**测试总数 192，全绿；`lint:deps` 223 条依赖零违规。**
+
+### 10.1 宿主（Jolly）集成进度
+
+Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §10 里 40 之后的
+条目全部来自它的人工验收。
+
+| 能力 | 内核 | Jolly 界面 |
+|---|---|---|
+| 任务列表 / 详情 / 事件流 | ✅ | ✅ 列表 + 整页详情 |
+| 对客视图 vs 调试面板 | ✅ 事件带 `level` | ✅ 设置页开发者模式 |
+| 自定义任务目标 | ✅ | ✅ 输入框 + 预设 |
+| 审批 / 驳回 | ✅ | ✅ 列表行内 + 详情页 |
+| 崩溃恢复 | ✅ `recover()` | ✅ 重启后继续 |
+| 多模型源 + 热生效 | ✅ `ModelRouter` | ✅ AI 源页 |
+| **定时任务** | ✅ 本次完成 | ❌ **下一步** |
+| 始终允许（`always`） | ✅ | ❌ 界面只有批准/驳回 |
+| 授权清单 / 撤销 | ✅ `GrantStore.listByAgent` | ❌ 无入口 |
+| 审计查询 / 链校验 | ✅ | ❌ 无入口 |
+| 执行权限策略分档 | ✅ `PolicyMode` | ❌ 设置页是假的，内核写死 `low-risk-auto` |
+| 取消任务 | ✅ `cancel()` | ❌ 无按钮 |
+| 对话驱动 | — | ❌ 整页 mock |
+
+「内核 ✅ / 界面 ❌」的那几行是当前最大的一块债：**能力做完了但验不了**，
+所以也没被真实使用检验过。§10 的经验是这类代码几乎必然有问题
+（工具名点号、artifact 句柄、`pendingCall` 不清除，全是接上界面才暴露的）。
+
+### 10.2 下一步
+
+按「能被人工验收」排序，不按模块完整度排序 —— 验不了的东西写完等于没写。
+
+**下一步（进行中）：Jolly 接定时任务**
+
+- 创建入口做成 `创建 ▾`：手动设置 / 用对话创建
+- 手动表单：标题、目标描述、Agent、重复（仅一次 / 每天 / 每周 / 工作日）、时间、通知
+- 定时任务单独一个列表，与任务实例分开 —— 一条 Schedule 会产生 N 个任务
+- 时区取宿主的 `Intl.DateTimeFormat().resolvedOptions().timeZone`，不让用户选
+- **验收**：建一个「1 分钟后」的一次性任务，看它自己跑起来；
+  关掉应用等它错过一次，重启后确认只补跑一次（`catchUp:'skip'`）
+
+**再下一步：把「内核有、界面没有」的四项补齐**
+
+1. 权限策略接内核 + 始终允许按钮 + 授权清单（这三件是同一套东西，一起做）
+2. 审计页（`auditTail` + `verifyAudit` 已经在 preload 里暴露了，没人用）
+3. 取消任务
+4. 对话页接内核 —— 工作量最大，也是「用对话创建定时任务」的前置
+
+**内核侧待办（P1，不阻塞上面）**
+
+- `@melon-ai/context` / `@melon-ai/memory`：宿主现在用的是 40 条固定窗口的
+  最小实现，长会话必炸。这是 P1 验收「40 轮不炸窗口」的正主
+- `@melon-ai/skills-builtin`：依赖上面两个
+- `@melon-ai/trigger` 的事件触发源（P2）：目前只做了定时，
+  `TriggerSource` 端口早就在 core 里等着
 
 #### 人工验收暴露的问题
 
