@@ -39,6 +39,13 @@ export class Runtime implements AgentEngine {
   private readonly inflight = new Set<Promise<unknown>>();
   private poller: ReturnType<typeof setInterval> | undefined;
   private running = false;
+  /**
+   * 已停止。与 `running` 分开：没 start 过也能 submit/watch（测试这么用），
+   * 但 stop 之后所有 watch 都得收尾 —— 否则还在等人的任务的 watch 会一直轮询：
+   * 存储已关时每次轮询都抛错，存储还开着时进程永远退不出（§10 第 53 条）。
+   */
+  private stopped = false;
+  private readonly waking = new Set<() => void>();
 
   constructor(private readonly deps: EngineDeps) {}
 
@@ -107,9 +114,15 @@ export class Runtime implements AgentEngine {
           lastSeq = row.seq;
           yield row;
         }
+        if (this.stopped) return;
         const task = await this.deps.tasks.get(id);
         if (task && ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(task.state) && buffer.length === 0) return;
-        await new Promise<void>((r) => { notify = r; setTimeout(r, 50); });
+        await new Promise<void>((r) => {
+          notify = r;
+          this.waking.add(r);
+          setTimeout(r, 50);
+        });
+        if (notify) this.waking.delete(notify);
         notify = undefined;
       }
     } finally {
@@ -122,6 +135,7 @@ export class Runtime implements AgentEngine {
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    this.stopped = false;
     await this.recover();
     const iv = this.deps.pollIntervalMs ?? 1000;
     if (iv > 0) this.poller = setInterval(() => void this.tick(), iv);
@@ -129,6 +143,10 @@ export class Runtime implements AgentEngine {
 
   async stop(): Promise<void> {
     this.running = false;
+    this.stopped = true;
+    // 叫醒所有在等的 watch，让它们看到 stopped 后收尾
+    for (const wake of this.waking) wake();
+    this.waking.clear();
     if (this.poller) clearInterval(this.poller);
     this.poller = undefined;
     for (const t of this.timers.values()) clearTimeout(t);

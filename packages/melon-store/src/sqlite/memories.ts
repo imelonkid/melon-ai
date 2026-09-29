@@ -2,6 +2,7 @@ import type {
   AgentId, Memory, MemoryId, MemoryQuery, MemoryStore, Scored, TaskId, VectorIndex,
 } from '@melon-ai/core';
 import type { SqliteContext } from './db.js';
+import { segment } from './segment.js';
 
 type Row = {
   rowid: number; id: string; scope: string; agent_id: string | null; kind: string;
@@ -45,7 +46,7 @@ export class SqliteMemoryStore implements MemoryStore {
     );
     const rowid = info.lastInsertRowid;
     this.cx.db.prepare('INSERT OR REPLACE INTO memories_fts (rowid, statement, subject) VALUES (?,?,?)')
-      .run(rowid, m.statement, m.subject);
+      .run(rowid, segment(m.statement), segment(m.subject));
   }
 
   async get(id: MemoryId): Promise<Memory | null> {
@@ -70,7 +71,9 @@ export class SqliteMemoryStore implements MemoryStore {
 
     let rows: (Row & { score: number })[];
     if (q.text !== undefined && q.text.trim() !== '') {
-      params.push(escapeFts(q.text), q.scope);
+      const match = ftsQuery(q.text);
+      if (match === null) return [];
+      params.push(match, q.scope);
       if (q.agentId !== undefined) params.push(q.agentId);
       if (q.kinds) params.push(...q.kinds);
       rows = this.cx.db.prepare(`
@@ -120,8 +123,13 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 }
 
-/** FTS5 的 MATCH 语法对特殊字符敏感，整句加引号最稳。 */
-const escapeFts = (s: string): string => `"${s.replace(/"/g, '""')}"`;
+
+/** 查询按同样的切法，每一段都得命中（AND）。切不出任何词时返回 null。 */
+function ftsQuery(text: string): string | null {
+  const terms = segment(text).split(' ').filter(Boolean);
+  if (terms.length === 0) return null;
+  return terms.map((t) => `"${t.replace(/"/g, '""')}"`).join(' AND ');
+}
 
 /**
  * 向量索引：**暴力余弦**，不用 sqlite-vec。

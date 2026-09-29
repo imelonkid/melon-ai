@@ -21,7 +21,8 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@melon-ai/core": "workspace:*"
+    "@melon-ai/core": "workspace:*",
+    "@melon-ai/store": "workspace:*"
   },
   "publishConfig": {
     "access": "public"

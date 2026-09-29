@@ -25,6 +25,21 @@
   - §10 的编号条目是**实现与验收中暴露的设计问题及其修正**，按时间顺序累积
 - [内核机制](./docs/kernel-design.md) —— 状态机、三层记忆、工具管线、上下文预算
 
+## 接入
+
+宿主**只装 `@melon-ai/agent`**：
+
+```ts
+import { createAgent, defineTool, deepseek } from '@melon-ai/agent';
+
+const agent = await createAgent({ models: [deepseek({ apiKey })] });
+agent.on('task', (task) => console.log(task.state, task.outcome?.answer));
+await agent.run('汇总本周进展');
+```
+
+持久化、Claude 等可选能力走子路径（`@melon-ai/agent/sqlite`、`@melon-ai/agent/anthropic`）。
+完整说明见架构文档 §7。
+
 ## 开发
 
 ```bash
@@ -42,9 +57,9 @@ pnpm lint:deps      # 校验分层依赖方向没被破坏
 ## 状态
 
 P0 已完成并通过验收（带审批的两步任务，进程重启后从事件日志恢复继续执行）。
-**203 个测试全绿**，`lint:deps` 223 条依赖零违规。
+**236 个测试全绿**，`lint:deps` 零违规。
 
 已接入首个宿主 [Jolly](../jolly)，真实模型（DeepSeek / Claude / OpenAI 兼容）跑通。
-待建：`@melon-ai/context` / `@melon-ai/memory` / `@melon-ai/skills-builtin` / `@melon-ai/mcp`。
+待建：`@melon-ai/memory`（三层记忆 + 上下文装配）；skills 里的内置工具、联网、MCP。
 
 逐项进度与下一步见架构文档 §10。

@@ -1,0 +1,115 @@
+import type {
+  JSONSchema, RiskClass, Task, ToolContext, ToolDescriptor, ToolHandler, ToolOutput,
+} from '@melon-ai/core';
+import { asSkillId, asToolId } from '@melon-ai/core';
+
+/**
+ * 参数的简写。宿主多数时候只想说「to 是字符串、body 可选」，不想手写 JSON Schema：
+ *
+ * ```ts
+ * input: { to: 'string', subject: 'string', body: 'string?', days: 'integer[]' }
+ * ```
+ *
+ * 每个字段也可以写成对象，带说明与枚举：`{ type: 'string', enum: [...], description, optional }`。
+ * 传入的对象里有 `properties` 时，按完整 JSON Schema 原样使用。
+ */
+export type FieldType = 'string' | 'number' | 'integer' | 'boolean' | 'object';
+export type FieldShorthand = `${FieldType}${'' | '[]'}${'' | '?'}`;
+export interface FieldSpec {
+  readonly type: FieldType | `${FieldType}[]`;
+  readonly description?: string;
+  readonly enum?: readonly (string | number)[];
+  readonly minimum?: number;
+  readonly maximum?: number;
+  readonly optional?: boolean;
+}
+export type InputShape = Readonly<Record<string, FieldShorthand | FieldSpec>>;
+
+export interface ToolSpec<A = Record<string, unknown>> {
+  /** `<技能>.<名字>`，如 `mail.send`。点号前的部分是技能 id。 */
+  readonly id: string;
+  /** 「什么时候该用我」—— 模型选工具几乎全靠这一句。 */
+  readonly description: string;
+  /** 默认 `read`。对外、花钱、不可撤销的操作一定要写对，准入矩阵据此决定要不要问人。 */
+  readonly risk?: RiskClass;
+  readonly input?: InputShape | JSONSchema;
+  /** 「始终允许」的授权范围看哪些参数。例：`mail.send` 写 `['to']`。 */
+  readonly scope?: readonly string[];
+  /** 默认：read 类幂等，其余不幂等（重放时由幂等层兜住）。 */
+  readonly idempotent?: boolean;
+  /** 输出来自外部、不可信（网页、第三方返回）。见 core 的 `ToolDescriptor.untrustedOutput`。 */
+  readonly untrustedOutput?: boolean;
+  /** 只在满足条件的任务里提供给模型，例如「只在对话里」。 */
+  readonly when?: (task: Task) => boolean;
+  run(args: A, ctx: ToolContext): Promise<string | ToolOutput> | string | ToolOutput;
+}
+
+/** 一个可以交给引擎的工具：描述 + 处理函数（+ 可选的提供条件）。 */
+export interface Tool {
+  readonly descriptor: ToolDescriptor;
+  readonly handler: ToolHandler;
+  readonly when?: (task: Task) => boolean;
+}
+
+/**
+ * 定义一个工具。
+ *
+ * ```ts
+ * const mailSend = defineTool({
+ *   id: 'mail.send', description: '以用户名义发送邮件', risk: 'external',
+ *   input: { to: 'string', subject: 'string', body: 'string?' }, scope: ['to'],
+ *   run: async ({ to, subject }) => `已将「${subject}」发送至 ${to}`,
+ * });
+ * ```
+ *
+ * `run` 返回字符串即 summary；要带 artifact 或结构化数据时返回 `ToolOutput`。
+ */
+export function defineTool<A = Record<string, unknown>>(spec: ToolSpec<A>): Tool {
+  const dot = spec.id.indexOf('.');
+  if (dot <= 0 || dot === spec.id.length - 1) {
+    throw new Error(`工具 id 要写成「技能.名字」，如 mail.send：${spec.id}`);
+  }
+  const risk = spec.risk ?? 'read';
+  const descriptor: ToolDescriptor = {
+    id: asToolId(spec.id),
+    skillId: asSkillId(spec.id.slice(0, dot)),
+    name: spec.id.slice(dot + 1),
+    description: spec.description,
+    input: toSchema(spec.input ?? {}),
+    risk,
+    idempotent: spec.idempotent ?? risk === 'read',
+    ...(spec.scope ? { scopeKeys: spec.scope } : {}),
+    ...(spec.untrustedOutput ? { untrustedOutput: true } : {}),
+  };
+  const handler: ToolHandler = async (args, ctx) => {
+    const out = await spec.run(args as A, ctx);
+    return typeof out === 'string' ? { summary: out } : out;
+  };
+  return spec.when ? { descriptor, handler, when: spec.when } : { descriptor, handler };
+}
+
+/** 简写 → JSON Schema。已经是 JSON Schema（有 properties）的原样返回。 */
+export function toSchema(input: InputShape | JSONSchema): JSONSchema {
+  if ('properties' in input || 'type' in input && input['type'] === 'object') return input as JSONSchema;
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const [key, raw] of Object.entries(input as InputShape)) {
+    const f: FieldSpec = typeof raw === 'string'
+      ? { type: raw.replace('?', '') as FieldSpec['type'], optional: raw.endsWith('?') }
+      : raw;
+    const isArray = f.type.endsWith('[]');
+    const base = isArray ? f.type.slice(0, -2) : f.type;
+    const item: Record<string, unknown> = {
+      type: base,
+      ...(f.enum ? { enum: f.enum } : {}),
+      ...(f.minimum !== undefined ? { minimum: f.minimum } : {}),
+      ...(f.maximum !== undefined ? { maximum: f.maximum } : {}),
+    };
+    properties[key] = {
+      ...(isArray ? { type: 'array', items: item } : item),
+      ...(f.description ? { description: f.description } : {}),
+    };
+    if (!f.optional) required.push(key);
+  }
+  return { type: 'object', properties, required };
+}

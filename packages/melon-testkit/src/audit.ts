@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import type {
-  AuditAction, AuditQuery, AuditRecord, AuditSink, Hasher, ResolvedResource,
-  ResourceRef, ResourceResolver, ResourceTombstone,
+  AuditRecord, Hasher, ResolvedResource, ResourceRef, ResourceResolver, ResourceTombstone,
 } from '@melon-ai/core';
+import { InMemoryAuditSink as AuditSinkBase } from '@melon-ai/store';
 
 export class NodeHasher implements Hasher {
   sha256(input: string): string {
@@ -10,53 +10,8 @@ export class NodeHasher implements Hasher {
   }
 }
 
-/**
- * 内存审计 sink。
- *
- * `query` **按 seq 倒序**返回（最新在前）—— 审计的常见读法是「最近发生了什么」。
- * 校验哈希链需要正序，由调用方排序。
- */
-export class InMemoryAuditSink implements AuditSink {
-  readonly rows: AuditRecord[] = [];
-
-  async append(record: AuditRecord): Promise<void> {
-    this.rows.push(record);
-  }
-
-  async query(q: AuditQuery): Promise<readonly AuditRecord[]> {
-    let out = [...this.rows].sort((a, b) => b.seq - a.seq);
-    if (q.actor) out = out.filter((r) => r.actor.kind === q.actor!.kind && r.actor.id === q.actor!.id);
-    if (q.actions) out = out.filter((r) => q.actions!.includes(r.action));
-    if (q.resourceKind) out = out.filter((r) => r.resource.kind === q.resourceKind);
-    if (q.resourceRef) out = out.filter((r) => r.resource.ref === q.resourceRef);
-    if (q.taskId) out = out.filter((r) => r.taskId === q.taskId);
-    if (q.traceId) out = out.filter((r) => r.traceId === q.traceId);
-    if (q.from !== undefined) out = out.filter((r) => r.at >= q.from!);
-    if (q.to !== undefined) out = out.filter((r) => r.at <= q.to!);
-    return out.slice(0, q.limit);
-  }
-
-  async lastHash(): Promise<string | undefined> {
-    return this.rows.length === 0 ? undefined : this.rows[this.rows.length - 1]!.hash;
-  }
-
-  async prune(before: number, keep: readonly AuditAction[]): Promise<number> {
-    const before0 = this.rows.length;
-    const kept = this.rows.filter((r) => r.at >= before || keep.includes(r.action));
-    this.rows.length = 0;
-    this.rows.push(...kept);
-    return before0 - this.rows.length;
-  }
-
-  async verify(fromSeq = 0): Promise<number | null> {
-    // 真实校验在 @melon-ai/audit 的 verifyChain；这里只查序号连续性
-    const ordered = [...this.rows].filter((r) => r.seq > fromSeq).sort((a, b) => a.seq - b.seq);
-    for (let i = 1; i < ordered.length; i++) {
-      if (ordered[i]!.seq !== ordered[i - 1]!.seq + 1) return ordered[i]!.seq;
-    }
-    return null;
-  }
-
+/** 内存审计 sink 在 @melon-ai/store；这里只加一个测试专用的篡改方法。 */
+export class InMemoryAuditSink extends AuditSinkBase {
   /** 测试用：篡改一条记录的内容但不更新哈希，模拟被改写。 */
   tamper(seq: number, mutate: (r: AuditRecord) => AuditRecord): void {
     const i = this.rows.findIndex((r) => r.seq === seq);

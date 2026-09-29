@@ -4,3 +4,4 @@ export * from './breaker.js';
 export * from './normalize.js';
 export * from './execute.js';
 export * from './pipeline.js';
+export * from './validator.js';

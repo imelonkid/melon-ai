@@ -38,7 +38,13 @@ module.exports = {
     onlyCore('llm-only-core', pkg('llm'), pkg('llm')),
     onlyCore('store-only-core', pkg('store'), pkg('store')),
     onlyCore('audit-only-core', pkg('audit'), pkg('audit')),
-    onlyCore('testkit-only-core', pkg('testkit'), pkg('testkit')),
+    {
+      name: 'testkit-core-and-store',
+      comment: 'testkit 复用 store 的内存实现（不另写一份），其余只认 core',
+      severity: 'error',
+      from: { path: pkg('testkit') },
+      to: { path: '^packages/(?!melon-core/|melon-store/|melon-testkit/)' },
+    },
     {
       name: 'engine-core-and-skills',
       comment: '引擎只依赖契约与技能（调工具管线）；不认识模型、存储、审计的具体实现',

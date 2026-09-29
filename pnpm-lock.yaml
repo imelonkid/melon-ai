@@ -35,16 +35,28 @@ importers:
       '@melon-ai/engine':
         specifier: workspace:*
         version: link:../melon-engine
+      '@melon-ai/llm':
+        specifier: workspace:*
+        version: link:../melon-llm
       '@melon-ai/skills':
         specifier: workspace:*
         version: link:../melon-skills
-    devDependencies:
       '@melon-ai/store':
         specifier: workspace:*
         version: link:../melon-store
+    devDependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.128.0
+        version: 0.128.0
       '@melon-ai/testkit':
         specifier: workspace:*
         version: link:../melon-testkit
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
+      better-sqlite3:
+        specifier: ^11.8.1
+        version: 11.10.0
 
   packages/melon-audit:
     dependencies:
@@ -106,9 +118,6 @@ importers:
         specifier: workspace:*
         version: link:../melon-core
     devDependencies:
-      '@melon-ai/testkit':
-        specifier: workspace:*
-        version: link:../melon-testkit
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
@@ -121,6 +130,9 @@ importers:
       '@melon-ai/core':
         specifier: workspace:*
         version: link:../melon-core
+      '@melon-ai/store':
+        specifier: workspace:*
+        version: link:../melon-store
 
 packages:
 

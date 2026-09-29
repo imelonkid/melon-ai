@@ -6,6 +6,8 @@ import type { Database as Db } from 'better-sqlite3';
  * 老库再打开时会自己长出新表。只有改既有表的列（重命名、改类型、加 NOT NULL）
  * 才需要升版本并写迁移，否则这里会直接抛错把老库挡在外面。
  */
+import { segment } from './segment.js';
+
 export const SCHEMA_VERSION = 1;
 
 const DDL = `
@@ -244,6 +246,24 @@ export class SqliteContext {
       );
     }
     this.artifactDir = opts.artifactDir ?? defaultArtifactDir(opts.file);
+    if (!opts.readonly) this.reindexFts();
+  }
+
+  /**
+   * 全文索引的切词方式变了就重建一次（见 memories.ts 的 segment）。
+   *
+   * 不升 SCHEMA_VERSION：表结构没变，只是索引内容 —— 升版本会把老库直接挡在外面（§10 第 47 条）。
+   */
+  private reindexFts(): void {
+    const FTS_VERSION = 'cjk-bigram-1';
+    const cur = this.db.prepare('SELECT v FROM meta WHERE k = ?').get('fts_tokenizer') as { v: string } | undefined;
+    if (cur?.v === FTS_VERSION) return;
+    const rows = this.db.prepare('SELECT rowid, statement, subject FROM memories').all() as
+      { rowid: number; statement: string; subject: string }[];
+    this.db.exec("INSERT INTO memories_fts(memories_fts) VALUES('delete-all')");
+    const ins = this.db.prepare('INSERT INTO memories_fts (rowid, statement, subject) VALUES (?,?,?)');
+    for (const r of rows) ins.run(r.rowid, segment(r.statement), segment(r.subject));
+    this.db.prepare('INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)').run('fts_tokenizer', FTS_VERSION);
   }
 
   /** 见 WriteLock 的说明：手写事务 + 全局写锁。 */

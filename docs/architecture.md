@@ -717,52 +717,54 @@ nextFireAt(rule: Recurrence, after: number): number | null
 
 ## 7. 集成契约
 
-宿主应用看到的全部 API 就这些。这是「可被集成到任何应用」的具体含义 ——
-以下代码与 `@melon-ai/agent` 的集成测试**逐字一致**，不是示意。
+宿主**只装 `@melon-ai/agent` 一个包**。所有选项都有默认值；可选能力走子路径，
+需要额外依赖时才装（`better-sqlite3`、`@anthropic-ai/sdk`）。
+以下写法与 `packages/melon-agent/test/api.test.ts` 的验收一致。
 
 ```ts
-import { createAgent, nodePlatform } from '@melon-ai/agent';
-import { openSqliteStores } from '@melon-ai/store/sqlite';
+import { createAgent, defineTool, deepseek } from '@melon-ai/agent';
+import { sqlite } from '@melon-ai/agent/sqlite';        // 可选：持久化
+import { claude } from '@melon-ai/agent/anthropic';     // 可选：Claude
 
-const stores = openSqliteStores({ file: './jolly.db' });   // 换基础设施只改这一行
+const mailSend = defineTool({
+  id: 'mail.send', description: '以用户名义发送邮件', risk: 'external',
+  input: { to: 'string', subject: 'string', body: 'string?' }, scope: ['to'],
+  run: async ({ to, subject }) => `已将「${subject}」发送至 ${to}`,
+});
 
 const agent = await createAgent({
-  stores,
-  planner:   new ReActPlanner(router),  // 换规划策略只改这一行
-  resolver:  skillRegistry,             // 实现 ToolResolver
-  validator: ajvValidator,              // 实现 SchemaValidator
-  platform:  nodePlatform(),            // 浏览器宿主传自己的实现
-  policy:    'ask',                     // 或 (task) => PolicyMode，按 Agent 分档
-});
+  models: [deepseek({ apiKey }), claude({ apiKey: k2 })],  // 多个时按 strategy 路由
+  storage: sqlite({ file: 'app.db' }),                      // 不传 = 内存
+  tools: [mailSend],
+  policy: 'low-risk-auto',                                  // 默认值；对外操作要确认
+});                                                         // 默认创建即启动（含崩溃恢复）
 
-await agent.start();                    // 内含崩溃恢复
+agent.on('task', (task) => render(task));                   // 任何任务的任何进展
+const task = await agent.run('汇总本周进展，发邮件给产品组');
+await agent.approve(task.id, 'allow');                      // 不用传 callId
 
-// 提交任务
-const task = await agent.submit({
-  agentId: asAgentId('weekly-report'),
-  kind: 'automation',
-  goal: '汇总本周进展并生成周报',
-  trigger: { type: 'schedule' },
-});
-
-// 订阅事件驱动 UI —— 框架不假设任何渲染方式
-for await (const { value: e } of agent.watch(task.id)) {
-  switch (e.t) {
-    case 'ApprovalRequested': showPermissionCard(e.request); break;
-    case 'Observed':          appendStep(e.summary);          break;
-    case 'Settled':           renderAnswer(e.outcome);        break;
-  }
-}
-
-// 用户在权限卡上点了「允许」—— 可以在应用重启之后才调用
-await agent.resolveApproval(task.id, callId, 'allow');
+await agent.schedules.create({ goal: '发周报', when: { repeat: 'weekly', days: [5], time: '16:00' } });
+await agent.configure({ models: [...], tools: [...] });    // 热替换，不重启
 ```
+
+| 宿主要做的 | API |
+|---|---|
+| 让 Agent 做一件事 | `run(goal, { ref, kind, agentId, budget })` —— `ref` 原样记在 `task.trigger.ref`，宿主用它关联自己的对象（如对话） |
+| 看进展 | `on('task', cb)` / `on('schedule', cb)`；单个任务的事件流 `watch(id)`；`tasks.list / get / history` |
+| 回应确认 | `approve(taskId, 'allow' \| 'always' \| 'deny')` |
+| 定义工具 | `defineTool({ id, description, risk, input, scope, when, untrustedOutput, run })`，`input` 可用简写 |
+| 定时 | `schedules.create({ goal, when })` / `pause` / `resume` / `remove` / `describe` |
+| 换模型 / 工具 / 权限 | `configure({ models, strategy, tools, skills, policy })` |
+| 验证模型可用 | `models.test(entry)` |
+
+进阶：`context`（上下文装配，默认「目标 + 最近步骤」，可用 `basicContext(..., { prelude })` 在前面加东西）、
+`planner`、`validator`、`platform`（默认 Node）都能替换；底层 `submit` / `resolveApproval` 仍然可用。
 
 三个要点：
 
 1. **只吐事件，不碰 UI**。宿主决定怎么渲染，框架不知道有没有界面。
-2. **换基础设施 = 换一行**。`stores` / `planner` / `platform` 都是端口。
-3. **审批是异步的、可持久的**。`resolveApproval` 可以在应用重启之后调用 ——
+2. **可选能力按需开启**。持久化、Claude、联网各在自己的子路径，不 import 就不加载、不必装依赖。
+3. **审批是异步的、可持久的**。`approve` 可以在应用重启之后调用 ——
    任务状态在库里等着，工具一次都没执行（已由集成测试的 P0 验收覆盖）。
 
 ---
@@ -866,7 +868,7 @@ await agent.resolveApproval(task.id, callId, 'allow');
 - [ ] `@melon-ai/skills-builtin`（等 memory / context）
 - [ ] `@melon-ai/context` / `@melon-ai/memory`（宿主目前用最小实现顶着）
 
-**测试总数 203，全绿；`lint:deps` 223 条依赖零违规。**
+**测试总数 236，全绿；`lint:deps` 223 条依赖零违规。**
 
 ### 10.1 宿主（Jolly）集成进度
 
@@ -924,7 +926,7 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
 宿主只装一个包就能跑，可选能力按需开启，接入层做薄：
 
 1. ~~包结构按业务域合并（14 → 8）~~ —— 已完成，见 §4.1、§4.2
-2. 宿主 API：`defineTool` / `agent.run` / `agent.on('change')` / `approve` 免 callId /
+2. ~~宿主 API~~ —— 已完成，见 §7：`defineTool` / `agent.run` / `agent.on('change')` / `approve` 免 callId /
    `schedules.create({ when })` / `configure` 热替换；不传存储时默认内存
 3. 联网技能进 `skills`（搜索后端可换，一期博查；读网页带内网拦截），经 `@melon-ai/agent/web` 暴露
 4. Jolly 改用新 API，只依赖 `@melon-ai/agent`，接线代码随之删掉
@@ -1011,6 +1013,19 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     这个任务的 id，也就没法 `watch` —— 界面不会动，只能轮询任务表。
     `createAgent` 新增 `onSubmitted(task)`：手动提交与定时触发都回调一次，
     回调抛错只记日志、不影响提交。
+
+#### 宿主 API（装一个包就能跑）
+
+52. **SQLite 的记忆检索搜不到中文。** FTS5 默认分词器把一整串中文当成一个词，
+    「周报用要点列表」只能被整句命中，搜「周报」什么都返回不了。
+    一直没暴露是因为长期记忆还没接到任何宿主；给内存存储写一致性测试时，
+    同一组断言在内存版（子串匹配）通过、SQLite 版失败才发现。
+    修法：写入全文索引时把连续的 CJK 字符切成重叠的二字组，查询用同一种切法、每段都要命中；
+    老库打开时按 `meta.fts_tokenizer` 重建一次索引（表结构没变，不升 SCHEMA_VERSION，见第 47 条）。
+53. **引擎停了，watch 还在转。** `watch` 对没结束的任务每 50ms 轮询一次，`stop()` 不会让它收尾：
+    存储已关时每次轮询都抛错（Jolly 退出时的 "database connection is not open"），
+    存储还开着时（内存存储）进程永远退不出。Jolly 当时在宿主侧把错误吞掉了，治标不治本。
+    修法：`stop()` 置停止标记并叫醒所有在等的 watch，watch 看到标记即收尾；补了回归测试，撤掉修复会挂。
 
 #### 包结构合并（14 → 8）
 

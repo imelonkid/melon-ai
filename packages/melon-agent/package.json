@@ -1,7 +1,7 @@
 {
   "name": "@melon-ai/agent",
   "version": "0.0.1",
-  "description": "组装入口。宿主唯一需要 import 的包。",
+  "description": "宿主入口：装这一个包就能跑。可选能力在 ./sqlite、./anthropic 子路径。",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -11,24 +11,50 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "import": "./dist/sqlite.js",
+      "require": "./dist/sqlite.cjs"
+    },
+    "./anthropic": {
+      "types": "./dist/anthropic.d.ts",
+      "import": "./dist/anthropic.js",
+      "require": "./dist/anthropic.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.index src/index.ts --entry.sqlite src/sqlite.ts --entry.anthropic src/anthropic.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@melon-ai/audit": "workspace:*",
     "@melon-ai/core": "workspace:*",
     "@melon-ai/engine": "workspace:*",
-    "@melon-ai/skills": "workspace:*"
+    "@melon-ai/llm": "workspace:*",
+    "@melon-ai/skills": "workspace:*",
+    "@melon-ai/store": "workspace:*"
+  },
+  "peerDependencies": {
+    "better-sqlite3": ">=11",
+    "@anthropic-ai/sdk": ">=0.128"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    },
+    "@anthropic-ai/sdk": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@melon-ai/store": "workspace:*",
-    "@melon-ai/testkit": "workspace:*"
+    "@melon-ai/testkit": "workspace:*",
+    "better-sqlite3": "^11.8.1",
+    "@types/better-sqlite3": "^7.6.12",
+    "@anthropic-ai/sdk": "^0.128.0"
   },
   "publishConfig": {
     "access": "public"

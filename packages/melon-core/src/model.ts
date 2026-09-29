@@ -113,6 +113,25 @@ export interface RouteDecision {
   readonly egress: readonly string[];
 }
 
+/**
+ * 一个可用的模型及其路由属性。
+ *
+ * 模型适配器的工厂函数（`deepseek()`、`claude()`……）返回它，路由按它排序。
+ * 放在 core 是因为它是适配器与路由之间的契约 —— 两边互不认识。
+ */
+export interface ModelEntry {
+  readonly model: ChatModel;
+  /** 相对质量分，越高越强。用于 quality 策略排序。 */
+  readonly quality: number;
+  /** 每百万输入 token 的美元价，用于 cost 策略排序。 */
+  readonly costUSD: number;
+  /** 数据发往的供应商标识。进审计，支撑「数据不出境」这类合规要求。 */
+  readonly egress: string;
+  readonly enabled?: boolean;
+  /** 给人看的名字，如「DeepSeek」。 */
+  readonly label?: string;
+}
+
 export interface ModelRouter {
   select(intent: RouteIntent, signal?: AbortSignal): Promise<RouteDecision>;
   tokenizerFor(model: ChatModel): Tokenizer;
