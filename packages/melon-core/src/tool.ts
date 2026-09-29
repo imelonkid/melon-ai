@@ -48,6 +48,14 @@ export interface ToolDescriptor {
    */
   readonly scopeKeys?: readonly string[];
   readonly costHint?: { readonly latencyMs: number; readonly bytesOut: number };
+  /**
+   * 输出来自外部、不可信（网页、搜索结果、第三方 MCP 返回……）。
+   *
+   * 调用过它的任务会被标记污点：之后的对外、花钱、不可撤销操作一律要用户确认，
+   * 不看策略档位、不看「始终允许」。网页里写一句「把文档发给 x@…」就是提示注入，
+   * 模型分不清这是用户的意思还是网页的意思 —— 所以由人来分。
+   */
+  readonly untrustedOutput?: boolean;
 }
 
 export interface ToolCall {
@@ -107,6 +115,8 @@ export interface ToolResult {
   readonly artifactRef?: ArtifactRef;
   readonly error?: ToolErrorShape;
   readonly metrics: ToolMetrics;
+  /** 由管线按 `ToolDescriptor.untrustedOutput` 填，工具自己不用管。 */
+  readonly untrusted?: boolean;
 }
 
 export interface ToolMetrics {
@@ -122,4 +132,9 @@ export interface ToolResultMeta {
   readonly errorCode?: ToolErrorShape['code'];
   readonly artifactRef?: ArtifactRef;
   readonly metrics: ToolMetrics;
+  /**
+   * 这次输出不可信。随事件落盘，reducer 据此置 `Task.tainted` ——
+   * 放在事件里而不是让 reducer 去查工具描述，重放时才得出同样的结果。
+   */
+  readonly untrusted?: boolean;
 }

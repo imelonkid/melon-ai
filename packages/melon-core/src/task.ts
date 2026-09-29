@@ -123,7 +123,7 @@ export interface Task {
   /**
    * 本 episode 消费过不可信的扩展工具输出。
    * 一旦置位便不再清除（污点只会扩散，不会自愈），直到 episode 关闭。
-   * 见 policy.ts `TAINT_FORCES_ASK`。
+   * 由 reducer 在 `ToolCallFinished.meta.untrusted` 时置位。见 policy.ts `TAINT_FORCES_ASK`。
    */
   readonly tainted: boolean;
   /** 守卫窗口。纯 reducer 只能看到 task，循环与无进展检测所需的历史必须挂在这里。 */

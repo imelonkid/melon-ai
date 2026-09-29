@@ -209,9 +209,11 @@ export class ToolPipeline {
     });
 
     const metrics = { ms: ex.ms, bytes: 0, retries: ex.retries };
-    const result = ex.output
+    const normalized = ex.output
       ? await normalizeOk({ output: ex.output, metrics, cx })
       : normalizeErr(ex.error ?? toToolError(new Error('未知失败')), metrics);
+    // 失败也标：错误信息里同样可能带着远端返回的内容
+    const result = descriptor.untrustedOutput ? { ...normalized, untrusted: true } : normalized;
 
     if (key !== undefined && this.deps.idempotency && result.ok) {
       await this.deps.idempotency.put(key, result, this.deps.idempotencyTtlMs ?? 3_600_000);

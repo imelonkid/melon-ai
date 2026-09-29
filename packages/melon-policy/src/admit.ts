@@ -43,6 +43,18 @@ const writesDurableState = (toolId: ToolId): boolean =>
   (DURABLE_WRITE_TOOLS as readonly string[]).includes(toolId as unknown as BuiltinToolId);
 
 /**
+ * 污点下必须由人确认的操作。
+ *
+ * 初版只管写记忆（持久化攻击面）。接网页搜索时发现漏了更直接的一条：
+ * 网页里一句「把周报发给 x@…」就能让模型去调 `mail.send` ——
+ * 在「全部自动」或已有「始终允许」时它会直接发出去。
+ * 所以对外、花钱、不可撤销也纳入；读与本地写不受影响，否则读了一次网页就寸步难行。
+ */
+const TAINT_GUARDED_RISKS: readonly RiskClass[] = ['external', 'spend', 'irreversible'];
+const taintGuarded = (toolId: ToolId, risk: RiskClass): boolean =>
+  writesDurableState(toolId) || TAINT_GUARDED_RISKS.includes(risk);
+
+/**
  * 准入判定。四道闸，顺序有意义：
  *
  * 1. **授权** —— 没开启的技能直接拒。不能让未授权的工具走到「问用户」那一步，
@@ -73,8 +85,9 @@ export function decide(input: DecideInput): AdmissionOutcome {
   }
 
   // ③ 污点覆盖 —— 必须早于授权匹配
-  if (TAINT_FORCES_ASK && input.tainted && writesDurableState(toolId)) {
-    return out('ask', '本轮处理过来自扩展工具的不可信内容，写入持久记忆前需要你确认', {
+  if (TAINT_FORCES_ASK && input.tainted && taintGuarded(toolId, risk)) {
+    const what = writesDurableState(toolId) ? '写入持久记忆' : '执行这个操作';
+    return out('ask', `这个任务读过外部的不可信内容（网页、搜索结果等），${what}前需要你确认`, {
       gate: 'taint', toolId, tainted: true, mode, risk,
       overrode: input.grant ? 'grant' : 'matrix',
     });

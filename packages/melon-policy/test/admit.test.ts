@@ -122,6 +122,32 @@ test('污点只作用于写持久状态的工具，读记忆不受影响', () =>
   assert.equal(r.decision, 'allow', '污点不该把只读也拦住，否则 Agent 在污染后完全瘫痪');
 });
 
+test('污点下对外操作强制确认 —— 网页里一句「发给 x」就是提示注入', () => {
+  for (const risk of ['external', 'spend', 'irreversible'] as const) {
+    const r = decide(input({ risk, mode: 'all-auto', tainted: true }));
+    assert.equal(r.decision, 'ask', `all-auto + 污点下 ${risk} 必须询问`);
+    assert.equal(r.basis.gate, 'taint');
+  }
+});
+
+test('污点下对外操作连 always 授权也覆盖', () => {
+  const g: Grant = { agentId: AGENT, toolId: MAIL, scope: 'to=产品组', grantedAt: 0 };
+  const r = decide(input({ mode: 'all-auto', tainted: true, grant: g }));
+  assert.equal(r.decision, 'ask');
+  assert.equal(r.basis.overrode, 'grant');
+});
+
+test('污点不影响读与本地写 —— 读过一次网页不能让 Agent 寸步难行', () => {
+  for (const risk of ['read', 'write'] as const) {
+    const r = decide(input({ toolId: asToolId('doc.read'), risk, mode: 'all-auto', tainted: true }));
+    assert.equal(r.decision, 'allow', risk);
+  }
+});
+
+test('未污染时对外操作仍按矩阵走', () => {
+  assert.equal(decide(input({ mode: 'all-auto', tainted: false })).decision, 'allow');
+});
+
 test('污点也覆盖 memory_forget', () => {
   const r = decide(input({
     toolId: BUILTIN_TOOLS.MEMORY_FORGET, risk: 'irreversible', mode: 'all-auto', tainted: true,

@@ -19,6 +19,19 @@ const R = (t: Task, e: TaskEvent) => reduce(t, e, { now: NOW });
 
 // ───────────────────────────── 基本迁移 ─────────────────────────────
 
+test('不可信工具的结果置污点，之后可信的结果也不会把它清掉', () => {
+  const finished = (untrusted: boolean): TaskEvent => ({
+    t: 'ToolCallFinished', callId: toolCall().callId,
+    meta: { ok: true, metrics: { ms: 1, bytes: 0, retries: 0 }, ...(untrusted ? { untrusted: true } : {}) },
+  });
+  const a = R(fresh({ state: 'EXECUTING' }), finished(false));
+  assert.equal(a.task.tainted, false, '普通工具不置污点');
+  const b = R(fresh({ state: 'EXECUTING' }), finished(true));
+  assert.equal(b.task.tainted, true);
+  const c = R({ ...b.task, state: 'EXECUTING' }, finished(false));
+  assert.equal(c.task.tainted, true, '污点只会扩散，不会自愈');
+});
+
 test('PENDING --Started--> PLANNING，并要求规划', () => {
   const r = R(fresh(), { t: 'Started' });
   assert.equal(r.task.state, 'PLANNING');

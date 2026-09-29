@@ -119,6 +119,7 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
             ok: result.ok, metrics: result.metrics,
             ...(result.error ? { errorCode: result.error.code } : {}),
             ...(result.artifactRef ? { artifactRef: result.artifactRef } : {}),
+            ...(result.untrusted ? { untrusted: true } : {}),
           } },
           { t: 'Observed', callId: effect.call.callId, summary: result.summary,
             ...(result.artifactRef ? { artifactRef: result.artifactRef } : {}) },

@@ -173,6 +173,8 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
         task: patch({
           usage: addUsage(task.usage, event.meta.metrics.costUSD !== undefined
             ? { costUSD: event.meta.metrics.costUSD } : {}),
+          // 污点只会扩散不会自愈：读过一次不可信内容，这个任务后面的每一步都算
+          tainted: task.tainted || event.meta.untrusted === true,
         }, undefined, true),
         effects: [],
       };
