@@ -160,3 +160,12 @@ test('联网技能：@melon-ai/agent/web 按需开启；没配搜索只有读网
     assert.ok(agent.tools.list().every((d) => d.untrustedOutput), '联网工具都得声明输出不可信');
   } finally { await agent.stop(); }
 });
+
+test('入口一次拿全：各家模型工厂（含通用 compatible）都从 @melon-ai/agent 导出', async () => {
+  const api = await import('../src/index.js');
+  for (const name of ['deepseek', 'qwen', 'openai', 'kimi', 'compatible']) {
+    assert.equal(typeof (api as Record<string, unknown>)[name], 'function', name);
+  }
+  const z = api.compatible({ label: '智谱', baseURL: 'https://x.test/v4', model: 'glm-4', apiKey: 'k', egress: 'zhipu' });
+  assert.equal(z.egress, 'zhipu');
+});

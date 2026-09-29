@@ -885,7 +885,7 @@ await agent.configure({ models: [...], tools: [...] });    // 热替换，不重
 - [ ] `@melon-ai/skills-builtin`（等 memory / context）
 - [ ] `@melon-ai/context` / `@melon-ai/memory`（宿主目前用最小实现顶着）
 
-**测试总数 252，全绿；`lint:deps` 223 条依赖零违规。**
+**测试总数 253，全绿；`lint:deps` 223 条依赖零违规。**
 
 ### 10.1 宿主（Jolly）集成进度
 
@@ -948,7 +948,9 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
 3. ~~联网技能进 `skills`~~ —— 已完成：`skills/src/web`，经 `@melon-ai/agent/web` 暴露；
    另补通用的 `compatible()` 模型工厂（接列表外的 OpenAI 兼容供应商，出境标识必填）。
    随后把博查从技能里拿出：搜索协议进 core，博查进扩展包 `@melon-ai/plugins/bocha`（第 54 条）
-4. Jolly 改用新 API，只依赖 `@melon-ai/agent` + 按需的 `@melon-ai/plugins`，接线代码随之删掉
+4. ~~Jolly 改用新 API~~ —— 已完成：只依赖 `@melon-ai/agent` + `@melon-ai/plugins`，
+   删掉了 Jolly 里自写的参数校验、模型热替换、工具注册、周期规则换算、逐任务订阅（约 500 行），
+   全部冒烟场景（任务、详情、定时与错过补跑、对话、联网、连接页、热生效）通过
 
 **内核侧待办（P1，不阻塞上面）**
 
