@@ -44,6 +44,9 @@ importers:
       '@melon-ai/tools':
         specifier: workspace:*
         version: link:../melon-tools
+      '@melon-ai/trigger':
+        specifier: workspace:*
+        version: link:../melon-trigger
     devDependencies:
       '@melon-ai/store-sqlite':
         specifier: workspace:*
@@ -174,6 +177,12 @@ importers:
       '@melon-ai/testkit':
         specifier: workspace:*
         version: link:../melon-testkit
+
+  packages/melon-trigger:
+    dependencies:
+      '@melon-ai/core':
+        specifier: workspace:*
+        version: link:../melon-core
 
 packages:
 

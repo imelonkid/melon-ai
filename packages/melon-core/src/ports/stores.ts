@@ -4,6 +4,7 @@ import type {
 import type { Task, TaskEvent, TaskState } from '../task.js';
 import type { Entry, Episode, EpisodeSummary, Memory, MemoryQuery } from '../memory.js';
 import type { Grant } from '../policy.js';
+import type { Schedule, ScheduleId, ScheduleStatus } from '../schedule.js';
 import type { Archive, Purger } from '../deletion.js';
 
 /**
@@ -93,6 +94,25 @@ export interface GrantStore {
   listByAgent(agentId: AgentId): Promise<readonly Grant[]>;
 }
 
+export interface ScheduleStore {
+  put(schedule: Schedule): Promise<void>;
+  get(id: ScheduleId): Promise<Schedule | null>;
+  /**
+   * 到期该触发的。`status='active'` 且 `nextFireAt <= now`。
+   *
+   * 与 `TaskStore.listDue` 是两回事：那个唤醒的是挂起的任务实例，
+   * 这个决定的是要不要新建一个任务。
+   */
+  listDue(now: number, limit: number): Promise<readonly Schedule[]>;
+  /** 不传 status 则返回除 removed 外的全部 —— 界面默认不该看见已删的。 */
+  list(agentId?: AgentId, status?: ScheduleStatus): Promise<readonly Schedule[]>;
+  /**
+   * 标记 oldId 被 newId 替代。**不物理删**（§2.5）——
+   * 历史任务的 `trigger.ref` 还指着 oldId。
+   */
+  supersede(oldId: ScheduleId, newId: ScheduleId): Promise<void>;
+}
+
 /** 基础设施模块一次性提供全套存储。宿主只需注入这一个对象。 */
 export interface StoreBundle {
   readonly tasks: TaskStore;
@@ -101,6 +121,7 @@ export interface StoreBundle {
   readonly episodes: EpisodeStore;
   readonly artifacts: ArtifactStore;
   readonly grants: GrantStore;
+  readonly schedules: ScheduleStore;
   readonly vectors: VectorIndex;
   readonly purger: Purger;
   readonly archive: Archive;

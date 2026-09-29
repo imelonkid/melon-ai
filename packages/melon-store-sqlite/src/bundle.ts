@@ -2,7 +2,8 @@ import type { StoreBundle } from '@melon-ai/core';
 import { SqliteContext } from './db.js';
 import type { OpenOptions } from './db.js';
 import {
-  SqliteEpisodeStore, SqliteEventLog, SqliteGrantStore, SqliteIdempotencyStore, SqliteTaskStore,
+  SqliteEpisodeStore, SqliteEventLog, SqliteGrantStore,
+  SqliteScheduleStore, SqliteIdempotencyStore, SqliteTaskStore,
 } from './stores.js';
 import { SqliteArtifactStore } from './artifacts.js';
 import { SqliteMemoryStore, SqliteVectorIndex } from './memories.js';
@@ -39,6 +40,7 @@ export function openSqliteStores(opts: OpenStoresOptions): SqliteBundle {
     memories: new SqliteMemoryStore(cx),
     artifacts,
     grants: new SqliteGrantStore(cx),
+    schedules: new SqliteScheduleStore(cx),
     vectors: new SqliteVectorIndex(cx, opts.dims ?? 384),
     audit: new SqliteAuditSink(cx),
     idempotency: new SqliteIdempotencyStore(cx, now),

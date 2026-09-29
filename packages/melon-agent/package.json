@@ -6,8 +6,16 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
-  "files": ["dist"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*.test.ts"
@@ -18,12 +26,15 @@
     "@melon-ai/policy": "workspace:*",
     "@melon-ai/runtime": "workspace:*",
     "@melon-ai/task": "workspace:*",
-    "@melon-ai/tools": "workspace:*"
+    "@melon-ai/tools": "workspace:*",
+    "@melon-ai/trigger": "workspace:*"
   },
   "devDependencies": {
     "@melon-ai/store-sqlite": "workspace:*",
     "@melon-ai/testkit": "workspace:*"
   },
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT"
 }

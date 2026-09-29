@@ -1,6 +1,7 @@
 import type {
   AgentId, Entry, Episode, EpisodeId, EpisodeStore, EpisodeSummary, EventLog, Grant, GrantStore,
-  IdempotencyStore, Sequenced, Task, TaskEvent, TaskId, TaskState, TaskStore, ToolResult,
+  IdempotencyStore, Schedule, ScheduleId, ScheduleStatus, ScheduleStore,
+  Sequenced, Task, TaskEvent, TaskId, TaskState, TaskStore, ToolResult,
 } from '@melon-ai/core';
 import { ConflictError, asEpisodeId } from '@melon-ai/core';
 import type { SqliteContext } from './db.js';
@@ -266,4 +267,90 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
       'INSERT OR REPLACE INTO idempotency (key, result, expires_at) VALUES (?,?,?)',
     ).run(key, json(result), this.now() + ttlMs);
   }
+}
+
+/**
+ * 定时任务。**不物理删**（§2.5）：删除是 `status='removed'`，改配置是版本链 ——
+ * 历史任务的 `trigger.ref` 还指着旧的那条，DELETE 掉会让它们变成悬空指针。
+ */
+export class SqliteScheduleStore implements ScheduleStore {
+  constructor(private readonly cx: SqliteContext) {}
+
+  async put(s: Schedule): Promise<void> {
+    this.cx.db.prepare(`
+      INSERT INTO schedules
+        (id, title, agent_id, template, rule, catch_up, status,
+         next_fire_at, last_fired_at, last_task_id, fire_count, created_at, updated_at, superseded_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET
+        title=excluded.title, template=excluded.template, rule=excluded.rule,
+        catch_up=excluded.catch_up, status=excluded.status,
+        next_fire_at=excluded.next_fire_at, last_fired_at=excluded.last_fired_at,
+        last_task_id=excluded.last_task_id, fire_count=excluded.fire_count,
+        updated_at=excluded.updated_at, superseded_by=excluded.superseded_by
+    `).run(
+      s.id, s.title, s.template.agentId,
+      JSON.stringify(s.template), JSON.stringify(s.rule),
+      s.catchUp, s.status,
+      s.nextFireAt, s.lastFiredAt, s.lastTaskId, s.fireCount,
+      s.createdAt, s.updatedAt, s.supersededBy,
+    );
+  }
+
+  async get(id: ScheduleId): Promise<Schedule | null> {
+    const r = this.cx.db.prepare('SELECT * FROM schedules WHERE id=?').get(id) as ScheduleRow | undefined;
+    return r ? rowToSchedule(r) : null;
+  }
+
+  async listDue(now: number, limit: number): Promise<readonly Schedule[]> {
+    const rows = this.cx.db.prepare(`
+      SELECT * FROM schedules
+      WHERE status='active' AND next_fire_at IS NOT NULL AND next_fire_at <= ?
+      ORDER BY next_fire_at ASC LIMIT ?
+    `).all(now, limit) as ScheduleRow[];
+    return rows.map(rowToSchedule);
+  }
+
+  async list(agentId?: AgentId, status?: ScheduleStatus): Promise<readonly Schedule[]> {
+    // 不传 status 时默认藏掉 removed —— 界面不该看见已删的
+    const where: string[] = [status ? 'status=?' : "status<>'removed'"];
+    const args: unknown[] = status ? [status] : [];
+    if (agentId) { where.push('agent_id=?'); args.push(agentId); }
+    const rows = this.cx.db.prepare(
+      `SELECT * FROM schedules WHERE ${where.join(' AND ')} ORDER BY created_at DESC`,
+    ).all(...args) as ScheduleRow[];
+    return rows.map(rowToSchedule);
+  }
+
+  async supersede(oldId: ScheduleId, newId: ScheduleId): Promise<void> {
+    this.cx.db.prepare(
+      // 停掉旧的排期，但行留着：历史任务通过 trigger.ref 指着它
+      "UPDATE schedules SET superseded_by=?, status='removed', next_fire_at=NULL WHERE id=?",
+    ).run(newId, oldId);
+  }
+}
+
+interface ScheduleRow {
+  id: string; title: string; agent_id: string; template: string; rule: string;
+  catch_up: string; status: string;
+  next_fire_at: number | null; last_fired_at: number | null; last_task_id: string | null;
+  fire_count: number; created_at: number; updated_at: number; superseded_by: string | null;
+}
+
+function rowToSchedule(r: ScheduleRow): Schedule {
+  return {
+    id: r.id as ScheduleId,
+    title: r.title,
+    template: JSON.parse(r.template) as Schedule['template'],
+    rule: JSON.parse(r.rule) as Schedule['rule'],
+    catchUp: r.catch_up as Schedule['catchUp'],
+    status: r.status as ScheduleStatus,
+    nextFireAt: r.next_fire_at,
+    lastFiredAt: r.last_fired_at,
+    lastTaskId: r.last_task_id as Schedule['lastTaskId'],
+    fireCount: r.fire_count,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    supersededBy: r.superseded_by as Schedule['supersededBy'],
+  };
 }

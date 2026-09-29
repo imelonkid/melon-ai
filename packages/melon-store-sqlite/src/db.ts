@@ -1,6 +1,11 @@
 import Database from 'better-sqlite3';
 import type { Database as Db } from 'better-sqlite3';
 
+/**
+ * DDL 全部是 `IF NOT EXISTS` 且每次 open 都执行，所以**纯新增表/索引不用升版本** ——
+ * 老库再打开时会自己长出新表。只有改既有表的列（重命名、改类型、加 NOT NULL）
+ * 才需要升版本并写迁移，否则这里会直接抛错把老库挡在外面。
+ */
 export const SCHEMA_VERSION = 1;
 
 const DDL = `
@@ -107,6 +112,28 @@ CREATE TABLE IF NOT EXISTS grants (
   expires_at INTEGER,
   PRIMARY KEY (agent_id, tool_id, scope)
 );
+
+CREATE TABLE IF NOT EXISTS schedules (
+  id             TEXT PRIMARY KEY,
+  title          TEXT NOT NULL,
+  agent_id       TEXT NOT NULL,
+  template       TEXT NOT NULL,
+  rule           TEXT NOT NULL,
+  catch_up       TEXT NOT NULL,
+  status         TEXT NOT NULL,
+  -- 可空：一次性任务跑完、暂停、删除之后都不再有下一次
+  next_fire_at   INTEGER,
+  last_fired_at  INTEGER,
+  last_task_id   TEXT,
+  fire_count     INTEGER NOT NULL DEFAULT 0,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  -- 版本链。改配置新建一条，旧的指向新的；不物理删（§2.5）
+  superseded_by  TEXT
+);
+-- 轮询只关心「还活着且到点了」，这个偏序索引让轮询不扫全表
+CREATE INDEX IF NOT EXISTS idx_sched_due ON schedules(next_fire_at) WHERE status='active';
+CREATE INDEX IF NOT EXISTS idx_sched_agent ON schedules(agent_id, status);
 
 CREATE TABLE IF NOT EXISTS audit (
   seq        INTEGER PRIMARY KEY,

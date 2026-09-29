@@ -1,0 +1,50 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@melon-ai/agent": [
+        "packages/melon-agent/src/index.ts"
+      ],
+      "@melon-ai/audit": [
+        "packages/melon-audit/src/index.ts"
+      ],
+      "@melon-ai/core": [
+        "packages/melon-core/src/index.ts"
+      ],
+      "@melon-ai/llm-anthropic": [
+        "packages/melon-llm-anthropic/src/index.ts"
+      ],
+      "@melon-ai/llm-openai": [
+        "packages/melon-llm-openai/src/index.ts"
+      ],
+      "@melon-ai/planner-react": [
+        "packages/melon-planner-react/src/index.ts"
+      ],
+      "@melon-ai/policy": [
+        "packages/melon-policy/src/index.ts"
+      ],
+      "@melon-ai/router": [
+        "packages/melon-router/src/index.ts"
+      ],
+      "@melon-ai/runtime": [
+        "packages/melon-runtime/src/index.ts"
+      ],
+      "@melon-ai/store-sqlite": [
+        "packages/melon-store-sqlite/src/index.ts"
+      ],
+      "@melon-ai/task": [
+        "packages/melon-task/src/index.ts"
+      ],
+      "@melon-ai/testkit": [
+        "packages/melon-testkit/src/index.ts"
+      ],
+      "@melon-ai/tools": [
+        "packages/melon-tools/src/index.ts"
+      ],
+      "@melon-ai/trigger": [
+        "packages/melon-trigger/src/index.ts"
+      ]
+    }
+  }
+}

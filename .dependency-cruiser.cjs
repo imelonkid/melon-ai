@@ -13,7 +13,7 @@ const ADAPTER_PKGS = ['melon-store-sqlite', 'melon-llm-anthropic', 'melon-llm-op
 const DOMAIN_PKGS = [
   'melon-task', 'melon-tools', 'melon-skills', 'melon-skills-builtin',
   'melon-memory', 'melon-context', 'melon-policy', 'melon-router',
-  'melon-prompt', 'melon-audit', 'melon-planner-react',
+  'melon-prompt', 'melon-audit', 'melon-planner-react', 'melon-trigger',
 ];
 const group = (names) => `^packages/(${names.join('|')})/`;
 const ADAPTER_PKG = group(ADAPTER_PKGS);
@@ -51,6 +51,13 @@ module.exports = {
       to: { path: ADAPTER_ANY, pathNot: '^packages/$1/' },
     },
     {
+      name: 'trigger-only-core',
+      comment: '@melon-ai/trigger 只依赖 core —— 调度器不认识 AgentEngine（§4.8 边界一）',
+      severity: 'error',
+      from: { path: '^packages/melon-trigger/' },
+      to: { path: '^packages/(?!melon-core/|melon-trigger/)' },
+    },
+    {
       name: 'no-circular',
       comment: '包之间不允许循环依赖',
       severity: 'error',
@@ -62,6 +69,15 @@ module.exports = {
     doNotFollow: { path: 'node_modules' },
     exclude: { path: '(dist|node_modules|/test/)' },
     tsPreCompilationDeps: true,
-    tsConfig: { fileName: 'tsconfig.base.json' },
+    /**
+     * 专用 tsconfig，把 `@melon-ai/*` 映射到各包的 **src**。
+     *
+     * 不这么做规则形同虚设：默认解析走 node_modules → pnpm 软链 → `dist/`，
+     * 而 `dist` 在 exclude 里，跨包依赖整条被吃掉 —— 未声明的依赖报
+     * `couldNotResolve`，已声明的解析到 dist 被排除，两种都不触发违规。
+     * 结果是分层规则只对相对路径生效，而真实代码用的全是包名。
+     * 构建仍然走 tsconfig.base.json（各包编译到 dist），这份只给 depcruise 用。
+     */
+    tsConfig: { fileName: 'tsconfig.depcruise.json' },
   },
 };

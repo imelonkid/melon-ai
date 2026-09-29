@@ -6,6 +6,7 @@ import type {
 import { ChainedRecorder, DEFAULT_RETENTION, assertRetention } from '@melon-ai/audit';
 import { ToolPipeline } from '@melon-ai/tools';
 import { Runtime } from '@melon-ai/runtime';
+import { Scheduler } from '@melon-ai/trigger';
 
 export interface CreateAgentOptions {
   /** 全套存储。换基础设施就是换这一个对象。 */
@@ -32,11 +33,23 @@ export interface CreateAgentOptions {
   readonly recallSkills?: (task: Task, query: string) => Promise<readonly string[]>;
   readonly pollIntervalMs?: number;
   readonly execute?: { timeoutMs?: number; maxRetries?: number; backoffBaseMs?: number };
+  /**
+   * 定时任务的轮询间隔。默认 30s —— 到点后最晚 30s 触发。
+   *
+   * 不做成「精确到秒的定时器」是因为进程可能在两次触发之间被杀掉，
+   * 精确定时器救不了这种情况，而轮询 + `nextFireAt` 落库天然能恢复。
+   */
+  readonly schedulePollMs?: number;
 }
 
 export interface MelonAgent extends AgentEngine {
   readonly audit: AuditRecorder & { verify(): Promise<unknown>; };
   readonly pipeline: ToolPipeline;
+  /**
+   * 定时任务。调度器不认识 AgentEngine —— 这里把 `submit` 注给它（§4.8 边界一），
+   * 宿主拿到的是接好线的成品。
+   */
+  readonly schedules: Scheduler;
   readonly stores: CreateAgentOptions['stores'];
   /** 等所有在跑的推进链结束。测试与优雅关闭用。 */
   drain(): Promise<void>;
@@ -104,18 +117,32 @@ export async function createAgent(opts: CreateAgentOptions): Promise<MelonAgent>
     ...(opts.pollIntervalMs !== undefined ? { pollIntervalMs: opts.pollIntervalMs } : {}),
   });
 
+  const schedules = new Scheduler({
+    store: stores.schedules,
+    submit: (spec) => runtime.submit(spec),
+    clock, ids, logger,
+  });
+
   return {
     submit: (spec) => runtime.submit(spec),
     get: (id) => runtime.get(id),
     cancel: (id, reason) => runtime.cancel(id, reason),
     resolveApproval: (id, callId, decision) => runtime.resolveApproval(id, callId, decision),
     watch: (id, fromSeq) => runtime.watch(id, fromSeq),
-    start: () => runtime.start(),
-    stop: () => runtime.stop(),
+    start: async () => {
+      await runtime.start();
+      // 放在 runtime.start() 之后：崩溃恢复先跑完，再让定时器往里灌新任务
+      schedules.start(opts.schedulePollMs ?? 30_000);
+    },
+    stop: async () => {
+      schedules.stop();
+      await runtime.stop();
+    },
     drain: () => runtime.drain(),
     recover: () => runtime.recover(),
     audit,
     pipeline,
+    schedules,
     stores,
   };
 }
