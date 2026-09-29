@@ -4,7 +4,8 @@
  * 详见 docs/architecture.md §4.3
  *
  * 两层规则：
- * 1. **包之间**：core ← skills ← engine ← agent；llm / store / audit 只认 core。
+ * 1. **包之间**：core ← skills ← engine ← agent；llm / store / audit 只认 core；
+ *    plugins（厂商实现）只认 core，且引擎任何包都不能依赖它 —— 插件永远是宿主按需引入的。
  * 2. **包内目录之间**：一个包按职责合并了几个组件，组件之间的方向同样要拦 ——
  *    例如 engine 里的 task（纯状态机）不能反过来依赖 runtime。
  *    这是合包之后分层还能被强制的前提（§4.2）。
@@ -38,6 +39,14 @@ module.exports = {
     onlyCore('llm-only-core', pkg('llm'), pkg('llm')),
     onlyCore('store-only-core', pkg('store'), pkg('store')),
     onlyCore('audit-only-core', pkg('audit'), pkg('audit')),
+    onlyCore('plugins-only-core', pkg('plugins'), pkg('plugins')),
+    {
+      name: 'nothing-depends-on-plugins',
+      comment: '插件是可选的厂商实现：引擎各包（含 agent）都不能依赖、也不能转导出它，由宿主按需引入',
+      severity: 'error',
+      from: { path: '^packages/(?!melon-plugins/)' },
+      to: { path: pkg('plugins') },
+    },
     {
       name: 'testkit-core-and-store',
       comment: 'testkit 复用 store 的内存实现（不另写一份），其余只认 core',
@@ -83,6 +92,14 @@ module.exports = {
       severity: 'error',
       from: { path: '^packages/melon-llm/src/(router|planner|openai|anthropic)/' },
       to: { path: ONLY_CORE, pathNot: '^packages/melon-llm/src/$1/' },
+    },
+
+    {
+      name: 'plugins/independent',
+      comment: '插件之间互不认识：每家一个子路径，只实现 core 的协议',
+      severity: 'error',
+      from: { path: '^packages/melon-plugins/src/([^/]+)/' },
+      to: { path: '^packages/melon-plugins/src/', pathNot: '^packages/melon-plugins/src/$1/' },
     },
 
     {

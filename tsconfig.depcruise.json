@@ -21,6 +21,9 @@
       "@melon-ai/llm/anthropic": [
         "packages/melon-llm/src/anthropic/index.ts"
       ],
+      "@melon-ai/plugins/bocha": [
+        "packages/melon-plugins/src/bocha/index.ts"
+      ],
       "@melon-ai/skills": [
         "packages/melon-skills/src/index.ts"
       ],

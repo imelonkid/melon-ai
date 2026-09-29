@@ -1,9 +1,8 @@
 import type {
-  Health, Skill, SkillBundle, SkillProvider, ToolContext, ToolDescriptor, ToolHandler, ToolOutput,
+  Freshness, Health, SearchProvider, Skill, SkillBundle, SkillProvider, ToolContext, ToolDescriptor, ToolHandler, ToolOutput,
 } from '@melon-ai/core';
-import { ToolError, asSkillId, asToolId } from '@melon-ai/core';
-import { FRESHNESS, renderHits } from './search.js';
-import type { Freshness, SearchBackend } from './search.js';
+import { FRESHNESS, ToolError, asSkillId, asToolId } from '@melon-ai/core';
+import { renderHits } from './search.js';
 import { fetchPage } from './fetch.js';
 import type { FetchOptions } from './fetch.js';
 
@@ -60,21 +59,21 @@ const fetchDescriptor: ToolDescriptor = {
 const withTimeout = (signal: AbortSignal, ms: number): AbortSignal => AbortSignal.any([signal, AbortSignal.timeout(ms)]);
 
 export interface WebSkillOptions {
-  /** 搜索后端。null / 不传 = 不提供 web.search（只剩读网页）。 */
-  readonly search?: SearchBackend | null;
+  /** 搜索服务（实现 core 的 `SearchProvider`，厂商实现见 `@melon-ai/plugins`）。null / 不传 = 不提供 web.search（只剩读网页）。 */
+  readonly search?: SearchProvider | null;
   readonly fetch?: FetchOptions;
 }
 
 /**
- * 联网技能。实现 `SkillProvider`：宿主（或将来的 `@melon-ai/skills` 注册表）
- * 从 `list()` 拿到工具描述与 handler，内核不需要知道它背后是哪家搜索。
+ * 联网技能。实现 `SkillProvider`：注册表从 `list()` 拿到工具描述与 handler。
+ * 技能只认 core 的 `SearchProvider` 协议，不知道背后是哪家搜索。
  *
  * **没配搜索后端时不提供 web.search** —— 给了模型一个必然失败的工具，
  * 它会去调用然后失败；不给，它才会老实说做不到。
  */
 export class WebSkillProvider implements SkillProvider {
   readonly id = 'melon-web';
-  private search: SearchBackend | null;
+  private search: SearchProvider | null;
   private readonly fetchOpts: FetchOptions;
   private readonly listeners = new Set<() => void>();
 
@@ -84,9 +83,9 @@ export class WebSkillProvider implements SkillProvider {
   }
 
   /** 宿主改了搜索配置（换 key、停用）时调用。工具集随之变化，订阅方会收到通知。 */
-  setSearch(backend: SearchBackend | null): void {
-    const changed = (this.search === null) !== (backend === null) || this.search?.id !== backend?.id;
-    this.search = backend;
+  setSearch(provider: SearchProvider | null): void {
+    const changed = (this.search === null) !== (provider === null) || this.search?.id !== provider?.id;
+    this.search = provider;
     if (changed) for (const cb of this.listeners) cb();
   }
 
@@ -157,7 +156,7 @@ export class WebSkillProvider implements SkillProvider {
 }
 
 /**
- * 联网技能的简写：`web({ search: bocha({ apiKey }) })`。
+ * 联网技能的简写：`web({ search: bocha({ apiKey }) })`（`bocha` 来自 `@melon-ai/plugins/bocha`）。
  * 不传 search 时只提供读网页 —— 模型拿不到搜索工具，会老实说做不到。
  */
 export function web(opts: WebSkillOptions = {}): WebSkillProvider {
