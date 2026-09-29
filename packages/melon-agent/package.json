@@ -23,14 +23,11 @@
   "dependencies": {
     "@melon-ai/audit": "workspace:*",
     "@melon-ai/core": "workspace:*",
-    "@melon-ai/policy": "workspace:*",
-    "@melon-ai/runtime": "workspace:*",
-    "@melon-ai/task": "workspace:*",
-    "@melon-ai/tools": "workspace:*",
-    "@melon-ai/trigger": "workspace:*"
+    "@melon-ai/engine": "workspace:*",
+    "@melon-ai/skills": "workspace:*"
   },
   "devDependencies": {
-    "@melon-ai/store-sqlite": "workspace:*",
+    "@melon-ai/store": "workspace:*",
     "@melon-ai/testkit": "workspace:*"
   },
   "publishConfig": {

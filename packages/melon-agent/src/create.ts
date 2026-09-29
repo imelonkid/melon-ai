@@ -4,9 +4,9 @@ import type {
   Task, ToolResolver, ToolsetSnapshot,
 } from '@melon-ai/core';
 import { ChainedRecorder, DEFAULT_RETENTION, assertRetention } from '@melon-ai/audit';
-import { ToolPipeline } from '@melon-ai/tools';
-import { Runtime } from '@melon-ai/runtime';
-import { Scheduler } from '@melon-ai/trigger';
+import { ToolPipeline } from '@melon-ai/skills';
+import { Runtime } from '@melon-ai/engine';
+import { Scheduler } from '@melon-ai/engine';
 
 export interface CreateAgentOptions {
   /** 全套存储。换基础设施就是换这一个对象。 */

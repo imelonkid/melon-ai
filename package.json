@@ -10,7 +10,7 @@
     "typecheck": "pnpm run build && pnpm -r --filter './packages/*' exec tsc --noEmit",
     "test": "pnpm run build && pnpm -r --filter './packages/*' run test",
     "lint:deps": "depcruise packages --config .dependency-cruiser.cjs",
-    "rebuild:node": "pnpm --filter @melon-ai/store-sqlite exec pnpm rebuild better-sqlite3"
+    "rebuild:node": "pnpm --filter @melon-ai/store exec pnpm rebuild better-sqlite3"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

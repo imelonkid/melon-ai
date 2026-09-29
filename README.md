@@ -4,20 +4,18 @@
 通过依赖倒置接入任意宿主应用。
 
 ```
-@melon-ai/core          契约层：类型与端口，零运行时依赖
-@melon-ai/task          任务状态机（纯 reducer）
-@melon-ai/policy        准入矩阵与授权
-@melon-ai/tools         工具调用管线（六段固定流程）
-@melon-ai/audit         审计哈希链
-@melon-ai/router        模型路由
-@melon-ai/trigger       定时编排（周期规则是纯函数）
-@melon-ai/planner-react ReAct 规划器
-@melon-ai/runtime       调度与编排
-@melon-ai/llm-*         模型适配器（Anthropic / OpenAI 兼容）
-@melon-ai/store-*       存储适配器（一期 SQLite）
-@melon-ai/testkit       内存替身与驱动器
-@melon-ai/agent         组装入口，宿主唯一需要 import 的包
+@melon-ai/core     契约：类型与端口，零运行时依赖
+@melon-ai/engine   引擎：任务状态机 · 运行时调度 · 定时编排
+@melon-ai/skills   技能：工具调用管线（六段）· 准入策略
+@melon-ai/llm      模型：路由 · ReAct 规划器 · OpenAI 兼容适配器（Claude 在 /anthropic 子路径）
+@melon-ai/store    存储：SQLite 在 /sqlite 子路径
+@melon-ai/audit    审计：哈希链、脱敏、保留期（横切，独立成包）
+@melon-ai/agent    组装：createAgent，宿主的入口
+@melon-ai/testkit  测试替身与驱动器
 ```
+
+按职责分包，而不是一个组件一个包 —— 见架构文档 §4.2。
+包内按目录分层，目录之间的依赖方向同样由 `lint:deps` 强制。
 
 ## 文档
 

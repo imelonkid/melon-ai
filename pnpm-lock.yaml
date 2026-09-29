@@ -32,25 +32,16 @@ importers:
       '@melon-ai/core':
         specifier: workspace:*
         version: link:../melon-core
-      '@melon-ai/policy':
+      '@melon-ai/engine':
         specifier: workspace:*
-        version: link:../melon-policy
-      '@melon-ai/runtime':
+        version: link:../melon-engine
+      '@melon-ai/skills':
         specifier: workspace:*
-        version: link:../melon-runtime
-      '@melon-ai/task':
-        specifier: workspace:*
-        version: link:../melon-task
-      '@melon-ai/tools':
-        specifier: workspace:*
-        version: link:../melon-tools
-      '@melon-ai/trigger':
-        specifier: workspace:*
-        version: link:../melon-trigger
+        version: link:../melon-skills
     devDependencies:
-      '@melon-ai/store-sqlite':
+      '@melon-ai/store':
         specifier: workspace:*
-        version: link:../melon-store-sqlite
+        version: link:../melon-store
       '@melon-ai/testkit':
         specifier: workspace:*
         version: link:../melon-testkit
@@ -67,7 +58,23 @@ importers:
 
   packages/melon-core: {}
 
-  packages/melon-llm-anthropic:
+  packages/melon-engine:
+    dependencies:
+      '@melon-ai/core':
+        specifier: workspace:*
+        version: link:../melon-core
+      '@melon-ai/skills':
+        specifier: workspace:*
+        version: link:../melon-skills
+    devDependencies:
+      '@melon-ai/audit':
+        specifier: workspace:*
+        version: link:../melon-audit
+      '@melon-ai/testkit':
+        specifier: workspace:*
+        version: link:../melon-testkit
+
+  packages/melon-llm:
     dependencies:
       '@melon-ai/core':
         specifier: workspace:*
@@ -76,58 +83,24 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.128.0
         version: 0.128.0
-
-  packages/melon-llm-openai:
-    dependencies:
-      '@melon-ai/core':
-        specifier: workspace:*
-        version: link:../melon-core
-
-  packages/melon-planner-react:
-    dependencies:
-      '@melon-ai/core':
-        specifier: workspace:*
-        version: link:../melon-core
-    devDependencies:
       '@melon-ai/testkit':
         specifier: workspace:*
         version: link:../melon-testkit
 
-  packages/melon-policy:
+  packages/melon-skills:
     dependencies:
       '@melon-ai/core':
         specifier: workspace:*
         version: link:../melon-core
-
-  packages/melon-router:
-    dependencies:
-      '@melon-ai/core':
-        specifier: workspace:*
-        version: link:../melon-core
-
-  packages/melon-runtime:
-    dependencies:
-      '@melon-ai/core':
-        specifier: workspace:*
-        version: link:../melon-core
-      '@melon-ai/task':
-        specifier: workspace:*
-        version: link:../melon-task
-      '@melon-ai/tools':
-        specifier: workspace:*
-        version: link:../melon-tools
     devDependencies:
       '@melon-ai/audit':
         specifier: workspace:*
         version: link:../melon-audit
-      '@melon-ai/policy':
-        specifier: workspace:*
-        version: link:../melon-policy
       '@melon-ai/testkit':
         specifier: workspace:*
         version: link:../melon-testkit
 
-  packages/melon-store-sqlite:
+  packages/melon-store:
     dependencies:
       '@melon-ai/core':
         specifier: workspace:*
@@ -143,42 +116,7 @@ importers:
         specifier: ^11.8.1
         version: 11.10.0
 
-  packages/melon-task:
-    dependencies:
-      '@melon-ai/core':
-        specifier: workspace:*
-        version: link:../melon-core
-    devDependencies:
-      '@melon-ai/testkit':
-        specifier: workspace:*
-        version: link:../melon-testkit
-
   packages/melon-testkit:
-    dependencies:
-      '@melon-ai/core':
-        specifier: workspace:*
-        version: link:../melon-core
-
-  packages/melon-tools:
-    dependencies:
-      '@melon-ai/core':
-        specifier: workspace:*
-        version: link:../melon-core
-      '@melon-ai/policy':
-        specifier: workspace:*
-        version: link:../melon-policy
-    devDependencies:
-      '@melon-ai/audit':
-        specifier: workspace:*
-        version: link:../melon-audit
-      '@melon-ai/task':
-        specifier: workspace:*
-        version: link:../melon-task
-      '@melon-ai/testkit':
-        specifier: workspace:*
-        version: link:../melon-testkit
-
-  packages/melon-trigger:
     dependencies:
       '@melon-ai/core':
         specifier: workspace:*

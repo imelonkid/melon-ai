@@ -24,7 +24,7 @@
 └────────────────────────────────┬────────────────────────────────────────────┘
         AgentEngine: submit / resolveApproval / cancel ↓   ↑ watch(event stream)
 ┌────────────────────────────────┴────────────────────────────────────────────┐
-│                       melon-runtime（Agent Runtime）                         │
+│                    melon-engine/runtime（Agent Runtime）                     │
 │                                                                             │
 │   ┌──────────────┐   drives    ┌────────────────────────────────────┐       │
 │   │  Scheduler   │────────────▶│   Task State Machine (pure)        │       │
@@ -50,7 +50,7 @@
 │   └─────────────┘   └───────────────┬──┘   └────────────────────┘           │
 │                                     │                                       │
 │   ┌─────────────────────────────────┴───────────────────────────────────┐   │
-│   │  StoreBundle 端口 ← melon-store-sqlite 实现（一期）                  │   │
+│   │  StoreBundle 端口 ← melon-store/sqlite 实现（一期）                  │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -578,7 +578,7 @@ interface EpisodeSummary {
 
 ## 8. 存储与数据模型
 
-SQLite，单文件。下面是设计意图；**真实 DDL 见 `packages/melon-store-sqlite/src/db.ts`**
+SQLite，单文件。下面是设计意图；**真实 DDL 见 `packages/melon-store/src/sqlite/db.ts`**
 （11 张表，含 `tombstones` / `archive` / `idempotency` / `memories_fts` / `vectors`）。
 
 一处与初稿不同：`tasks` 表只把需要索引或查询的字段拉成列

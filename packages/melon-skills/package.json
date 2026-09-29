@@ -1,0 +1,34 @@
+{
+  "name": "@melon-ai/skills",
+  "version": "0.0.1",
+  "description": "技能：工具调用管线（六段）与准入策略。",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup --entry.index src/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx --test test/*/*.test.ts"
+  },
+  "dependencies": {
+    "@melon-ai/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@melon-ai/testkit": "workspace:*",
+    "@melon-ai/audit": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

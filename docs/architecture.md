@@ -48,7 +48,7 @@
         └──────────────┘
 ```
 
-关键约束：**基础设施模块只依赖 @melon-ai/core**。`@melon-ai/store-sqlite` 不认识 `@melon-ai/memory`，`@melon-ai/memory` 也不认识 `@melon-ai/store-sqlite`。两者通过 `@melon-ai/core` 里的 `MemoryStore` 端口相遇。
+关键约束：**基础设施模块只依赖 @melon-ai/core**。`@melon-ai/store` 不认识 `@melon-ai/memory`，`@melon-ai/memory` 也不认识 `@melon-ai/store`。两者通过 `@melon-ai/core` 里的 `MemoryStore` 端口相遇。
 
 这条约束**必须可执行，不能靠自觉** —— 见 §4.3。
 
@@ -339,35 +339,34 @@ vs「推理开始前框架必须准备好的东西」**。
 
 ## 3. 分层架构
 
-> 图中标的是**目录名**（`packages/melon-core`），对应的包名是 `@melon-ai/core`。
-> 保留目录前缀是为了在编辑器标签页和 grep 结果里不产生歧义。
-
+> 图中标的是**包 / 目录**。一个包按职责合并了几个组件，组件在包内各占一个目录。
+> 分层靠 `.dependency-cruiser.cjs` 在包之间、目录之间两级强制（§4.3）。
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Tier 4  组装层                                                       │
-│   melon-agent          facade，把所有组件接起来。宿主只 import 这个   │
+│ 组装      melon-agent        createAgent，宿主的入口                  │
 ├─────────────────────────────────────────────────────────────────────┤
-│ Tier 3  基础设施层           （只依赖 melon-core）                    │
-│   melon-store-sqlite   一期：全套存储端口的 SQLite 实现               │
-│   melon-llm-*          模型适配器                                    │
-│   melon-mcp            SkillProvider 的 MCP 实现                     │
+│ 引擎      melon-engine                                               │
+│             runtime/         调度 · EffectRunner · 崩溃恢复           │
+│             task/            任务状态机（纯 reducer）                 │
+│             trigger/         定时编排（周期规则是纯函数）             │
+├──────────────────────────────┬──────────────────────────────────────┤
+│ 技能      melon-skills        │ 模型      melon-llm                    │
+│             pipeline/  六段管线 │             router/    模型路由         │
+│             policy/    准入     │             planner/   ReAct 规划器      │
+│             （待建）注册与召回、 │             openai/    OpenAI 兼容适配器  │
+│             内置工具、联网、MCP │             anthropic/ Claude 适配器（子路径）│
+├──────────────────────────────┴──────────────────────────────────────┤
+│ 基础设施  melon-store          sqlite/（子路径）                       │
+│           melon-memory（P1 待建） 三层记忆 + 上下文装配                │
 ├─────────────────────────────────────────────────────────────────────┤
-│ Tier 2  运行时层                                                     │
-│   melon-runtime        调度器 + EffectRunner + AgentEngine 实现       │
-│   melon-planner-react  ReAct 规划器（Planner 的一种实现）             │
-│   melon-trigger        定时与事件触发源的编排（源本身是适配器）        │
+│ 横切      melon-audit          审计哈希链（合规与追溯，不属于任何业务域）│
+│           melon-testkit        测试替身                              │
 ├─────────────────────────────────────────────────────────────────────┤
-│ Tier 1  领域层               （只依赖 melon-core）                    │
-│   melon-task      melon-tools     melon-skills    melon-router      │
-│   melon-memory    melon-context   melon-policy    melon-prompt      │
-│   melon-audit                                                        │
-├─────────────────────────────────────────────────────────────────────┤
-│ Tier 0  契约层                                                       │
-│   melon-core           类型 + 端口。零运行时依赖。倒置中心            │
+│ 契约      melon-core           类型 + 端口。零运行时依赖。倒置中心    │
 └─────────────────────────────────────────────────────────────────────┘
 
-横切：melon-testkit   内存适配器 + 假模型，供上面所有层测试用
+包之间：core ← skills ← engine ← agent；llm / store / audit / memory 只依赖 core。
 ```
 
 ---
@@ -420,65 +419,80 @@ vs「推理开始前框架必须准备好的东西」**。
 
 ### 4.1 模块清单
 
-| 模块 | 职责 | 依赖 | 期次 |
-|---|---|---|---|
-| **@melon-ai/core** | 全部类型与端口定义。`Task` / `Memory` / `Skill` / `ToolResult` / 各 Store 端口 / `Planner` / `AgentEngine` | 无 | P0 |
-| **@melon-ai/task** | Task 模型、纯 reducer、合法迁移表、预算核算 | core | P0 |
-| **@melon-ai/policy** | 风险×策略准入矩阵、grant 匹配、配额检查 | core | P0 |
-| **@melon-ai/tools** | 工具管线六段（解析→校验→准入→执行→归一化→记录）+ 中间件链 | core, policy | P0 |
-| **@melon-ai/runtime** | 调度器、EffectRunner、`AgentEngine` 实现、停止条件（循环/无进展检测） | core, task, tools, context, skills, memory, policy | P0 |
-| **@melon-ai/store-sqlite** | 全套存储端口的 SQLite 实现（含向量） | core | P0 |
-| **@melon-ai/testkit** | 内存适配器、假模型、事件日志断言工具 | core | P0 |
-| **@melon-ai/agent** | facade：`createAgent(deps)`，宿主唯一入口 | 全部 | P0 |
-| **@melon-ai/skills-builtin** | 内置工具集：`memory_recall/write/forget`、`history_search/read`、`artifact_read`、`skill_find`、`tool_describe`。§2.7 的落地面 | core | P0 |
-| **@melon-ai/audit** | 审计记录：哈希链、脱敏、跨任务查询、独立保留期。**与事件日志是两件事**，见 §4.5 | core | P0 |
-| **@melon-ai/context** | 上下文装配、预算分配、episode 压缩 | core, memory, skills | P1 |
-| **@melon-ai/router** | 模型路由：按用途 × 策略 × 健康 × 配额选模型，返回候选序列。见 §4.6 | core | **已完成** |
-| **@melon-ai/prompt** | 版本化提示词模板的注册与渲染。**只做注册渲染，不做 DSL**，见 §4.7 | core | P1 |
-| **@melon-ai/memory** | L0/L1/L2 管理，检索融合、提升、冲突消解 | core | P1 |
-| **@melon-ai/skills** | 技能注册表、召回、动态注册与健康检查 | core | P1 |
-| **@melon-ai/planner-react** | ReAct 规划器 + 意图分类短路。**用供应商原生 tool use**，不解析文本 | core | **已完成** |
-| **@melon-ai/llm-anthropic** | Claude 适配器：Messages API、原生 tool use、prompt caching | core | **已完成** |
-| **@melon-ai/llm-openai** | OpenAI 兼容适配器。一个适配器覆盖 OpenAI / DeepSeek / 通义千问 / Kimi | core | **已完成** |
-| **@melon-ai/mcp** | MCP 协议适配为 `SkillProvider` | core | P2 |
-| **@melon-ai/trigger** | 定时与事件触发的编排。`TriggerSource` 端口在 core，周期规则内置，外部事件源做适配器 | core | **已完成**（定时；事件源 P2） |
+| 包 | 目录 | 职责 | 依赖 | 状态 |
+|---|---|---|---|---|
+| **@melon-ai/core** | | 全部类型与端口定义 | 无 | ✅ |
+| **@melon-ai/engine** | `task/` | Task 模型、纯 reducer、合法迁移表、预算、守卫 | core | ✅ |
+| | `runtime/` | `apply` 事务边界、EffectRunner、调度、崩溃恢复 | core, skills | ✅ |
+| | `trigger/` | 定时编排：纯函数周期规则 + 调度器（§4.8） | core | ✅ |
+| **@melon-ai/skills** | `pipeline/` | 工具调用六段管线 + 中间件（重试、熔断、幂等、截断） | core | ✅ |
+| | `policy/` | 准入矩阵、污点覆盖、授权匹配、配额 —— 管线的第 ③ 段 | core | ✅ |
+| | （待建） | 技能注册与召回、内置工具（§2.7 的落地面）、联网工具、MCP 接入 | core | P1/P2 |
+| **@melon-ai/llm** | `router/` | 按用途 × 策略 × 健康 × 配额选模型（§4.6） | core | ✅ |
+| | `planner/` | ReAct 规划器 + 意图短路，原生 tool use | core | ✅ |
+| | `openai/` | OpenAI 兼容适配器（OpenAI / DeepSeek / 通义 / Kimi），只用 fetch | core | ✅ |
+| | `anthropic/` | Claude 适配器，`@melon-ai/llm/anthropic` 子路径，可选 peer `@anthropic-ai/sdk` | core | ✅ |
+| | （待建） | 提示词注册与渲染（§4.7） | core | P1 |
+| **@melon-ai/store** | `sqlite/` | 全套存储端口的 SQLite 实现，`@melon-ai/store/sqlite` 子路径，可选 peer `better-sqlite3` | core | ✅ |
+| **@melon-ai/memory** | | 三层记忆 + 上下文装配与压缩（两者紧耦合，放一起） | core | P1 待建 |
+| **@melon-ai/audit** | | 审计：哈希链、维度脱敏、保留期、跨任务查询（§4.5）。横切关注点，独立成包 | core | ✅ |
+| **@melon-ai/agent** | | 组装：`createAgent(deps)`，宿主的入口 | 全部 | ✅ |
+| **@melon-ai/testkit** | | 内存替身、假模型、驱动器 | core | ✅ |
 
-### 4.2 为什么一个组件一个模块
+**2026-09 由 14 个包合并为 8 个**（另有 memory 待建）。旧包名与新位置对照 ——
+§10 中早于这次合并的条目保留旧包名，按此表对照：
 
-好处不是「整洁」，是三件可验证的事：
+| 旧包 | 新位置 |
+|---|---|
+| `task` / `runtime` / `trigger` | `engine/src/{task,runtime,trigger}` |
+| `tools` / `policy` | `skills/src/{pipeline,policy}` |
+| `router` / `planner-react` / `llm-openai` / `llm-anthropic` | `llm/src/{router,planner,openai,anthropic}` |
+| `store-sqlite` | `store/src/sqlite` |
+| 计划中的 `skills-builtin` / `mcp` / `prompt` / `context` | 并入 skills / skills / llm / memory |
 
-1. **依赖方向变成可强制的**。分包之后，`@melon-ai/memory` 想 import `@melon-ai/store-sqlite` 得先在 package.json 里加依赖 —— 这一步会被 CI 拦住。单包内部靠目录分层，只能靠自觉，迟早会破。
-2. **宿主按需安装**。只想用任务状态机、不想要向量检索的宿主，不必把 sqlite-vec 拖进来。
-3. **独立演进**。适配器的版本节奏和内核不同，MCP 协议变了只动 `@melon-ai/mcp`。
+### 4.2 按职责分包，包内按目录分层
 
-代价也要认：包多了之后版本管理、发布流程、跨包重构都更麻烦。缓解办法是**一期只建 8 个 P0 包**，其余等真正要写时再拆出来 —— 不预先创建一堆空目录。
+初版是「一个组件一个包」，理由有三：依赖方向可强制、宿主按需安装、独立演进。
+实际跑下来，三条都不需要一个组件一个包：
+
+1. **依赖方向在目录层面同样可强制。** 初版认为「单包内部靠目录分层只能靠自觉」——
+   这是错的：dependency-cruiser 的规则本来就是路径正则，拦目录和拦包没有区别（§4.3）。
+2. **按需安装靠子路径 + 可选 peer 依赖。** 需要额外第三方依赖或特定运行时的能力
+   （Claude SDK、better-sqlite3、Node 的 DNS）放在子路径入口，依赖声明为可选 peer ——
+   不 import 它就不会加载，宿主也不必装。
+3. **独立演进在发布前不是真需求。** 还没有外部消费者，包多只带来版本、发布、跨包重构的成本。
+
+而包太多的代价是实打实的：宿主要记住十几个包名、每做一个能力就想加一个包、
+加一个包又要改一遍依赖规则。所以改成：
+
+> **一个业务域一个包，域内组件各占一个目录。新能力先归进已有的域，不新建包。**
+> 只有两种情况值得新包：一个新的业务域（如 memory），或一个与任何业务域都无关的横切关注点（如 audit）。
+
+域的划分依据是依赖方向不成环：policy 只被工具管线用，所以归 skills；
+audit 被管线与组装层通过 core 的端口使用，放进任何一个业务包都会让测试依赖成环，
+而且它本身是合规与追溯，不属于任何业务域 —— 所以独立。
 
 ### 4.3 依赖方向的强制机制
 
-光写规范没用。用 `dependency-cruiser` 在 CI 里拦：
+`dependency-cruiser` 在 CI 里拦，规则分两级（全文见 `.dependency-cruiser.cjs`）：
 
 ```js
-// .dependency-cruiser.cjs（要点）
-forbidden: [
-  { name: 'core-is-pure',
-    from: { path: '^packages/melon-core' },
-    to:   { path: '^packages/(?!@melon-ai/core)' } },          // core 不依赖任何人
-
-  { name: 'domain-no-infra',
-    from: { path: '^packages/melon-(task|tools|skills|memory|context|policy|router|prompt|audit)' },
-    to:   { path: '^packages/melon-(store|llm|mcp)-' } },   // 领域层不碰适配器
-
-  { name: 'infra-only-core',
-    from: { path: '^packages/melon-(store|llm|mcp)-' },
-    to:   { path: '^packages/(?!@melon-ai/core)' } },           // 适配器只依赖 core
-
-  { name: 'no-adapter-to-adapter',
-    from: { path: '^packages/melon-(store|llm|mcp)-' },
-    to:   { path: '^packages/melon-(store|llm|mcp)-' } },   // 适配器互不认识
-]
+// 包之间
+core-is-pure            core 不依赖任何人
+skills / llm / store / audit / testkit -only-core
+engine-core-and-skills  引擎只认契约与技能
+// 包内目录之间
+engine/task-pure        状态机只认 core，不能反过来依赖 runtime
+engine/trigger-no-runtime  调度器不认识 AgentEngine（§4.8 边界一）
+skills/policy-pure      准入判定是纯函数，只认 core
+llm/components-independent  路由、规划器、各适配器互不认识
+no-circular
 ```
 
 `@melon-ai/agent` 是唯一豁免 —— 它的职责就是组装。
+
+**规则写完必须造一个违规来验它会挂**（§10 第 46 条）。合包时对每条目录规则各造了一个违规，
+五条全部命中。
 
 ### 4.4 命名约定
 
@@ -488,18 +502,18 @@ forbidden: [
 |---|---|---|
 | 包名 | `@melon-ai/xxx` | `@melon-ai/core` |
 | 目录 | `packages/melon-xxx` | `packages/melon-core` |
+| 可选能力 | 包的子路径 | `@melon-ai/llm/anthropic`、`@melon-ai/store/sqlite` |
 
 scope 的理由：防抢名、统一发布权限、消费方一眼看出同一族包。
 目录保留前缀的理由：编辑器标签页里 `melon-core/src/index.ts` 比 `core/src/index.ts`
-好认，grep 也不会误命中；且 `.dependency-cruiser.cjs` 的路径规则不必改。
-（Babel 是同样的取法：`@babel/core` ← `packages/babel-core`。）
+好认，grep 也不会误命中。（Babel 是同样的取法：`@babel/core` ← `packages/babel-core`。）
 
 其余约定：
 
 - 全小写连字符
-- 适配器带类别前缀：`@melon-ai/store-*` / `@melon-ai/llm-*`
-- 可插拔实现带策略名：`@melon-ai/planner-react`
-- 端口定义一律在 `packages/melon-core/src/ports/` 下，实现分散在各适配器
+- 包名是**业务域**，不是组件：`engine` / `skills` / `llm`，不是 `task` / `tools` / `router`
+- 带第三方依赖或特定运行时的能力走**子路径**，依赖声明为可选 peer
+- 端口定义一律在 `packages/melon-core/src/` 下，实现分散在各域
 
 ---
 
@@ -546,7 +560,7 @@ L1 记忆的写入与召回、技能注册与注销、策略变更、以及**模
 
 期次定在 **P0**：审计是最难事后补的东西，工具管线第一天就得往里写。
 
-### 4.6 @melon-ai/router：为什么放领域层而不是运行时层
+### 4.6 llm/router：为什么放领域层而不是运行时层
 
 它在执行期被调用、持有健康与配额状态、还要跨供应商降级 —— 看着像运行时层。
 但它的**形状**和 `@melon-ai/policy` 是同一类：给定输入产出一个决策。
@@ -562,9 +576,9 @@ L1 记忆的写入与召回、技能注册与注销、策略变更、以及**模
 **取前者**。让 `select()` 返回一个候选序列（primary + fallbacks），真正的重试和熔断
 由 `@melon-ai/tools` 已有的那套机制统一执行 —— 不要在系统里养两套重试逻辑。
 
-### 4.7 @melon-ai/prompt：只做注册与渲染，不做 DSL
+### 4.7 llm/prompt（待建）：只做注册与渲染，不做 DSL
 
-现状是提示词散在三处：`@melon-ai/planner-react` 的 ReAct 提示、`@melon-ai/memory` 的抽取提示、
+现状是提示词散在三处：`llm/planner` 的 ReAct 提示、`@melon-ai/memory` 的抽取提示、
 `@melon-ai/context` 的压缩提示。收拢的理由不只是整洁：
 
 - 提示词是整个系统里**改动最频繁**的东西，集中才可能做版本对比和 A/B。
@@ -579,7 +593,7 @@ L1 记忆的写入与召回、技能注册与注销、策略变更、以及**模
    拆到两个包里必然悄悄漂移。做法：`@melon-ai/prompt` 只拥有文本与版本号，
    **parser 留在消费方**，消费方按 `(name, version)` 引用，版本号进事件日志。
 
-### 4.8 @melon-ai/trigger：定时的三条边界
+### 4.8 engine/trigger：定时的三条边界
 
 定时任务看着像「加个 cron」，实际有三个地方会踩到既有原则。先把边界写死。
 
@@ -708,7 +722,7 @@ nextFireAt(rule: Recurrence, after: number): number | null
 
 ```ts
 import { createAgent, nodePlatform } from '@melon-ai/agent';
-import { openSqliteStores } from '@melon-ai/store-sqlite';
+import { openSqliteStores } from '@melon-ai/store/sqlite';
 
 const stores = openSqliteStores({ file: './jolly.db' });   // 换基础设施只改这一行
 
@@ -762,7 +776,7 @@ await agent.resolveApproval(task.id, callId, 'allow');
 **待决**
 
 1. **Embedding 来源**：本地小模型（离线、免费、质量一般）vs 走宿主的远端 embedding（质量好、要联网、计费）。直接决定 L1 检索和技能召回的效果，也决定框架能不能离线跑。
-3. **是否保留 `@melon-ai/planner-react` 独立成包**：如果短期内只会有 ReAct 一种规划器，先并进 `@melon-ai/runtime`、将来再拆也可以。拆的好处是从第一天就验证 `Planner` 端口是真的可换，不是摆设。**倾向拆**。
+3. ~~是否保留 planner-react 独立成包~~ —— 已决：并入 `@melon-ai/llm` 的 `planner/` 目录。`Planner` 端口仍在 core，可换性不受影响（§4.2）。
 4. **子任务并发**：Task 树里的兄弟任务允许并行吗？并行快很多，但共享 L2 会有写冲突，需要定义合并语义。一期建议**串行**。
 5. **许可证**：MIT / Apache-2.0 / 私有？影响能不能直接发 npm。
 
@@ -794,6 +808,8 @@ await agent.resolveApproval(task.id, callId, 'allow');
 ---
 
 ## 10. 当前进度
+
+> 2026-09 起 14 个包合并为 8 个。下面早于合并的条目保留旧包名，对照表见 §4.1。
 
 - [x] 工作区骨架（pnpm workspace + tsconfig + gitignore + README）
 - [x] `@melon-ai/core` 契约层：13 个源文件，strict 模式编译通过
@@ -903,12 +919,22 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
    但也因此暴露了两个缺口：没有流式输出（回答整段出现）、没有「给进行中的任务追加用户消息」
    —— 后者等 `@melon-ai/context` / `@melon-ai/memory` 时一起考虑
 
+**进行中：内核对宿主友好**（2026-09）
+
+宿主只装一个包就能跑，可选能力按需开启，接入层做薄：
+
+1. ~~包结构按业务域合并（14 → 8）~~ —— 已完成，见 §4.1、§4.2
+2. 宿主 API：`defineTool` / `agent.run` / `agent.on('change')` / `approve` 免 callId /
+   `schedules.create({ when })` / `configure` 热替换；不传存储时默认内存
+3. 联网技能进 `skills`（搜索后端可换，一期博查；读网页带内网拦截），经 `@melon-ai/agent/web` 暴露
+4. Jolly 改用新 API，只依赖 `@melon-ai/agent`，接线代码随之删掉
+
 **内核侧待办（P1，不阻塞上面）**
 
-- `@melon-ai/context` / `@melon-ai/memory`：宿主现在用的是 40 条固定窗口的
+- `@melon-ai/memory`（三层记忆 + 上下文装配）：宿主现在用的是 40 条固定窗口的
   最小实现，长会话必炸。这是 P1 验收「40 轮不炸窗口」的正主
-- `@melon-ai/skills-builtin`：依赖上面两个
-- `@melon-ai/trigger` 的事件触发源（P2）：目前只做了定时，
+- `skills` 的内置工具（记忆 / 历史 / artifact）：依赖上面这个
+- `engine/trigger` 的事件触发源（P2）：目前只做了定时，
   `TriggerSource` 端口早就在 core 里等着
 
 #### 人工验收暴露的问题
@@ -985,6 +1011,18 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     这个任务的 id，也就没法 `watch` —— 界面不会动，只能轮询任务表。
     `createAgent` 新增 `onSubmitted(task)`：手动提交与定时触发都回调一次，
     回调抛错只记日志、不影响提交。
+
+#### 包结构合并（14 → 8）
+
+51. **「一个组件一个包」让每个新能力都想加一个包。** 接网页搜索时顺手建了第 15 个包，
+    被指出模块无限扩展。复查 §4.2 的三条理由，第一条（目录分层只能靠自觉）本身就不成立 ——
+    dependency-cruiser 规则是路径正则，拦目录与拦包一样。改为按业务域分包、域内按目录分层，
+    规则扩成包间 + 目录间两级，并对每条目录规则各造一个违规验证会挂。
+
+    合并中发现一处测试依赖会成环：工具管线的测试用了 `createTask`（现在在 engine），
+    而 engine 依赖 skills。改为 testkit 提供 `newTask()` fixture；
+    审计因同样的原因（且不属于任何业务域）保持独立成包。
+    合并前后测试数一致（203），`lint:deps` 零违规。
 
 #### 接网页搜索时暴露的问题
 

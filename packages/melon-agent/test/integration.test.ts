@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PlanStep, ToolDescriptor, ToolsetSnapshot } from '@melon-ai/core';
 import { asSkillId, asToolId } from '@melon-ai/core';
-import { openSqliteStores } from '@melon-ai/store-sqlite';
+import { openSqliteStores } from '@melon-ai/store/sqlite';
 import {
   ScriptedPlanner, StaticToolResolver, StructuralValidator, noTools,
 } from '@melon-ai/testkit';

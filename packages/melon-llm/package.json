@@ -1,0 +1,47 @@
+{
+  "name": "@melon-ai/llm",
+  "version": "0.0.1",
+  "description": "模型：路由、ReAct 规划器、OpenAI 兼容适配器；Claude 适配器在 ./anthropic 子路径（需要 @anthropic-ai/sdk）。",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./anthropic": {
+      "types": "./dist/anthropic.d.ts",
+      "import": "./dist/anthropic.js",
+      "require": "./dist/anthropic.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup --entry.index src/index.ts --entry.anthropic src/anthropic/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx --test test/*/*.test.ts"
+  },
+  "dependencies": {
+    "@melon-ai/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.128"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@melon-ai/testkit": "workspace:*",
+    "@anthropic-ai/sdk": "^0.128.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}
