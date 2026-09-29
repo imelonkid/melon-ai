@@ -7,9 +7,9 @@ import type {
 import { asAgentId, asScheduleId } from '@melon-ai/core';
 import { describeRule, whenToRule } from '@melon-ai/engine';
 import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
-import { KeywordIntentClassifier, ModelPool, ReActPlanner, testModel } from '@melon-ai/llm';
+import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelPool, ReActPlanner, testModel } from '@melon-ai/llm';
 import type { ModelTestResult, RouteStrategy } from '@melon-ai/llm';
-import { ToolRegistry, basicValidator } from '@melon-ai/skills';
+import { ToolRegistry, artifact, basicValidator, schedule } from '@melon-ai/skills';
 import type { Tool } from '@melon-ai/skills';
 import { memoryStorage } from '@melon-ai/store';
 import { assemble } from './assemble.js';
@@ -29,8 +29,23 @@ export interface AgentOptions {
   readonly storage?: Storage;
   /** 宿主自己的工具，用 `defineTool` 定义。 */
   readonly tools?: readonly Tool[];
-  /** 技能来源（联网、将来的 MCP……），实现 `SkillProvider`。 */
+  /**
+   * 技能来源，实现 `SkillProvider`：内置的联网（`/web`）、发邮件（`/mail`），
+   * 用户装的 Agent Skills（`/agentskills`），将来的 MCP。
+   * 「读取完整内容」是内置的，总是在，不用传。
+   */
   readonly skills?: readonly SkillProvider[];
+  /**
+   * 让 Agent 可以拟定时任务草稿（内置工具 `schedule.propose`）。默认关 ——
+   * 草稿要宿主画成卡片给用户确认，不支持的宿主开了，模型会以为草稿已经给用户看了。
+   * 传 `{ when }` 可以收窄到某些任务（比如只在对话里）；默认是「不是定时触发的任务」。
+   */
+  readonly scheduleDrafts?: boolean | { readonly when?: (task: Task) => boolean };
+  /**
+   * 动作词：话里有这些词、却没有任何工具能做时，引擎直接回答「没有合适的工具」，不让模型编。
+   * 在默认词表（`DEFAULT_ACTION_WORDS`）基础上**追加**。
+   */
+  readonly actionWords?: readonly string[];
   /**
    * 执行权限。默认 `low-risk-auto`：读与本地写自动，对外操作要确认。
    * （`ask` 会让只读工具也弹审批，点一次运行要批好几次 —— §10 第 35 条）
@@ -171,7 +186,20 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   const defaultAgent = opts.agentId ?? 'default';
 
   const pool = new ModelPool(opts.models ?? [], opts.strategy ?? 'balanced');
-  const registry = new ToolRegistry({ tools: opts.tools ?? [], providers: opts.skills ?? [] });
+  // 内置技能总在最前：注册表按来源定先后，宿主和用户装的技能不能顶替它们
+  const drafts = opts.scheduleDrafts;
+  const builtins: SkillProvider[] = [
+    artifact(),
+    ...(drafts ? [schedule({
+      check: (when) => {
+        if (when.repeat === 'now') return { ok: true as const };
+        const r = whenToRule(when as When);
+        return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
+      },
+      ...(typeof drafts === 'object' && drafts.when ? { when: drafts.when } : {}),
+    })] : []),
+  ];
+  const registry = new ToolRegistry({ tools: opts.tools ?? [], providers: [...builtins, ...(opts.skills ?? [])] });
   await registry.ready();
 
   let policy = opts.policy ?? 'low-risk-auto';
@@ -182,6 +210,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     classifier: new KeywordIntentClassifier(),
     ids: platform.ids,
     hash: (x) => platform.hasher.sha256(x).slice(0, 16),
+    ...(opts.actionWords?.length ? { actionWords: [...DEFAULT_ACTION_WORDS, ...opts.actionWords] } : {}),
   });
 
   // ── 事件：宿主不必自己给每个任务挂 watch ──
@@ -334,7 +363,8 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
         pool.set(patch.models ?? pool.current.entries, patch.strategy ?? pool.current.strategy);
       }
       if (patch.tools !== undefined) registry.setTools(patch.tools);
-      if (patch.skills !== undefined) await registry.setProviders(patch.skills);
+      // 换技能来源时内置的保留 —— 宿主只管自己那一份
+      if (patch.skills !== undefined) await registry.setProviders([...builtins, ...patch.skills]);
       if (patch.policy !== undefined) policy = patch.policy;
     },
     async start() {

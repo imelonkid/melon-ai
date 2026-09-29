@@ -1,5 +1,6 @@
 import type { AgentId, SkillId } from './ids.js';
 import type { ToolDescriptor, ToolHandler } from './tool.js';
+import type { Task } from './task.js';
 
 export interface AuthSpec {
   readonly kind: 'none' | 'oauth2' | 'apiKey' | 'custom';
@@ -29,6 +30,11 @@ export interface Skill {
 export interface SkillBundle {
   readonly skill: Skill;
   readonly handlers: ReadonlyMap<string, ToolHandler>;
+  /**
+   * 按任务决定给不给某个工具（工具 id → 条件）。不在表里的工具总是给。
+   * 例：「拟定时任务」只在有人在场确认的任务里给，定时触发的任务里给了只会空转。
+   */
+  readonly when?: ReadonlyMap<string, (task: Task) => boolean>;
 }
 
 export type Health =
@@ -49,14 +55,6 @@ export interface SkillProvider {
   close?(): Promise<void>;
 }
 
-/**
- * 任务启动时对可用工具集做的快照。
- * **必须钉住版本**：否则 MCP server 中途更新会让同一个 toolId 含义改变，事件日志就不可重放了。
- */
-export interface ToolsetSnapshot {
-  readonly takenAt: number;
-  readonly skills: readonly { readonly id: SkillId; readonly version: string }[];
-}
 
 /** 某个 Agent 被授予了哪些 skill（对应 Agent 编辑器里的工具开关）。 */
 export interface SkillGrant {

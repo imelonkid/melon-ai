@@ -24,3 +24,10 @@ export const argsHash = (h: Hasher, args: unknown): string =>
 /** 非幂等工具的重放保护键。同一次调用（含 callId）重放时命中同一个键。 */
 export const idempotencyKey = (h: Hasher, toolId: string, callId: string, args: unknown): string =>
   h.sha256(`${toolId}|${callId}|${canonicalJson(args)}`).slice(0, 32);
+
+/**
+ * 同一任务内重复调用的缓存键：任务 + 工具 + 全量参数（不含 callId）。
+ * 只给幂等工具用 —— 读同一份东西第二次，结果不会变，没必要再跑一遍。
+ */
+export const repeatKey = (h: Hasher, taskId: string, toolId: string, args: unknown): string =>
+  `repeat:${h.sha256(`${taskId}|${toolId}|${canonicalJson(args)}`).slice(0, 32)}`;

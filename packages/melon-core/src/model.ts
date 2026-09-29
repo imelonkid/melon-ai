@@ -1,4 +1,4 @@
-import type { JSONSchema } from './tool.js';
+import type { JSONSchema, RiskClass } from './tool.js';
 
 export interface Usage {
   readonly inputTokens: number;
@@ -34,6 +34,12 @@ export interface ModelTool {
   readonly name: string;
   readonly description: string;
   readonly input: JSONSchema;
+  /**
+   * 以下两项**不发给模型**，给规划器做规则判定用（动作守卫）：
+   * 适配器只取 name / description / input。
+   */
+  readonly risk?: RiskClass;
+  readonly triggers?: readonly string[];
 }
 
 /** 模型选择的工具调用。 */

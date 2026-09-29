@@ -1,7 +1,7 @@
 {
   "name": "@melon-ai/skills",
   "version": "0.0.1",
-  "description": "技能：工具调用管线、准入策略、工具注册（defineTool）；联网技能在 ./web 子路径（Node）。",
+  "description": "技能：工具调用管线、准入策略、工具注册与审查（defineTool / defineSkill）；内置技能；Agent Skills 加载（./agentskills）。联网（./web）、发邮件（./mail）需要 Node。",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -16,13 +16,23 @@
       "types": "./dist/web.d.ts",
       "import": "./dist/web.js",
       "require": "./dist/web.cjs"
+    },
+    "./mail": {
+      "types": "./dist/mail.d.ts",
+      "import": "./dist/mail.js",
+      "require": "./dist/mail.cjs"
+    },
+    "./agentskills": {
+      "types": "./dist/agentskills.d.ts",
+      "import": "./dist/agentskills.js",
+      "require": "./dist/agentskills.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup --entry.index src/index.ts --entry.web src/web/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.index src/index.ts --entry.web src/builtin/web/index.ts --entry.mail src/builtin/mail/index.ts --entry.agentskills src/agentskills/index.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*/*.test.ts"
   },
   "dependencies": {

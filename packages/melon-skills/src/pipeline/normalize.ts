@@ -10,6 +10,8 @@ export interface NormalizeInput {
   readonly output: ToolOutput;
   readonly metrics: ToolMetrics;
   readonly cx: ToolContext;
+  /** 本工具的摘要上限（`ToolDescriptor.outputLimit`），默认 SUMMARY_CHAR_LIMIT。 */
+  readonly limit?: number;
 }
 
 /**
@@ -22,10 +24,11 @@ export interface NormalizeInput {
  */
 export async function normalizeOk(input: NormalizeInput): Promise<ToolResult> {
   const { output, metrics, cx } = input;
+  const limit = input.limit ?? SUMMARY_CHAR_LIMIT;
   let summary = output.summary;
   let artifactRef: ArtifactRef | undefined = output.artifactRef;
 
-  if (summary.length > SUMMARY_CHAR_LIMIT) {
+  if (summary.length > limit) {
     // 原文不能丢：没有 artifact 就现场落一个
     if (artifactRef === undefined) {
       artifactRef = await cx.putArtifact(summary, {
@@ -33,7 +36,7 @@ export async function normalizeOk(input: NormalizeInput): Promise<ToolResult> {
         summary: `被截断的工具输出（原长 ${summary.length} 字符）`,
       });
     }
-    summary = summary.slice(0, SUMMARY_CHAR_LIMIT - TRUNCATION_MARKER.length) + TRUNCATION_MARKER;
+    summary = summary.slice(0, limit - TRUNCATION_MARKER.length) + TRUNCATION_MARKER;
   }
 
   const base = { ok: true as const, summary, metrics };

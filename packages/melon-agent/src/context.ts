@@ -1,4 +1,5 @@
 import type { ContextBundle, Entry, EpisodeStore, Message, Task } from '@melon-ai/core';
+import { BUILTIN_TOOLS } from '@melon-ai/core';
 
 /** 固定窗口：最近这么多条。长任务会撑爆 —— 由 @melon-ai/memory 的预算分配与压缩解决。 */
 const MAX_ENTRIES = 40;
@@ -12,7 +13,7 @@ const roleOf = (kind: Entry['kind']): Message['role'] => (kind === 'assistant' ?
  */
 function render(e: Entry): string {
   if (e.kind === 'observation') {
-    const handle = e.artifactRef ? `\n（完整内容句柄：${e.artifactRef}，可用 artifact.read 取全文）` : '';
+    const handle = e.artifactRef ? `\n（完整内容句柄：${e.artifactRef}，可用 ${BUILTIN_TOOLS.ARTIFACT_READ} 取全文；摘要已够用就不必读）` : '';
     return `【工具返回】${e.text}${handle}`;
   }
   if (e.kind === 'tool_call') return `【调用工具】${e.text}`;

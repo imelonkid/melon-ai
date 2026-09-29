@@ -1,5 +1,5 @@
 import type {
-  JSONSchema, RiskClass, Task, ToolContext, ToolDescriptor, ToolHandler, ToolOutput,
+  JSONSchema, RiskClass, SkillProvider, Task, ToolContext, ToolDescriptor, ToolHandler, ToolOutput,
 } from '@melon-ai/core';
 import { asSkillId, asToolId } from '@melon-ai/core';
 
@@ -39,6 +39,13 @@ export interface ToolSpec<A = Record<string, unknown>> {
   readonly idempotent?: boolean;
   /** 输出来自外部、不可信（网页、第三方返回）。见 core 的 `ToolDescriptor.untrustedOutput`。 */
   readonly untrustedOutput?: boolean;
+  /**
+   * 触发词：用户的话里出现其中之一，引擎就认定要用这个工具（规则判定，不问模型）。
+   * 有副作用的工具一定要写 —— 召回到了，模型就必须调用它，只回一段话不算数。
+   */
+  readonly triggers?: readonly string[];
+  /** 结果摘要进上下文的上限（字符）。只有「结果就是给模型的指令」的工具需要调大。 */
+  readonly outputLimit?: number;
   /** 只在满足条件的任务里提供给模型，例如「只在对话里」。 */
   readonly when?: (task: Task) => boolean;
   run(args: A, ctx: ToolContext): Promise<string | ToolOutput> | string | ToolOutput;
@@ -80,6 +87,8 @@ export function defineTool<A = Record<string, unknown>>(spec: ToolSpec<A>): Tool
     idempotent: spec.idempotent ?? risk === 'read',
     ...(spec.scope ? { scopeKeys: spec.scope } : {}),
     ...(spec.untrustedOutput ? { untrustedOutput: true } : {}),
+    ...(spec.triggers?.length ? { triggers: spec.triggers } : {}),
+    ...(spec.outputLimit ? { outputLimit: spec.outputLimit } : {}),
   };
   const handler: ToolHandler = async (args, ctx) => {
     const out = await spec.run(args as A, ctx);
@@ -112,4 +121,41 @@ export function toSchema(input: InputShape | JSONSchema): JSONSchema {
     if (!f.optional) required.push(key);
   }
   return { type: 'object', properties, required };
+}
+
+export interface SkillSpec {
+  /** 技能 id，与其工具 id 的前缀一致，如 `mail`。 */
+  readonly id: string;
+  readonly name: string;
+  /** 「什么时候该用我」。 */
+  readonly purpose: string;
+  readonly keywords?: readonly string[];
+  readonly tools: readonly Tool[];
+  /**
+   * 引擎自带的技能标 true。注册表据此定先后：内置的不能被宿主或用户装的技能覆盖。
+   * 宿主自己的代码可以用；用户装的技能由加载器创建，永远不是内置。
+   */
+  readonly builtin?: boolean;
+}
+
+/** 把一组工具打包成一个技能来源（`SkillProvider`），交给 `createAgent({ skills })`。 */
+export function defineSkill(spec: SkillSpec): SkillProvider {
+  const skillId = asSkillId(spec.id);
+  const bundle = {
+    skill: {
+      id: skillId,
+      name: spec.name,
+      purpose: spec.purpose,
+      keywords: spec.keywords ?? [],
+      tools: spec.tools.map((t) => t.descriptor),
+      source: spec.builtin ? { kind: 'builtin' as const } : { kind: 'extension' as const, providerId: spec.id, version: '1' },
+    },
+    handlers: new Map(spec.tools.map((t) => [String(t.descriptor.id), t.handler])),
+    when: new Map(spec.tools.flatMap((t) => (t.when ? [[String(t.descriptor.id), t.when] as const] : []))),
+  };
+  return {
+    id: `skill:${spec.id}`,
+    list: async () => [bundle],
+    health: async () => ({ status: 'up' }),
+  };
 }

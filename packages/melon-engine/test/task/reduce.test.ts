@@ -58,6 +58,30 @@ test('final 不直接置终态，而是派生 Settled', () => {
   ]);
 });
 
+test('abort → 派生 Settled(FAILED)，原因原样给用户 —— 没做成不能显示成「已完成」', () => {
+  const r = R(fresh({ state: 'PLANNING' }), {
+    t: 'PlanProduced', step: { kind: 'abort', thought: 't', reason: '没有能完成「删除」的工具' }, usage: usage(),
+  });
+  assert.deepEqual(r.effects, [
+    { k: 'Emit', taskId: TASK_ID, event: { t: 'Settled', outcome: { status: 'FAILED', reason: '没有能完成「删除」的工具' } } },
+  ]);
+});
+
+test('记下调用过、执行成功过的工具（去重）—— 动作守卫据此判断说做了的事做没做', () => {
+  const call = toolCall();
+  const planned = R(fresh({ state: 'PLANNING' }), { t: 'PlanProduced', step: { kind: 'tool_call', thought: 't', call }, usage: usage() });
+  assert.deepEqual(planned.task.toolsCalled, [call.toolId]);
+  const finish = (ok: boolean): TaskEvent => ({
+    t: 'ToolCallFinished', callId: call.callId, meta: { ok, metrics: { ms: 1, bytes: 0, retries: 0 } },
+  });
+  const failed = R({ ...planned.task, state: 'EXECUTING' }, finish(false));
+  assert.equal(failed.task.toolsSucceeded, undefined, '失败的不算做成');
+  const ok = R({ ...planned.task, state: 'EXECUTING' }, finish(true));
+  assert.deepEqual(ok.task.toolsSucceeded, [call.toolId]);
+  const again = R({ ...ok.task, state: 'EXECUTING', pendingCall: call }, finish(true));
+  assert.deepEqual(again.task.toolsSucceeded, [call.toolId], '去重');
+});
+
 // ───────────────────── 拒绝不是错误，是给模型的信息 ─────────────────────
 
 test('准入拒绝 → OBSERVING，把拒绝当 observation 回喂', () => {

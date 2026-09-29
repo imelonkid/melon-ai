@@ -79,7 +79,8 @@ test('when：只在满足条件的任务里把工具给模型', async () => {
     await agent.run('查一下', {});
     await agent.run('每周发周报', { ref: 'chat:1' });
     await agent.drain();
-    const toolNames = model.calls.map((c) => (c.tools ?? []).map((t) => t.name));
+    // 内置的「读取完整内容」总在，这里只看宿主工具
+    const toolNames = model.calls.map((c) => (c.tools ?? []).map((t) => t.name).filter((n) => !n.startsWith('builtin.')));
     assert.deepEqual(toolNames, [[], ['task.propose']]);
   } finally { await agent.stop(); }
 });
@@ -134,30 +135,39 @@ test('持久化：@melon-ai/agent/sqlite 一行换存储', async () => {
 });
 
 test('stop 之后，还在等人的任务的 watch 会收尾 —— 否则进程退不出、或对已关的存储反复轮询', async () => {
-  const mailSend = defineTool({ id: 'mail.send', description: '', risk: 'external', input: { to: 'string' }, run: () => 'ok' });
+  const mailSend = defineTool({ id: 'mail.send', description: '发邮件', risk: 'external', input: { to: 'string' }, run: () => 'ok' });
   const { entry: e } = entry([call('mail.send', { to: 'x' })]);
   const agent = await createAgent({ models: [e], tools: [mailSend], platform: quiet });
-  const waiting = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
-  const task = await agent.run('发');
-  await waiting;
-  let ended = false;
-  const loop = (async () => { for await (const _ of agent.watch(task.id)) { /* 读空 */ } ended = true; })();
-  await new Promise((r) => setTimeout(r, 100));
-  assert.equal(ended, false, '任务还在等人，watch 不该自己结束');
-  await agent.stop();
-  await Promise.race([loop, new Promise((r) => setTimeout(r, 500))]);
-  assert.equal(ended, true, 'stop 之后 watch 必须收尾');
+  let stopped = false;
+  try {
+    const waiting = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const task = await agent.run('发');
+    await waiting;
+    let ended = false;
+    const loop = (async () => { for await (const _ of agent.watch(task.id)) { /* 读空 */ } ended = true; })();
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(ended, false, '任务还在等人，watch 不该自己结束');
+    await agent.stop();
+    stopped = true;
+    await Promise.race([loop, new Promise((r) => setTimeout(r, 500))]);
+    assert.equal(ended, true, 'stop 之后 watch 必须收尾');
+  } finally {
+    // 断言失败也要停 —— 否则引擎的定时器让测试进程永远退不出（实际卡住过半小时）
+    if (!stopped) await agent.stop();
+  }
 });
 
 test('联网技能：@melon-ai/agent/web 按需开启；没配搜索只有读网页，configure 后搜索出现', async () => {
   const { web } = await import('../src/web.js');
   const agent = await createAgent({ skills: [web()], platform: quiet });
   try {
-    assert.deepEqual(agent.tools.list().map((d) => d.id), ['web.fetch']);
+    const webTools = () => agent.tools.list().filter((d) => d.id.startsWith('web.'));
+    assert.deepEqual(webTools().map((d) => d.id), ['web.fetch']);
     const backend = { id: 'fake', search: async () => [] };
     await agent.configure({ skills: [web({ search: backend })] });
-    assert.deepEqual(agent.tools.list().map((d) => d.id).sort(), ['web.fetch', 'web.search']);
-    assert.ok(agent.tools.list().every((d) => d.untrustedOutput), '联网工具都得声明输出不可信');
+    assert.deepEqual(webTools().map((d) => d.id).sort(), ['web.fetch', 'web.search']);
+    assert.ok(webTools().every((d) => d.untrustedOutput), '联网工具都得声明输出不可信');
+    assert.ok(agent.tools.list().some((d) => d.id === 'builtin.artifact_read'), '换技能来源时内置工具保留');
   } finally { await agent.stop(); }
 });
 

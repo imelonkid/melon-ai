@@ -27,8 +27,14 @@
       "@melon-ai/skills": [
         "packages/melon-skills/src/index.ts"
       ],
+      "@melon-ai/skills/agentskills": [
+        "packages/melon-skills/src/agentskills/index.ts"
+      ],
+      "@melon-ai/skills/mail": [
+        "packages/melon-skills/src/builtin/mail/index.ts"
+      ],
       "@melon-ai/skills/web": [
-        "packages/melon-skills/src/web/index.ts"
+        "packages/melon-skills/src/builtin/web/index.ts"
       ],
       "@melon-ai/store": [
         "packages/melon-store/src/index.ts"

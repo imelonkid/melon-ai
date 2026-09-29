@@ -96,8 +96,12 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
               ],
             };
           }
+          const called = task.toolsCalled ?? [];
           return {
-            task: patch({ usage: withUsage, guard, pendingCall: step.call }, 'ADMITTING'),
+            task: patch({
+              usage: withUsage, guard, pendingCall: step.call,
+              ...(called.includes(step.call.toolId) ? {} : { toolsCalled: [...called, step.call.toolId] }),
+            }, 'ADMITTING'),
             effects: [{ k: 'Admit', taskId: task.id, call: step.call }],
           };
         }
@@ -110,6 +114,12 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
           return {
             task: patch({ usage: withUsage }, 'PLANNING', true),
             effects: [settle(task.id, { status: 'SUCCEEDED', answer: step.answer })],
+          };
+        case 'abort':
+          // 没做成就是没做成：记 FAILED，原因原样给用户，不能显示成「已完成」
+          return {
+            task: patch({ usage: withUsage }, 'PLANNING', true),
+            effects: [settle(task.id, { status: 'FAILED', reason: step.reason })],
           };
       }
     }
@@ -175,6 +185,9 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
             ? { costUSD: event.meta.metrics.costUSD } : {}),
           // 污点只会扩散不会自愈：读过一次不可信内容，这个任务后面的每一步都算
           tainted: task.tainted || event.meta.untrusted === true,
+          ...(event.meta.ok && task.pendingCall && !(task.toolsSucceeded ?? []).includes(task.pendingCall.toolId)
+            ? { toolsSucceeded: [...(task.toolsSucceeded ?? []), task.pendingCall.toolId] }
+            : {}),
         }, undefined, true),
         effects: [],
       };

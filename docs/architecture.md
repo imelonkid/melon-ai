@@ -354,8 +354,9 @@ vs「推理开始前框架必须准备好的东西」**。
 │ 技能      melon-skills        │ 模型      melon-llm                    │
 │             pipeline/  六段管线 │             router/    模型路由         │
 │             policy/    准入     │             planner/   ReAct 规划器      │
-│             registry/  工具注册 │             openai/    OpenAI 兼容适配器  │
-│             web/  联网（子路径） │             anthropic/ Claude 适配器（子路径）│
+│             registry/  注册与审查│             openai/    OpenAI 兼容适配器  │
+│             builtin/   内置技能 │             anthropic/ Claude 适配器（子路径）│
+│             agentskills/ 用户技能│                                          │
 ├──────────────────────────────┴──────────────────────────────────────┤
 │ 基础设施  melon-store          sqlite/（子路径）                       │
 │           melon-memory（P1 待建） 三层记忆 + 上下文装配                │
@@ -429,9 +430,13 @@ plugins 不被任何引擎包依赖（含 agent）—— 它实现 core 的协�
 | | `trigger/` | 定时编排：纯函数周期规则 + 调度器（§4.8） | core | ✅ |
 | **@melon-ai/skills** | `pipeline/` | 工具调用六段管线 + 中间件（重试、熔断、幂等、截断） | core | ✅ |
 | | `policy/` | 准入矩阵、污点覆盖、授权匹配、配额 —— 管线的第 ③ 段 | core | ✅ |
-| | `registry/` | `defineTool` 与工具注册表：宿主工具 + `SkillProvider` 来源合并，生成给模型的 schema | core | ✅ |
-| | `web/` | 联网技能：网页搜索（只认 core 的 `SearchProvider` 协议）+ 读网页（内网拦截）+ `testSearch`。`@melon-ai/skills/web` 子路径（Node） | core | ✅ |
-| | （待建） | 技能召回、内置工具（§2.7 的落地面）、MCP 接入 | core | P1/P2 |
+| | `registry/` | `defineTool` / `defineSkill` 与工具注册表；**注册前的校验、净化、审查**（`reviewTool`），内置 > 宿主 > 扩展，内置不可覆盖 | core | ✅ |
+| | `builtin/artifact/` | 内置：读取完整内容（`builtin.artifact_read`，沿用 core 的 `BUILTIN_TOOLS`） | core | ✅ |
+| | `builtin/schedule/` | 内置：拟定时任务草稿（`schedule.propose`，只产出草稿；宿主 `scheduleDrafts` 开启） | core | ✅ |
+| | `builtin/web/` | 内置：网页搜索（只认 core 的 `SearchProvider` 协议）+ 读网页（内网拦截）+ `testSearch`。`/web` 子路径（Node） | core | ✅ |
+| | `builtin/mail/` | 内置：发邮件（自写的最小 SMTP 客户端，465 SSL / 587 STARTTLS，不在明文连接上发授权码）+ `testMail`。`/mail` 子路径（Node） | core | ✅ |
+| | `agentskills/` | 加载用户装的 **Agent Skills**（agentskills.io 规范，Claude 的技能格式）：发现、审查（说明文字 + 脚本）、三个工具 `skill.activate` / `skill.read` / `skill.run`。`/agentskills` 子路径（Node） | core | ✅ |
+| | （待建） | 记忆 / 历史类内置工具（等 memory）、MCP 接入 | core | P1/P2 |
 | **@melon-ai/llm** | `router/` | 按用途 × 策略 × 健康 × 配额选模型（§4.6） | core | ✅ |
 | | `planner/` | ReAct 规划器 + 意图短路，原生 tool use | core | ✅ |
 | | `openai/` | OpenAI 兼容适配器 + 各家工厂（`deepseek` / `qwen` / `openai` / `kimi` / 通用 `compatible`），只用 fetch | core | ✅ |
@@ -498,6 +503,9 @@ engine-core-and-skills  引擎只认契约与技能
 engine/task-pure        状态机只认 core，不能反过来依赖 runtime
 engine/trigger-no-runtime  调度器不认识 AgentEngine（§4.8 边界一）
 skills/policy-pure      准入判定是纯函数，只认 core
+skills/builtin-independent  内置技能互不认识：只认 core、自己的目录和注册表
+skills/agentskills-is-loader  用户技能加载器只认 core、自己的目录和注册表
+skills/root-runtime-agnostic  技能包根入口不引入 Node 专属的 web / mail / agentskills（它们走子路径）
 llm/components-independent  路由、规划器、各适配器互不认识
 plugins/independent     插件之间互不认识
 no-circular
@@ -740,6 +748,8 @@ import { createAgent, defineTool, deepseek } from '@melon-ai/agent';
 import { sqlite } from '@melon-ai/agent/sqlite';        // 可选：持久化
 import { claude } from '@melon-ai/agent/anthropic';     // 可选：Claude
 import { web } from '@melon-ai/agent/web';               // 可选：联网（Node）
+import { mail } from '@melon-ai/agent/mail';             // 可选：发邮件（SMTP，Node）
+import { agentSkills } from '@melon-ai/agent/agentskills'; // 可选：用户装的 Agent Skills（Node）
 import { bocha } from '@melon-ai/plugins/bocha';          // 扩展包：搜索服务的厂商实现，按需装
 
 const mailSend = defineTool({
@@ -752,7 +762,12 @@ const agent = await createAgent({
   models: [deepseek({ apiKey }), claude({ apiKey: k2 })],  // 多个时按 strategy 路由
   storage: sqlite({ file: 'app.db' }),                      // 不传 = 内存
   tools: [mailSend],
-  skills: [web({ search: bocha({ apiKey: k3 }) })],        // 搜索结果不可信：读过之后对外操作一律要确认
+  skills: [
+    web({ search: bocha({ apiKey: k3 }) }),                 // 搜索结果不可信：读过之后对外操作一律要确认
+    mail({ smtp: { host: 'smtp.163.com', port: 465, secure: true, user, pass } }),
+    agentSkills({ dirs: [`${home}/.myapp/skills`] }),      // 注册前审查；执行技能脚本每次确认
+  ],
+  scheduleDrafts: true,                                     // 允许 Agent 拟定时任务草稿（宿主画成卡片）
   policy: 'low-risk-auto',                                  // 默认值；对外操作要确认
 });                                                         // 默认创建即启动（含崩溃恢复）
 
@@ -772,7 +787,9 @@ await agent.configure({ models: [...], tools: [...] });    // 热替换，不重
 | 定义工具 | `defineTool({ id, description, risk, input, scope, when, untrustedOutput, run })`，`input` 可用简写 |
 | 定时 | `schedules.create({ goal, when })` / `pause` / `resume` / `remove` / `describe` |
 | 换模型 / 工具 / 权限 | `configure({ models, strategy, tools, skills, policy })` |
-| 验证模型可用 | `models.test(entry)` |
+| 验证模型可用 | `models.test(entry)`；搜索 `testSearch(provider)`；邮箱 `testMail(smtp)` |
+| 看哪些工具 / 技能没注册上、为什么 | `tools.report()` / `tools.onReport(cb)`；用户技能另有 `agentSkills(...).report()` |
+| 让「没有合适工具」识别更多说法 | `actionWords: [...]`（在默认动作词表上追加） |
 
 进阶：`context`（上下文装配，默认「目标 + 最近步骤」，可用 `basicContext(..., { prelude })` 在前面加东西）、
 `planner`、`validator`、`platform`（默认 Node）都能替换；底层 `submit` / `resolveApproval` 仍然可用。
@@ -885,7 +902,7 @@ await agent.configure({ models: [...], tools: [...] });    // 热替换，不重
 - [ ] `@melon-ai/skills-builtin`（等 memory / context）
 - [ ] `@melon-ai/context` / `@melon-ai/memory`（宿主目前用最小实现顶着）
 
-**测试总数 253，全绿；`lint:deps` 223 条依赖零违规。**
+**测试总数 292，全绿；`lint:deps` 366 条依赖零违规。**
 
 ### 10.1 宿主（Jolly）集成进度
 
@@ -951,6 +968,9 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
 4. ~~Jolly 改用新 API~~ —— 已完成：只依赖 `@melon-ai/agent` + `@melon-ai/plugins`，
    删掉了 Jolly 里自写的参数校验、模型热替换、工具注册、周期规则换算、逐任务订阅（约 500 行），
    全部冒烟场景（任务、详情、定时与错过补跑、对话、联网、连接页、热生效）通过
+5. ~~技能边界与动作守卫~~ —— 已完成（第 55–59 条）：注册审查、内置技能（完整内容 / 定时草稿 / 联网 / 发邮件）、
+   Agent Skills 加载（Anthropic 官方仓库 19 个技能全部可加载）、动作守卫、重复调用缓存
+6. Jolly 接入：删演示工具、接发邮件与 `~/.jolly/skills`，「连接」页加「邮箱」「技能」两组（先出设计）
 
 **内核侧待办（P1，不阻塞上面）**
 
@@ -958,7 +978,9 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
   `run(goal, { model })` 或按 Agent 配置的模型集合
 - `@melon-ai/memory`（三层记忆 + 上下文装配）：宿主现在用的是 40 条固定窗口的
   最小实现，长会话必炸。这是 P1 验收「40 轮不炸窗口」的正主
-- `skills` 的内置工具（记忆 / 历史 / artifact）：依赖上面这个
+- `skills` 的内置工具（记忆 / 历史）：依赖上面这个（artifact 已做）
+- 「等你回复」的任务状态：任务以向用户提问结束时，现在只能记为完成或失败；定时任务里这等于静默失败
+- 技能脚本的隔离执行（沙箱、目录与网络白名单）与通用命令行工具：这一版只执行技能自带的脚本、每次确认
 - `engine/trigger` 的事件触发源（P2）：目前只做了定时，
   `TriggerSource` 端口早就在 core 里等着
 
@@ -1056,6 +1078,33 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     skills/web 只认协议（新增 `testSearch` 给宿主的配置页用），博查进新的扩展包
     `@melon-ai/plugins/bocha`。规则 `nothing-depends-on-plugins` 保证引擎任何包都引用不到插件，
     `plugins/independent` 保证插件之间互不引用，两条都造过违规验证会挂。
+
+#### 技能边界与动作守卫（Jolly 人工验收暴露）
+
+55. **模型不调工具，却说做完了。** 人工验收里：说「发邮件给产品组」，模型写一段「请确认收件人」就结束，
+    任务显示「已完成」；补一句邮箱，模型直接答「邮件已发送」—— 一个工具都没调，是编的；
+    定时任务到点同样用文字「征求确认」，没人回答，周报永远发不出去。准入拦截本身没问题（三次发信全部弹了确认），
+    漏洞在「没调工具」这条路。**不靠提示词**，改为规则判定（`llm/planner/action.ts`）：
+    命中有副作用工具的触发词且还没尝试过 → `toolChoice: required`；话里有动作词却没有工具能做 →
+    不问模型、以失败收尾说没有合适的工具；答复声称「已发送/已删除…」而本任务没有成功执行过有副作用的工具 →
+    纠正一次，仍不调就以失败收尾。为此 core 加了 `PlanStep.abort`（没做成就是 FAILED，不能显示成完成）、
+    `Task.toolsCalled / toolsSucceeded`、`ToolDescriptor.triggers`。
+56. **同一份内容反复读。** DeepSeek 连读 4 次同一个句柄才被循环检测拦下。管线加了任务内的重复调用缓存：
+    幂等工具、参数相同、上次成功 → 直接复用并注明「与之前的调用相同」。只缓存成功的，不跨任务。
+57. **任何来源的工具注册前都要审查，内置不可覆盖。** 工具说明会原样进模型上下文，等于第三方写进系统提示的文字。
+    `reviewTool`：校验（id、参数、授权范围、风险）→ 净化（NFKC、去不可见字符）→ 审查（提示注入写法、
+    名字像写操作却标 read、触发词过宽）。注册表原来允许宿主同名工具覆盖内置实现 —— 改为内置 > 宿主 > 扩展，
+    内置不可覆盖，被拒的原因进 `tools.report()`。上下文提示里原来写死了宿主的工具名 `artifact.read`，
+    改为引擎内置的 `builtin.artifact_read`。
+58. **Agent Skills 兼容：用官方仓库验证，修了两处误拦。** Anthropic 官方 skills 仓库 19 个技能，初版审查拦了 2 个：
+    `claude-api` 的脚本在**注释里**写「不能读 ~/.ssh/id_rsa」（防御性说明）；`skill-creator` 的正文
+    「ALWAYS use this exact template」命中了「always use this」。改为脚本去掉注释再扫、英文模式必须点名
+    「this tool/skill」，之后 19 个全部可加载，并实际跑通了 activate / read / run。
+    另外：技能正文用 NFC 保留原样（NFKC 会改掉代码与全角标点），审查另用 NFKC 形式去查；
+    `skill.read` 原来先判文件存不存在再判越界，越界路径会被报成「不存在」，等于帮人探测文件系统 —— 改为先判越界。
+59. **测试卡住没人管。** agent 包的一个测试把 `agent.stop()` 写在断言之后，断言失败时引擎的定时器让进程退不出，
+    全量测试挂了半小时；更早还有一个旧包（`melon-runtime`，目录早已删除）的测试进程挂了一天多。
+    测试里的引擎一律在 `finally` 里停；跑测试加硬上限（全量正常约 10 秒）。
 
 #### 包结构合并（14 → 8）
 
