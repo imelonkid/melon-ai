@@ -40,6 +40,14 @@ export interface CreateAgentOptions {
    * 精确定时器救不了这种情况，而轮询 + `nextFireAt` 落库天然能恢复。
    */
   readonly schedulePollMs?: number;
+  /**
+   * 任何来源提交的任务落库后回调一次 —— 宿主 `submit()`、定时触发都算。
+   *
+   * 定时触发的任务是调度器直接提交的，宿主手里没有它的 id，也就没法 `watch`。
+   * 没有这个钩子，宿主只能轮询任务表才知道「定时任务刚跑出来一个新任务」。
+   * 回调抛错只记日志，不影响提交本身。
+   */
+  readonly onSubmitted?: (task: Task) => void;
 }
 
 export interface MelonAgent extends AgentEngine {
@@ -117,14 +125,24 @@ export async function createAgent(opts: CreateAgentOptions): Promise<MelonAgent>
     ...(opts.pollIntervalMs !== undefined ? { pollIntervalMs: opts.pollIntervalMs } : {}),
   });
 
+  const submit = async (spec: Parameters<Runtime['submit']>[0]): Promise<Task> => {
+    const task = await runtime.submit(spec);
+    try {
+      opts.onSubmitted?.(task);
+    } catch (e) {
+      logger.log('error', 'onSubmitted 回调抛错', { taskId: task.id, error: String(e) });
+    }
+    return task;
+  };
+
   const schedules = new Scheduler({
     store: stores.schedules,
-    submit: (spec) => runtime.submit(spec),
+    submit,
     clock, ids, logger,
   });
 
   return {
-    submit: (spec) => runtime.submit(spec),
+    submit,
     get: (id) => runtime.get(id),
     cancel: (id, reason) => runtime.cancel(id, reason),
     resolveApproval: (id, callId, decision) => runtime.resolveApproval(id, callId, decision),

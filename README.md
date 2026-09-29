@@ -44,7 +44,7 @@ pnpm lint:deps      # 校验分层依赖方向没被破坏
 ## 状态
 
 P0 已完成并通过验收（带审批的两步任务，进程重启后从事件日志恢复继续执行）。
-**192 个测试全绿**，`lint:deps` 223 条依赖零违规。
+**196 个测试全绿**，`lint:deps` 223 条依赖零违规。
 
 已接入首个宿主 [Jolly](../jolly)，真实模型（DeepSeek / Claude / OpenAI 兼容）跑通。
 待建：`@melon-ai/context` / `@melon-ai/memory` / `@melon-ai/skills-builtin` / `@melon-ai/mcp`。

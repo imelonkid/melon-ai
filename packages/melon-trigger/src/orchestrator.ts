@@ -40,6 +40,7 @@ export interface UpdateScheduleInput {
 export class Scheduler {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private running = false;
+  private tickMs = 30_000;
   /** 同 tick 内重入会把同一个 schedule 触发两次。 */
   private ticking = false;
 
@@ -162,15 +163,8 @@ export class Scheduler {
   start(tickMs = 30_000): void {
     if (this.running) return;
     this.running = true;
-    const loop = () => {
-      if (!this.running) return;
-      void this.tick()
-        .catch((e: unknown) => this.deps.logger.log('error', '定时轮询失败', { error: String(e) }))
-        .finally(() => {
-          if (this.running) this.timer = setTimeout(loop, tickMs);
-        });
-    };
-    this.timer = setTimeout(loop, 0);
+    this.tickMs = tickMs;
+    this.schedule(0);
   }
 
   stop(): void {
@@ -244,7 +238,27 @@ export class Scheduler {
   /** 配置变了就让下一轮 tick 早点来 —— 否则新建的「1 分钟后」要等满一个轮询周期。 */
   private rearm(): void {
     if (!this.running) return;
+    this.schedule(0);
+  }
+
+  /**
+   * 排下一轮。**每一轮结束都要重新排**，轮询才能一直转下去。
+   *
+   * 早先 `rearm()` 自己 `setTimeout(tick)` —— 清掉了循环的定时器，换上一个只跑一次的，
+   * 于是任何一次新建/暂停之后轮询就永久停了。单测都是手动调 `tick()`，没覆盖到；
+   * 宿主接上界面、建完等它自己跑时才暴露。现在 rearm 与循环共用这一个入口。
+   */
+  private schedule(delayMs: number): void {
     if (this.timer !== undefined) clearTimeout(this.timer);
-    this.timer = setTimeout(() => void this.tick(), 0);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      if (!this.running) return;
+      void this.tick()
+        .catch((e: unknown) => this.deps.logger.log('error', '定时轮询失败', { error: String(e) }))
+        .finally(() => {
+          // 轮询期间可能被 rearm 排过了，别叠出第二个循环
+          if (this.running && this.timer === undefined) this.schedule(this.tickMs);
+        });
+    }, delayMs);
   }
 }

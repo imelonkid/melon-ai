@@ -226,3 +226,37 @@ test('一次性任务跑完就不再排期', async () => {
   h.advance(86_400_000);
   assert.equal(await h.scheduler.tick(), 0);
 });
+
+test('start() 之后新建，轮询不会停：到点照样自己触发', async () => {
+  // 回归：rearm() 曾把轮询循环的定时器换成只跑一次的 tick，
+  // 新建之后调度器就再也不转了。这里用真定时器 + start()，不手动调 tick()
+  const h = harness();
+  h.scheduler.start(10);
+  try {
+    await h.scheduler.create({ title: '一次性', template, rule: { kind: 'once', at: h.at() + 60_000 } });
+    await new Promise((r) => setTimeout(r, 30)); // rearm 的那一轮已经跑完
+    h.advance(61_000);
+    await new Promise((r) => setTimeout(r, 50)); // 靠循环自己再转几轮
+    assert.equal(h.submitted.length, 1);
+  } finally {
+    h.scheduler.stop();
+  }
+});
+
+test('连续 rearm 不会叠出多个轮询循环', async () => {
+  const h = harness();
+  h.scheduler.start(10);
+  try {
+    for (let i = 0; i < 5; i++) {
+      await h.scheduler.create({ title: `t${i}`, template, rule: { kind: 'once', at: h.at() + 60_000 } });
+    }
+    let ticks = 0;
+    const orig = h.scheduler.tick.bind(h.scheduler);
+    h.scheduler.tick = async () => { ticks++; return orig(); };
+    await new Promise((r) => setTimeout(r, 105));
+    // 单循环 10ms 一轮，100ms 内约 10 轮；叠出 5 个循环会是 50 轮上下
+    assert.ok(ticks <= 15, `100ms 内 tick 了 ${ticks} 次，轮询循环叠加了`);
+  } finally {
+    h.scheduler.stop();
+  }
+});

@@ -34,6 +34,7 @@ async function boot(opts: {
   dir?: string;
   script: readonly PlanStep[];
   policy?: 'ask' | 'all-auto';
+  onSubmitted?: (t: { id: string; trigger: { type: string } }) => void;
 }): Promise<Ctx> {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), 'melon-int-'));
   const stores = openSqliteStores({ file: join(dir, 'agent.db') });
@@ -54,6 +55,7 @@ async function boot(opts: {
     toolset: () => TOOLSET,
     pollIntervalMs: 0,
     execute: { timeoutMs: 500, maxRetries: 0, backoffBaseMs: 0 },
+    ...(opts.onSubmitted ? { onSubmitted: opts.onSubmitted } : {}),
   });
   return { agent, dir, sent: () => sent, close: async () => { await agent.stop(); await stores.close(); } };
 }
@@ -103,6 +105,40 @@ test('createAgent：watch 能驱动宿主 UI', async () => {
     assert.ok(seen.includes('ApprovalRequested') === false);
     assert.ok(seen.includes('Observed'));
     assert.equal(seen[seen.length - 1], 'Settled');
+  } finally { await c.close(); rmSync(c.dir, { recursive: true, force: true }); }
+});
+
+test('onSubmitted：手动提交与定时触发都会通知宿主', async () => {
+  const seen: string[] = [];
+  const c = await boot({
+    script: [{ kind: 'final', thought: 'x', answer: '好了' }],
+    onSubmitted: (t) => seen.push(t.trigger.type),
+  });
+  try {
+    await c.agent.submit(spec());
+    // 定时触发走的是调度器内部的 submit —— 宿主手里没有这个任务的 id，
+    // 只能靠钩子知道它存在
+    await c.agent.schedules.create({
+      title: '一次性',
+      template: { agentId: 'weekly' as never, kind: 'automation', goal: '发周报' },
+      rule: { kind: 'once', at: Date.now() + 5 },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(await c.agent.schedules.tick(), 1);
+    await c.agent.drain();
+    assert.deepEqual(seen, ['manual', 'schedule']);
+  } finally { await c.close(); rmSync(c.dir, { recursive: true, force: true }); }
+});
+
+test('onSubmitted 抛错不影响提交', async () => {
+  const c = await boot({
+    script: [{ kind: 'final', thought: 'x', answer: '好了' }],
+    onSubmitted: () => { throw new Error('宿主的 bug'); },
+  });
+  try {
+    const t = await c.agent.submit(spec());
+    await c.agent.drain();
+    assert.equal((await c.agent.get(t.id))?.state, 'SUCCEEDED');
   } finally { await c.close(); rmSync(c.dir, { recursive: true, force: true }); }
 });
 
