@@ -325,3 +325,37 @@ test('取消后也要清掉 pendingCall', () => {
   const r = R(fresh({ state: 'AWAITING_APPROVAL', pendingCall: call }), { t: 'Cancelled' });
   assert.equal(r.task.pendingCall, undefined);
 });
+
+// ───────── 无进展判据（人工验收暴露的问题）─────────
+
+test('同一句观察重复出现即算无进展，哪怕参数换了', () => {
+  let task = fresh({ state: 'OBSERVING' });
+  const SAME = '读取到 3 条与「本周进展」相关的进展';
+  // 第一次出现是有进展的，之后每次重复计一次；阈值 4，所以第 5 次触发
+  for (let i = 0; i < 5; i++) {
+    const r = reduce(task, { t: 'Observed', summary: SAME }, { now: NOW });
+    task = r.task;
+    if (i < 4) {
+      assert.equal(task.state, 'PLANNING', `第 ${i + 1} 次应继续`);
+      task = { ...task, state: 'OBSERVING' };
+    } else {
+      const emitted = r.effects.find((e) => e.k === 'Emit');
+      assert.ok(emitted && emitted.k === 'Emit' && emitted.event.t === 'NoProgress',
+        '同一句话重复 4 次必须触发无进展 —— 旧判据「非空即进展」会让它无限跑下去');
+    }
+  }
+});
+
+test('观察内容变化则重置计数', () => {
+  let task = fresh({ state: 'OBSERVING' });
+  task = reduce(task, { t: 'Observed', summary: 'A' }, { now: NOW }).task;
+  task = reduce({ ...task, state: 'OBSERVING' }, { t: 'Observed', summary: 'A' }, { now: NOW }).task;
+  assert.equal(task.guard.stagnantSteps, 1, '重复一次，计数为 1');
+  task = reduce({ ...task, state: 'OBSERVING' }, { t: 'Observed', summary: 'B' }, { now: NOW }).task;
+  assert.equal(task.guard.stagnantSteps, 0, '内容变了就是有进展');
+});
+
+test('空观察也算无进展', () => {
+  const r = R(fresh({ state: 'OBSERVING' }), { t: 'Observed', summary: '' });
+  assert.equal(r.task.guard.stagnantSteps, 1);
+});

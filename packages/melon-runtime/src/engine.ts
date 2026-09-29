@@ -216,7 +216,7 @@ export class Runtime implements AgentEngine {
       try {
         follows = await runEffect(effectDeps, eff);
       } catch (e) {
-        this.deps.logger.log('error', 'effect 执行失败', {
+        this.deps.logger.log('error', `effect ${eff.k} 执行失败：${e instanceof Error ? e.message : String(e)}`, {
           taskId: id, effect: eff.k,
         });
         // 不静默吞掉：让任务失败，否则会永久卡在中间状态

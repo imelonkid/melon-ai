@@ -320,3 +320,30 @@ test('canonicalJson 键序无关，且区分 null 与 undefined', () => {
 test('保留策略在管线之外也能校验', () => {
   assert.doesNotThrow(() => assertRetention(DEFAULT_RETENTION));
 });
+
+// ───────── artifact 读取的任务范围（§2.7）─────────
+
+test('工具可以读回自己写的 artifact', async () => {
+  const h = await harness({
+    handler: async (_a, cx) => {
+      const ref = await cx.putArtifact('全文内容', { mime: 'text/plain', summary: 's' });
+      const back = await cx.readArtifact(ref);
+      return { summary: `读回：${back}` };
+    },
+  });
+  const out = await invokeAll(h, task(), call(), 'all-auto');
+  assert.equal(out.kind === 'executed' ? out.result.summary : '', '读回：全文内容');
+});
+
+test('跨任务读取被拒 —— 句柄是可猜的，不校验等于开横向读取的口子', async () => {
+  const h = await harness({ handler: async () => ({ summary: 'x' }) });
+  // 造一个属于别的任务的 artifact
+  const foreign = await h.artifacts.put('别人的秘密' as never, '别人的秘密', {
+    mime: 'text/plain', summary: 's',
+  });
+  const h2 = await harness({
+    handler: async (_a, cx) => ({ summary: await cx.readArtifact(foreign) }),
+  });
+  const out = await invokeAll(h2, task(), call(), 'all-auto');
+  assert.equal(out.kind === 'executed' ? out.result.error?.code : '', 'NOT_FOUND');
+});

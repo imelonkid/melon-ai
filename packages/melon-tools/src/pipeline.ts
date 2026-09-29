@@ -10,6 +10,7 @@ import type { ExecuteConfig } from './execute.js';
 import { idempotencyKey } from './argshash.js';
 import { emptyMetrics, normalizeErr, normalizeOk } from './normalize.js';
 import { toToolError } from './errors.js';
+import { ToolError } from '@melon-ai/core';
 
 export interface PipelineDeps {
   readonly resolver: ToolResolver;
@@ -185,6 +186,17 @@ export class ToolPipeline {
       signal: ctl.signal,
       ...(key !== undefined ? { idempotencyKey: key } : {}),
       putArtifact: async (data, meta) => this.deps.artifacts.put(task.id, data, meta),
+      readArtifact: async (ref, range) => {
+        // 跨任务读取直接拒 —— 句柄是可猜的，不校验等于开了一个横向读取的口子
+        const meta = await this.deps.artifacts.stat(ref);
+        if (!meta || meta.taskId !== task.id) {
+          throw new ToolError('NOT_FOUND', `句柄 ${ref} 不存在或不属于本任务`, {
+            hint: '只能读取本次任务中产生的 artifact',
+          });
+        }
+        const bytes = await this.deps.artifacts.read(ref, range);
+        return new TextDecoder().decode(bytes);
+      },
       log: (level, msg, fields?: Readonly<Record<string, LogField>>) =>
         this.deps.logger.log(level, msg, { ...fields, toolId: call.toolId }),
     };

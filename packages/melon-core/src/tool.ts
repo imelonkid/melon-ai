@@ -73,6 +73,13 @@ export interface ToolContext {
   readonly idempotencyKey?: string;
   /** 大结果写这里，返回句柄，不要塞进 summary。 */
   putArtifact(data: Uint8Array | string, meta: { mime: string; summary: string }): Promise<ArtifactRef>;
+  /**
+   * 按句柄读回内容。
+   *
+   * **限定本任务范围** —— 实现方必须校验该 artifact 属于当前任务，
+   * 否则扩展工具可以凭猜到的句柄读走别的任务的数据。
+   */
+  readArtifact(ref: ArtifactRef, range?: { offset: number; length: number }): Promise<string>;
   /** 字段只接受标量与资源引用，禁止 dump 对象。见 docs/architecture.md §2.4。 */
   log(level: 'debug' | 'info' | 'warn' | 'error', msg: string, fields?: Readonly<Record<string, LogField>>): void;
 }

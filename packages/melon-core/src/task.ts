@@ -66,6 +66,14 @@ export interface GuardWindow {
   readonly recentCalls: readonly string[];
   /** 连续多少步没有新事实进入 L2。 */
   readonly stagnantSteps: number;
+  /**
+   * 上一次观察结果的指纹。
+   *
+   * 「连续相同参数」这个判据太弱 —— 模型只要微调一下参数就绕过去了，
+   * 实测中它换了 4 种 query 调同一个工具 7 次，拿到的永远是同一句话。
+   * **一字不差的重复观察就是没有进展**，跟参数是否相同无关。
+   */
+  readonly lastObservation?: string;
 }
 
 export interface GuardThresholds {

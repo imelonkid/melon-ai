@@ -4,7 +4,7 @@ import type {
 import { DEFAULT_GUARDS, IllegalTransitionError, TERMINAL_STATES } from '@melon-ai/core';
 import { lookup } from './transitions.js';
 import { addUsage, exhausted } from './budget.js';
-import { bumpStagnant, detectLoop, detectNoProgress, recordCall } from './guards.js';
+import { detectLoop, detectNoProgress, observe, recordCall } from './guards.js';
 
 export interface ReduceOptions {
   readonly now: number;
@@ -178,8 +178,8 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
       };
 
     case 'Observed': {
-      const madeProgress = event.summary.length > 0 && !event.summary.startsWith('准入拒绝');
-      const guard = bumpStagnant(task.guard, madeProgress);
+      // 按内容判断进展：同一句话重复出现就是原地打转，不管参数换没换
+      const guard = observe(task.guard, event.summary);
       const dim = exhausted({ ...task, guard }, opts.now);
       if (dim) {
         return {

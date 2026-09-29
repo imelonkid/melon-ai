@@ -64,7 +64,15 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
       } catch (e) {
         span.end({ ok: false, errorCode: 'planner' });
         // 规划失败不该让任务悄悄卡住 —— 当成预算维度之外的失败直接收敛
-        deps.logger.log('error', '规划失败', { taskId: effect.taskId });
+        //
+        // 日志必须带上原因：只打 taskId 的话，用户看到「规划失败」却无从下手，
+        // 而这恰恰是接真模型后最常见的一类失败（鉴权、参数、限流）。
+        const detail = e instanceof Error ? e.message : String(e);
+        const code = (e as { code?: string })?.code;
+        deps.logger.log('error', `规划失败：${detail}`, {
+          taskId: effect.taskId,
+          ...(code !== undefined ? { code } : {}),
+        });
         return [{
           taskId: effect.taskId,
           events: [{
@@ -98,7 +106,9 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
     case 'InvokeTool': {
       const task = await load(deps, effect.taskId);
       const result = await deps.pipeline.execute(task, effect.call);
-      await appendEntry(deps, task, 'observation', result.summary);
+      // artifactRef 必须一起进 L2：只写 summary 的话，大结果的句柄就丢了，
+      // 模型看到「读取到 3 条」却没有任何办法拿到那 3 条的内容
+      await appendEntry(deps, task, 'observation', result.summary, result.artifactRef);
       // ToolCallFinished 与 Observed 一起提交：否则崩在两者之间会把结果丢掉，
       // 而且会让 OBSERVING 变成静止状态，破坏 resumeEffects 的前提
       return [{
@@ -163,8 +173,12 @@ async function load(deps: EffectDeps, id: Task['id']): Promise<Task> {
 
 async function appendEntry(
   deps: EffectDeps, task: Task, kind: 'observation' | 'assistant', text: string,
+  artifactRef?: string,
 ): Promise<void> {
-  await deps.episodes.append(task.episodeId, { kind, text, at: deps.now() });
+  await deps.episodes.append(task.episodeId, {
+    kind, text, at: deps.now(),
+    ...(artifactRef !== undefined ? { artifactRef: artifactRef as never } : {}),
+  });
 }
 
 export function pickCall(task: Task): ToolCall | undefined { return task.pendingCall; }

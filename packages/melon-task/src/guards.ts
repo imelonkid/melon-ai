@@ -20,10 +20,30 @@ export function detectLoop(w: GuardWindow, g: GuardThresholds = DEFAULT_GUARDS):
   return tail.every((k) => k === first) ? first : null;
 }
 
+/**
+ * 按**观察内容**判断有没有进展。
+ *
+ * 旧判据是「summary 非空就算有进展」，但工具反复返回同一句非空的话时它永远
+ * 判为有进展 —— 实测中模型因此白跑了 7 轮。现在用内容指纹比对。
+ */
+export function observe(w: GuardWindow, summary: string): GuardWindow {
+  const fingerprint = summary.trim();
+  const repeated = fingerprint !== '' && fingerprint === w.lastObservation;
+  const empty = fingerprint === '';
+  const madeProgress = !repeated && !empty;
+  return {
+    recentCalls: w.recentCalls,
+    stagnantSteps: madeProgress ? 0 : w.stagnantSteps + 1,
+    ...(fingerprint !== '' ? { lastObservation: fingerprint } : {}),
+  };
+}
+
+/** @deprecated 用 `observe` —— 它按内容判断，不会被「非空即进展」骗到。 */
 export function bumpStagnant(w: GuardWindow, madeProgress: boolean): GuardWindow {
   return {
     recentCalls: w.recentCalls,
     stagnantSteps: madeProgress ? 0 : w.stagnantSteps + 1,
+    ...(w.lastObservation !== undefined ? { lastObservation: w.lastObservation } : {}),
   };
 }
 
