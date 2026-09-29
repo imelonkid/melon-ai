@@ -63,6 +63,45 @@ export const openai = (o: ProviderOptions = {}): ModelEntry => entry(PRESETS.ope
 /** Kimi（月之暗面）。 */
 export const kimi = (o: ProviderOptions = {}): ModelEntry => entry(PRESETS.kimi, o);
 
+export interface CompatibleOptions {
+  /** 给人看的名字，如「智谱」。 */
+  readonly label: string;
+  /** OpenAI 兼容接口的地址，如 https://open.bigmodel.cn/api/paas/v4 */
+  readonly baseURL: string;
+  readonly model: string;
+  readonly apiKey: string;
+  /**
+   * 数据发往的供应商标识。**进审计** —— 借 `openai()` 接别家会把它记成 openai，
+   * 「哪份数据被哪个供应商看到过」就记错了，所以这里必填。
+   */
+  readonly egress: string;
+  readonly quality?: number;
+  /** 每百万输入 token 的美元价。不填按 1 估，只影响 cost 策略的排序。 */
+  readonly costUSD?: number;
+  readonly contextWindow?: number;
+}
+
+/**
+ * 任意 OpenAI 兼容的供应商或网关（智谱、硅基流动、自建 vLLM……）。
+ * 内置的几家（deepseek / qwen / openai / kimi）只是它预填了默认值的版本。
+ */
+export function compatible(o: CompatibleOptions): ModelEntry {
+  const costUSD = o.costUSD ?? 1;
+  return {
+    label: o.label,
+    model: new OpenAICompatibleChatModel({
+      model: o.model,
+      apiKey: o.apiKey,
+      baseURL: o.baseURL,
+      ...(o.contextWindow ? { contextWindow: o.contextWindow } : {}),
+      pricing: { inUSD: costUSD, outUSD: costUSD * 4 },
+    }),
+    quality: o.quality ?? 5,
+    costUSD,
+    egress: o.egress,
+  };
+}
+
 /** 各家的默认模型名，给宿主的配置页做占位提示。 */
 export const DEFAULT_MODELS = {
   deepseek: PRESETS.deepseek.model,

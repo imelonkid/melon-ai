@@ -6,7 +6,7 @@
 ```
 @melon-ai/core     契约：类型与端口，零运行时依赖
 @melon-ai/engine   引擎：任务状态机 · 运行时调度 · 定时编排
-@melon-ai/skills   技能：工具调用管线（六段）· 准入策略
+@melon-ai/skills   技能：工具调用管线（六段）· 准入策略 · 工具注册 · 联网（/web 子路径）
 @melon-ai/llm      模型：路由 · ReAct 规划器 · OpenAI 兼容适配器（Claude 在 /anthropic 子路径）
 @melon-ai/store    存储：SQLite 在 /sqlite 子路径
 @melon-ai/audit    审计：哈希链、脱敏、保留期（横切，独立成包）
@@ -37,7 +37,7 @@ agent.on('task', (task) => console.log(task.state, task.outcome?.answer));
 await agent.run('汇总本周进展');
 ```
 
-持久化、Claude 等可选能力走子路径（`@melon-ai/agent/sqlite`、`@melon-ai/agent/anthropic`）。
+持久化、Claude、联网等可选能力走子路径（`@melon-ai/agent/sqlite`、`/anthropic`、`/web`）。
 完整说明见架构文档 §7。
 
 ## 开发
@@ -57,9 +57,9 @@ pnpm lint:deps      # 校验分层依赖方向没被破坏
 ## 状态
 
 P0 已完成并通过验收（带审批的两步任务，进程重启后从事件日志恢复继续执行）。
-**236 个测试全绿**，`lint:deps` 零违规。
+**250 个测试全绿**，`lint:deps` 零违规。
 
 已接入首个宿主 [Jolly](../jolly)，真实模型（DeepSeek / Claude / OpenAI 兼容）跑通。
-待建：`@melon-ai/memory`（三层记忆 + 上下文装配）；skills 里的内置工具、联网、MCP。
+待建：`@melon-ai/memory`（三层记忆 + 上下文装配）；skills 里的技能召回、内置工具、MCP。
 
 逐项进度与下一步见架构文档 §10。

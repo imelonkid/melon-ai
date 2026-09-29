@@ -24,6 +24,9 @@
       "@melon-ai/skills": [
         "packages/melon-skills/src/index.ts"
       ],
+      "@melon-ai/skills/web": [
+        "packages/melon-skills/src/web/index.ts"
+      ],
       "@melon-ai/store": [
         "packages/melon-store/src/index.ts"
       ],

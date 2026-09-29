@@ -148,3 +148,15 @@ test('stop 之后，还在等人的任务的 watch 会收尾 —— 否则进程
   await Promise.race([loop, new Promise((r) => setTimeout(r, 500))]);
   assert.equal(ended, true, 'stop 之后 watch 必须收尾');
 });
+
+test('联网技能：@melon-ai/agent/web 按需开启；没配搜索只有读网页，configure 后搜索出现', async () => {
+  const { web } = await import('../src/web.js');
+  const agent = await createAgent({ skills: [web()], platform: quiet });
+  try {
+    assert.deepEqual(agent.tools.list().map((d) => d.id), ['web.fetch']);
+    const backend = { id: 'fake', search: async () => [] };
+    await agent.configure({ skills: [web({ search: backend })] });
+    assert.deepEqual(agent.tools.list().map((d) => d.id).sort(), ['web.fetch', 'web.search']);
+    assert.ok(agent.tools.list().every((d) => d.untrustedOutput), '联网工具都得声明输出不可信');
+  } finally { await agent.stop(); }
+});

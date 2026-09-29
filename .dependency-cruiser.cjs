@@ -64,6 +64,20 @@ module.exports = {
     },
     onlyCore('skills/policy-pure', dir('skills', 'policy'), dir('skills', 'policy')),
     {
+      name: 'skills/web-is-adapter',
+      comment: '联网技能是适配器（网络、DNS）：只认 core，管线与注册表也不能反过来依赖它',
+      severity: 'error',
+      from: { path: dir('skills', 'web') },
+      to: { path: ONLY_CORE, pathNot: dir('skills', 'web') },
+    },
+    {
+      name: 'skills/root-not-web',
+      comment: '技能包根入口与运行时无关 —— 不能引入 Node 专属的 web/',
+      severity: 'error',
+      from: { path: '^packages/melon-skills/src/(?!web/)' },
+      to: { path: dir('skills', 'web') },
+    },
+    {
       name: 'llm/components-independent',
       comment: '路由、规划器、各供应商适配器互不认识，只通过 core 的端口相遇',
       severity: 'error',

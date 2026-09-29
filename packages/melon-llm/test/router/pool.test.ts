@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ChatModel, ModelEntry } from '@melon-ai/core';
-import { ModelPool, deepseek, kimi, openai, qwen, testModel } from '../../src/index.js';
+import { ModelPool, compatible, deepseek, kimi, openai, qwen, testModel } from '../../src/index.js';
 import { claude } from '../../src/anthropic/index.js';
 
 const fake = (id: string, reply: () => Promise<string>): ModelEntry => ({
@@ -51,4 +51,9 @@ test('各家工厂：默认模型、名字与出境标识；可覆盖模型名�
   assert.equal(kimi({ apiKey: 'k' }).egress, 'moonshot');
   const c = claude({ apiKey: 'k' });
   assert.deepEqual([c.label, c.model.id, c.egress, c.costUSD], ['Claude', 'claude-opus-5', 'anthropic', 5]);
+});
+
+test('compatible：任意 OpenAI 兼容供应商，名字与出境标识按宿主给的记', () => {
+  const z = compatible({ label: '智谱', baseURL: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4', apiKey: 'k', egress: 'zhipu' });
+  assert.deepEqual([z.label, z.model.id, z.egress, z.quality], ['智谱', 'glm-4', 'zhipu', 5]);
 });

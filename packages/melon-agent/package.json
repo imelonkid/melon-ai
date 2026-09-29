@@ -1,7 +1,7 @@
 {
   "name": "@melon-ai/agent",
   "version": "0.0.1",
-  "description": "宿主入口：装这一个包就能跑。可选能力在 ./sqlite、./anthropic 子路径。",
+  "description": "宿主入口：装这一个包就能跑。可选能力在 ./sqlite、./anthropic、./web 子路径。",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -21,13 +21,18 @@
       "types": "./dist/anthropic.d.ts",
       "import": "./dist/anthropic.js",
       "require": "./dist/anthropic.cjs"
+    },
+    "./web": {
+      "types": "./dist/web.d.ts",
+      "import": "./dist/web.js",
+      "require": "./dist/web.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup --entry.index src/index.ts --entry.sqlite src/sqlite.ts --entry.anthropic src/anthropic.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.index src/index.ts --entry.sqlite src/sqlite.ts --entry.anthropic src/anthropic.ts --entry.web src/web.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

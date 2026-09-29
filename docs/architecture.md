@@ -354,8 +354,8 @@ vs「推理开始前框架必须准备好的东西」**。
 │ 技能      melon-skills        │ 模型      melon-llm                    │
 │             pipeline/  六段管线 │             router/    模型路由         │
 │             policy/    准入     │             planner/   ReAct 规划器      │
-│             （待建）注册与召回、 │             openai/    OpenAI 兼容适配器  │
-│             内置工具、联网、MCP │             anthropic/ Claude 适配器（子路径）│
+│             registry/  工具注册 │             openai/    OpenAI 兼容适配器  │
+│             web/  联网（子路径） │             anthropic/ Claude 适配器（子路径）│
 ├──────────────────────────────┴──────────────────────────────────────┤
 │ 基础设施  melon-store          sqlite/（子路径）                       │
 │           melon-memory（P1 待建） 三层记忆 + 上下文装配                │
@@ -427,10 +427,12 @@ vs「推理开始前框架必须准备好的东西」**。
 | | `trigger/` | 定时编排：纯函数周期规则 + 调度器（§4.8） | core | ✅ |
 | **@melon-ai/skills** | `pipeline/` | 工具调用六段管线 + 中间件（重试、熔断、幂等、截断） | core | ✅ |
 | | `policy/` | 准入矩阵、污点覆盖、授权匹配、配额 —— 管线的第 ③ 段 | core | ✅ |
-| | （待建） | 技能注册与召回、内置工具（§2.7 的落地面）、联网工具、MCP 接入 | core | P1/P2 |
+| | `registry/` | `defineTool` 与工具注册表：宿主工具 + `SkillProvider` 来源合并，生成给模型的 schema | core | ✅ |
+| | `web/` | 联网技能：网页搜索（后端可换，一期博查）+ 读网页（内网拦截）。`@melon-ai/skills/web` 子路径（Node） | core | ✅ |
+| | （待建） | 技能召回、内置工具（§2.7 的落地面）、MCP 接入 | core | P1/P2 |
 | **@melon-ai/llm** | `router/` | 按用途 × 策略 × 健康 × 配额选模型（§4.6） | core | ✅ |
 | | `planner/` | ReAct 规划器 + 意图短路，原生 tool use | core | ✅ |
-| | `openai/` | OpenAI 兼容适配器（OpenAI / DeepSeek / 通义 / Kimi），只用 fetch | core | ✅ |
+| | `openai/` | OpenAI 兼容适配器 + 各家工厂（`deepseek` / `qwen` / `openai` / `kimi` / 通用 `compatible`），只用 fetch | core | ✅ |
 | | `anthropic/` | Claude 适配器，`@melon-ai/llm/anthropic` 子路径，可选 peer `@anthropic-ai/sdk` | core | ✅ |
 | | （待建） | 提示词注册与渲染（§4.7） | core | P1 |
 | **@melon-ai/store** | `sqlite/` | 全套存储端口的 SQLite 实现，`@melon-ai/store/sqlite` 子路径，可选 peer `better-sqlite3` | core | ✅ |
@@ -725,6 +727,7 @@ nextFireAt(rule: Recurrence, after: number): number | null
 import { createAgent, defineTool, deepseek } from '@melon-ai/agent';
 import { sqlite } from '@melon-ai/agent/sqlite';        // 可选：持久化
 import { claude } from '@melon-ai/agent/anthropic';     // 可选：Claude
+import { web, bocha } from '@melon-ai/agent/web';        // 可选：联网（Node）
 
 const mailSend = defineTool({
   id: 'mail.send', description: '以用户名义发送邮件', risk: 'external',
@@ -736,6 +739,7 @@ const agent = await createAgent({
   models: [deepseek({ apiKey }), claude({ apiKey: k2 })],  // 多个时按 strategy 路由
   storage: sqlite({ file: 'app.db' }),                      // 不传 = 内存
   tools: [mailSend],
+  skills: [web({ search: bocha({ apiKey: k3 }) })],        // 搜索结果不可信：读过之后对外操作一律要确认
   policy: 'low-risk-auto',                                  // 默认值；对外操作要确认
 });                                                         // 默认创建即启动（含崩溃恢复）
 
@@ -868,7 +872,7 @@ await agent.configure({ models: [...], tools: [...] });    // 热替换，不重
 - [ ] `@melon-ai/skills-builtin`（等 memory / context）
 - [ ] `@melon-ai/context` / `@melon-ai/memory`（宿主目前用最小实现顶着）
 
-**测试总数 236，全绿；`lint:deps` 223 条依赖零违规。**
+**测试总数 250，全绿；`lint:deps` 223 条依赖零违规。**
 
 ### 10.1 宿主（Jolly）集成进度
 
@@ -928,11 +932,14 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
 1. ~~包结构按业务域合并（14 → 8）~~ —— 已完成，见 §4.1、§4.2
 2. ~~宿主 API~~ —— 已完成，见 §7：`defineTool` / `agent.run` / `agent.on('change')` / `approve` 免 callId /
    `schedules.create({ when })` / `configure` 热替换；不传存储时默认内存
-3. 联网技能进 `skills`（搜索后端可换，一期博查；读网页带内网拦截），经 `@melon-ai/agent/web` 暴露
+3. ~~联网技能进 `skills`~~ —— 已完成：`skills/src/web`，经 `@melon-ai/agent/web` 暴露；
+   另补通用的 `compatible()` 模型工厂（接列表外的 OpenAI 兼容供应商，出境标识必填）
 4. Jolly 改用新 API，只依赖 `@melon-ai/agent`，接线代码随之删掉
 
 **内核侧待办（P1，不阻塞上面）**
 
+- 按任务 / 按 Agent 指定模型：现在路由全局一套策略。Agent 编辑器的「使用模型」接内核时需要
+  `run(goal, { model })` 或按 Agent 配置的模型集合
 - `@melon-ai/memory`（三层记忆 + 上下文装配）：宿主现在用的是 40 条固定窗口的
   最小实现，长会话必炸。这是 P1 验收「40 轮不炸窗口」的正主
 - `skills` 的内置工具（记忆 / 历史 / artifact）：依赖上面这个

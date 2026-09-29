@@ -27,7 +27,7 @@ melon-ai 是**可嵌入的 AI Agent 引擎**。Jolly（`../jolly`）是基于它
 ```
 core     契约：类型与端口，零运行时依赖
 engine   引擎：task/ · runtime/ · trigger/
-skills   技能：pipeline/ · policy/（待建：注册召回、内置工具、联网、MCP）
+skills   技能：pipeline/ · policy/ · registry/ · web/（子路径）（待建：技能召回、内置工具、MCP）
 llm      模型：router/ · planner/ · openai/ · anthropic/（子路径）
 store    存储：sqlite/（子路径）
 audit    审计（横切，独立成包）
