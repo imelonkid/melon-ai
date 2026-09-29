@@ -59,7 +59,7 @@ function timestampOf(tz: string, y: number, m: number, d: number, t: TimeOfDay):
  * 此时 `timestampOf` 会算出一个落回 1:30 或跳到 3:30 的时刻。
  * 约定：**取跳变之后的第一个瞬间**（也就是 3:00），宁可晚跑半小时也不漏跑一天。
  */
-function resolveLocal(tz: string, y: number, m: number, d: number, t: TimeOfDay): number {
+export function resolveLocal(tz: string, y: number, m: number, d: number, t: TimeOfDay): number {
   const ts = timestampOf(tz, y, m, d, t);
   const back = partsIn(tz, ts);
   if (back.hh === t.hour && back.mm === t.minute) return ts;

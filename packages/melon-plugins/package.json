@@ -1,0 +1,27 @@
+{
+  "name": "@melon-ai/plugins",
+  "version": "0.0.1",
+  "description": "扩展插件：各厂商对引擎协议的实现（如搜索服务博查），每家一个子路径，宿主按需引入。",
+  "type": "module",
+  "exports": {
+    "./bocha": {
+      "types": "./dist/bocha.d.ts",
+      "import": "./dist/bocha.js",
+      "require": "./dist/bocha.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup --entry.bocha src/bocha/index.ts --format esm,cjs --dts --clean",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@melon-ai/core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

@@ -22,20 +22,22 @@ melon-ai 是**可嵌入的 AI Agent 引擎**。Jolly（`../jolly`）是基于它
 
 ## 模块规约：按业务域分包，不按功能加包
 
-当前 8 个包（详见 `docs/architecture.md` §3、§4）：
+当前 9 个包（详见 `docs/architecture.md` §3、§4）：
 
 ```
 core     契约：类型与端口，零运行时依赖
 engine   引擎：task/ · runtime/ · trigger/
-skills   技能：pipeline/ · policy/（待建：注册召回、内置工具、联网、MCP）
+skills   技能：pipeline/ · policy/ · registry/ · web/（子路径）（待建：技能召回、内置工具、MCP）
 llm      模型：router/ · planner/ · openai/ · anthropic/（子路径）
 store    存储：sqlite/（子路径）
 audit    审计（横切，独立成包）
+plugins  扩展插件：厂商实现，每家一个子路径（bocha/）
 agent    组装：宿主入口
 testkit  测试替身
 ```
 
 - **新能力先归进已有的域，不新建包。** 例如联网工具属于 skills，模型适配器属于 llm。
+- **协议在 core，机制在域包，厂商实现在 plugins。** 引擎内置的是**通信协议**的适配（OpenAI 兼容、Anthropic），预设（`deepseek()` 等）只是协议上的一组配置；没有通用协议的能力（网页搜索……），引擎只在 core 定接口，各厂商实现进 `plugins` 的子路径（一家一个目录，不为厂商新建包）。宿主按需引入，也可以自己实现接口。
 - 只有两种情况值得新包：**新的业务域**（如 memory），或**与任何业务域无关的横切关注点**（如 audit）。新增、合并、改归属**必须先出方案给用户确认**。
 - 包名是业务域（`engine` / `skills` / `llm`），不是组件名；组件在包内各占一个目录。
 - 需要额外第三方依赖或特定运行时的能力放**子路径**（`@melon-ai/llm/anthropic`、`@melon-ai/store/sqlite`），依赖声明为**可选 peer**。
@@ -43,7 +45,7 @@ testkit  测试替身
 
 ## 依赖方向
 
-- 包之间：`core ← skills ← engine ← agent`；`llm` / `store` / `audit` / `memory` 只依赖 `core`。`agent` 是唯一允许依赖所有包的组装层。
+- 包之间：`core ← skills ← engine ← agent`；`llm` / `store` / `audit` / `memory` / `plugins` 只依赖 `core`。`agent` 是唯一允许依赖所有引擎包的组装层；**任何引擎包（含 `agent`）都不能依赖或转导出 `plugins`**，插件之间也互不引用。
 - 包内目录之间同样有方向（如 `engine/task` 不能依赖 `engine/runtime`），由 `.dependency-cruiser.cjs` 强制。
 - **禁止循环依赖，包括测试依赖。** 测试需要别的包的对象时，优先由 testkit 提供替身。
 - **改了依赖规则，必须造一个违规验证它会挂**，再删掉。「没有报错」不等于「检查生效了」。

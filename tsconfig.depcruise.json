@@ -21,8 +21,17 @@
       "@melon-ai/llm/anthropic": [
         "packages/melon-llm/src/anthropic/index.ts"
       ],
+      "@melon-ai/plugins/bocha": [
+        "packages/melon-plugins/src/bocha/index.ts"
+      ],
       "@melon-ai/skills": [
         "packages/melon-skills/src/index.ts"
+      ],
+      "@melon-ai/skills/web": [
+        "packages/melon-skills/src/web/index.ts"
+      ],
+      "@melon-ai/store": [
+        "packages/melon-store/src/index.ts"
       ],
       "@melon-ai/store/sqlite": [
         "packages/melon-store/src/sqlite/index.ts"

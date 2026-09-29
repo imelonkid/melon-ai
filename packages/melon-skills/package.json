@@ -1,7 +1,7 @@
 {
   "name": "@melon-ai/skills",
   "version": "0.0.1",
-  "description": "技能：工具调用管线（六段）与准入策略。",
+  "description": "技能：工具调用管线、准入策略、工具注册（defineTool）；联网技能在 ./web 子路径（Node）。",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -11,13 +11,18 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./web": {
+      "types": "./dist/web.d.ts",
+      "import": "./dist/web.js",
+      "require": "./dist/web.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup --entry.index src/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.index src/index.ts --entry.web src/web/index.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*/*.test.ts"
   },
   "dependencies": {

@@ -1,9 +1,17 @@
 {
   "name": "@melon-ai/store",
   "version": "0.0.1",
-  "description": "存储：存储端口的持久化实现。SQLite 在 ./sqlite 子路径（需要 better-sqlite3）。",
+  "description": "存储：全套内存存储（默认，零依赖）；SQLite 持久化在 ./sqlite 子路径（需要 better-sqlite3）。",
   "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
     "./sqlite": {
       "types": "./dist/sqlite.d.ts",
       "import": "./dist/sqlite.js",
@@ -14,7 +22,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup --entry.sqlite src/sqlite/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.index src/index.ts --entry.sqlite src/sqlite/index.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*/*.test.ts"
   },
   "dependencies": {
@@ -29,7 +37,6 @@
     }
   },
   "devDependencies": {
-    "@melon-ai/testkit": "workspace:*",
     "@types/better-sqlite3": "^7.6.12",
     "better-sqlite3": "^11.8.1"
   },

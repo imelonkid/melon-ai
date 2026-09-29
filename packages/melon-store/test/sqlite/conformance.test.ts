@@ -7,7 +7,7 @@ import type {
   EventLog, Grant, GrantStore, Task, TaskEvent, TaskStore,
 } from '@melon-ai/core';
 import { ConflictError, asAgentId, asTaskId, asToolId } from '@melon-ai/core';
-import { InMemoryEventLog, InMemoryGrantStore, InMemoryTaskStore } from '@melon-ai/testkit';
+import { InMemoryEventLog, InMemoryGrantStore, InMemoryTaskStore } from '../../src/index.js';
 import { openSqliteStores } from '../../src/sqlite/index.js';
 
 /**

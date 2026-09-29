@@ -354,19 +354,21 @@ vs「推理开始前框架必须准备好的东西」**。
 │ 技能      melon-skills        │ 模型      melon-llm                    │
 │             pipeline/  六段管线 │             router/    模型路由         │
 │             policy/    准入     │             planner/   ReAct 规划器      │
-│             （待建）注册与召回、 │             openai/    OpenAI 兼容适配器  │
-│             内置工具、联网、MCP │             anthropic/ Claude 适配器（子路径）│
+│             registry/  工具注册 │             openai/    OpenAI 兼容适配器  │
+│             web/  联网（子路径） │             anthropic/ Claude 适配器（子路径）│
 ├──────────────────────────────┴──────────────────────────────────────┤
 │ 基础设施  melon-store          sqlite/（子路径）                       │
 │           melon-memory（P1 待建） 三层记忆 + 上下文装配                │
 ├─────────────────────────────────────────────────────────────────────┤
 │ 横切      melon-audit          审计哈希链（合规与追溯，不属于任何业务域）│
+│ 扩展      melon-plugins        厂商实现（bocha/ …），宿主按需引入     │
 │           melon-testkit        测试替身                              │
 ├─────────────────────────────────────────────────────────────────────┤
 │ 契约      melon-core           类型 + 端口。零运行时依赖。倒置中心    │
 └─────────────────────────────────────────────────────────────────────┘
 
-包之间：core ← skills ← engine ← agent；llm / store / audit / memory 只依赖 core。
+包之间：core ← skills ← engine ← agent；llm / store / audit / memory / plugins 只依赖 core。
+plugins 不被任何引擎包依赖（含 agent）—— 它实现 core 的协议，由宿主按需引入。
 ```
 
 ---
@@ -427,10 +429,12 @@ vs「推理开始前框架必须准备好的东西」**。
 | | `trigger/` | 定时编排：纯函数周期规则 + 调度器（§4.8） | core | ✅ |
 | **@melon-ai/skills** | `pipeline/` | 工具调用六段管线 + 中间件（重试、熔断、幂等、截断） | core | ✅ |
 | | `policy/` | 准入矩阵、污点覆盖、授权匹配、配额 —— 管线的第 ③ 段 | core | ✅ |
-| | （待建） | 技能注册与召回、内置工具（§2.7 的落地面）、联网工具、MCP 接入 | core | P1/P2 |
+| | `registry/` | `defineTool` 与工具注册表：宿主工具 + `SkillProvider` 来源合并，生成给模型的 schema | core | ✅ |
+| | `web/` | 联网技能：网页搜索（只认 core 的 `SearchProvider` 协议）+ 读网页（内网拦截）+ `testSearch`。`@melon-ai/skills/web` 子路径（Node） | core | ✅ |
+| | （待建） | 技能召回、内置工具（§2.7 的落地面）、MCP 接入 | core | P1/P2 |
 | **@melon-ai/llm** | `router/` | 按用途 × 策略 × 健康 × 配额选模型（§4.6） | core | ✅ |
 | | `planner/` | ReAct 规划器 + 意图短路，原生 tool use | core | ✅ |
-| | `openai/` | OpenAI 兼容适配器（OpenAI / DeepSeek / 通义 / Kimi），只用 fetch | core | ✅ |
+| | `openai/` | OpenAI 兼容适配器 + 各家工厂（`deepseek` / `qwen` / `openai` / `kimi` / 通用 `compatible`），只用 fetch | core | ✅ |
 | | `anthropic/` | Claude 适配器，`@melon-ai/llm/anthropic` 子路径，可选 peer `@anthropic-ai/sdk` | core | ✅ |
 | | （待建） | 提示词注册与渲染（§4.7） | core | P1 |
 | **@melon-ai/store** | `sqlite/` | 全套存储端口的 SQLite 实现，`@melon-ai/store/sqlite` 子路径，可选 peer `better-sqlite3` | core | ✅ |
@@ -438,8 +442,9 @@ vs「推理开始前框架必须准备好的东西」**。
 | **@melon-ai/audit** | | 审计：哈希链、维度脱敏、保留期、跨任务查询（§4.5）。横切关注点，独立成包 | core | ✅ |
 | **@melon-ai/agent** | | 组装：`createAgent(deps)`，宿主的入口 | 全部 | ✅ |
 | **@melon-ai/testkit** | | 内存替身、假模型、驱动器 | core | ✅ |
+| **@melon-ai/plugins** | `bocha/` | 扩展插件：厂商对 core 协议的实现，每家一个子路径。博查实现 `SearchProvider`（`@melon-ai/plugins/bocha`） | core | ✅ |
 
-**2026-09 由 14 个包合并为 8 个**（另有 memory 待建）。旧包名与新位置对照 ——
+**2026-09 由 14 个包合并为 8 个**（另有 memory 待建）；随后为厂商实现加了 `plugins`（第 9 个，见 §4.2 末尾）。旧包名与新位置对照 ——
 §10 中早于这次合并的条目保留旧包名，按此表对照：
 
 | 旧包 | 新位置 |
@@ -472,6 +477,13 @@ vs「推理开始前框架必须准备好的东西」**。
 audit 被管线与组装层通过 core 的端口使用，放进任何一个业务包都会让测试依赖成环，
 而且它本身是合规与追溯，不属于任何业务域 —— 所以独立。
 
+**协议、机制、厂商实现分三处放。** 引擎内置的是**通信协议**的适配：OpenAI 兼容协议几十家共用，
+`deepseek()` / `qwen()` 只是协议上的一组配置（地址、模型名、出境标识），所以留在 llm。
+网页搜索没有这样的通用协议，各家接口各不相同 —— 把博查写进 skills，等于替所有宿主选了一家厂商。
+所以：协议（`SearchProvider`）在 core，机制（结果渲染、不可信标记、超时、测试连接）在 skills/web，
+厂商实现在 `plugins` 的子路径。`plugins` 是**一个**包、一家一个目录 —— 包的数量不随厂商增长；
+它只依赖 core，引擎任何包都不能依赖它，宿主按需引入，也可以自己实现协议。
+
 ### 4.3 依赖方向的强制机制
 
 `dependency-cruiser` 在 CI 里拦，规则分两级（全文见 `.dependency-cruiser.cjs`）：
@@ -479,13 +491,15 @@ audit 被管线与组装层通过 core 的端口使用，放进任何一个业�
 ```js
 // 包之间
 core-is-pure            core 不依赖任何人
-skills / llm / store / audit / testkit -only-core
+skills / llm / store / audit / plugins / testkit -only-core
+nothing-depends-on-plugins  插件由宿主按需引入，引擎各包（含 agent）不依赖也不转导出
 engine-core-and-skills  引擎只认契约与技能
 // 包内目录之间
 engine/task-pure        状态机只认 core，不能反过来依赖 runtime
 engine/trigger-no-runtime  调度器不认识 AgentEngine（§4.8 边界一）
 skills/policy-pure      准入判定是纯函数，只认 core
 llm/components-independent  路由、规划器、各适配器互不认识
+plugins/independent     插件之间互不认识
 no-circular
 ```
 
@@ -717,52 +731,57 @@ nextFireAt(rule: Recurrence, after: number): number | null
 
 ## 7. 集成契约
 
-宿主应用看到的全部 API 就这些。这是「可被集成到任何应用」的具体含义 ——
-以下代码与 `@melon-ai/agent` 的集成测试**逐字一致**，不是示意。
+宿主**只装 `@melon-ai/agent` 一个包**。所有选项都有默认值；可选能力走子路径，
+需要额外依赖时才装（`better-sqlite3`、`@anthropic-ai/sdk`）。
+以下写法与 `packages/melon-agent/test/api.test.ts` 的验收一致。
 
 ```ts
-import { createAgent, nodePlatform } from '@melon-ai/agent';
-import { openSqliteStores } from '@melon-ai/store/sqlite';
+import { createAgent, defineTool, deepseek } from '@melon-ai/agent';
+import { sqlite } from '@melon-ai/agent/sqlite';        // 可选：持久化
+import { claude } from '@melon-ai/agent/anthropic';     // 可选：Claude
+import { web } from '@melon-ai/agent/web';               // 可选：联网（Node）
+import { bocha } from '@melon-ai/plugins/bocha';          // 扩展包：搜索服务的厂商实现，按需装
 
-const stores = openSqliteStores({ file: './jolly.db' });   // 换基础设施只改这一行
+const mailSend = defineTool({
+  id: 'mail.send', description: '以用户名义发送邮件', risk: 'external',
+  input: { to: 'string', subject: 'string', body: 'string?' }, scope: ['to'],
+  run: async ({ to, subject }) => `已将「${subject}」发送至 ${to}`,
+});
 
 const agent = await createAgent({
-  stores,
-  planner:   new ReActPlanner(router),  // 换规划策略只改这一行
-  resolver:  skillRegistry,             // 实现 ToolResolver
-  validator: ajvValidator,              // 实现 SchemaValidator
-  platform:  nodePlatform(),            // 浏览器宿主传自己的实现
-  policy:    'ask',                     // 或 (task) => PolicyMode，按 Agent 分档
-});
+  models: [deepseek({ apiKey }), claude({ apiKey: k2 })],  // 多个时按 strategy 路由
+  storage: sqlite({ file: 'app.db' }),                      // 不传 = 内存
+  tools: [mailSend],
+  skills: [web({ search: bocha({ apiKey: k3 }) })],        // 搜索结果不可信：读过之后对外操作一律要确认
+  policy: 'low-risk-auto',                                  // 默认值；对外操作要确认
+});                                                         // 默认创建即启动（含崩溃恢复）
 
-await agent.start();                    // 内含崩溃恢复
+agent.on('task', (task) => render(task));                   // 任何任务的任何进展
+const task = await agent.run('汇总本周进展，发邮件给产品组');
+await agent.approve(task.id, 'allow');                      // 不用传 callId
 
-// 提交任务
-const task = await agent.submit({
-  agentId: asAgentId('weekly-report'),
-  kind: 'automation',
-  goal: '汇总本周进展并生成周报',
-  trigger: { type: 'schedule' },
-});
-
-// 订阅事件驱动 UI —— 框架不假设任何渲染方式
-for await (const { value: e } of agent.watch(task.id)) {
-  switch (e.t) {
-    case 'ApprovalRequested': showPermissionCard(e.request); break;
-    case 'Observed':          appendStep(e.summary);          break;
-    case 'Settled':           renderAnswer(e.outcome);        break;
-  }
-}
-
-// 用户在权限卡上点了「允许」—— 可以在应用重启之后才调用
-await agent.resolveApproval(task.id, callId, 'allow');
+await agent.schedules.create({ goal: '发周报', when: { repeat: 'weekly', days: [5], time: '16:00' } });
+await agent.configure({ models: [...], tools: [...] });    // 热替换，不重启
 ```
+
+| 宿主要做的 | API |
+|---|---|
+| 让 Agent 做一件事 | `run(goal, { ref, kind, agentId, budget })` —— `ref` 原样记在 `task.trigger.ref`，宿主用它关联自己的对象（如对话） |
+| 看进展 | `on('task', cb)` / `on('schedule', cb)`；单个任务的事件流 `watch(id)`；`tasks.list / get / history` |
+| 回应确认 | `approve(taskId, 'allow' \| 'always' \| 'deny')` |
+| 定义工具 | `defineTool({ id, description, risk, input, scope, when, untrustedOutput, run })`，`input` 可用简写 |
+| 定时 | `schedules.create({ goal, when })` / `pause` / `resume` / `remove` / `describe` |
+| 换模型 / 工具 / 权限 | `configure({ models, strategy, tools, skills, policy })` |
+| 验证模型可用 | `models.test(entry)` |
+
+进阶：`context`（上下文装配，默认「目标 + 最近步骤」，可用 `basicContext(..., { prelude })` 在前面加东西）、
+`planner`、`validator`、`platform`（默认 Node）都能替换；底层 `submit` / `resolveApproval` 仍然可用。
 
 三个要点：
 
 1. **只吐事件，不碰 UI**。宿主决定怎么渲染，框架不知道有没有界面。
-2. **换基础设施 = 换一行**。`stores` / `planner` / `platform` 都是端口。
-3. **审批是异步的、可持久的**。`resolveApproval` 可以在应用重启之后调用 ——
+2. **可选能力按需开启**。持久化、Claude、联网各在自己的子路径，不 import 就不加载、不必装依赖。
+3. **审批是异步的、可持久的**。`approve` 可以在应用重启之后调用 ——
    任务状态在库里等着，工具一次都没执行（已由集成测试的 P0 验收覆盖）。
 
 ---
@@ -866,7 +885,7 @@ await agent.resolveApproval(task.id, callId, 'allow');
 - [ ] `@melon-ai/skills-builtin`（等 memory / context）
 - [ ] `@melon-ai/context` / `@melon-ai/memory`（宿主目前用最小实现顶着）
 
-**测试总数 203，全绿；`lint:deps` 223 条依赖零违规。**
+**测试总数 253，全绿；`lint:deps` 223 条依赖零违规。**
 
 ### 10.1 宿主（Jolly）集成进度
 
@@ -924,13 +943,19 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
 宿主只装一个包就能跑，可选能力按需开启，接入层做薄：
 
 1. ~~包结构按业务域合并（14 → 8）~~ —— 已完成，见 §4.1、§4.2
-2. 宿主 API：`defineTool` / `agent.run` / `agent.on('change')` / `approve` 免 callId /
+2. ~~宿主 API~~ —— 已完成，见 §7：`defineTool` / `agent.run` / `agent.on('change')` / `approve` 免 callId /
    `schedules.create({ when })` / `configure` 热替换；不传存储时默认内存
-3. 联网技能进 `skills`（搜索后端可换，一期博查；读网页带内网拦截），经 `@melon-ai/agent/web` 暴露
-4. Jolly 改用新 API，只依赖 `@melon-ai/agent`，接线代码随之删掉
+3. ~~联网技能进 `skills`~~ —— 已完成：`skills/src/web`，经 `@melon-ai/agent/web` 暴露；
+   另补通用的 `compatible()` 模型工厂（接列表外的 OpenAI 兼容供应商，出境标识必填）。
+   随后把博查从技能里拿出：搜索协议进 core，博查进扩展包 `@melon-ai/plugins/bocha`（第 54 条）
+4. ~~Jolly 改用新 API~~ —— 已完成：只依赖 `@melon-ai/agent` + `@melon-ai/plugins`，
+   删掉了 Jolly 里自写的参数校验、模型热替换、工具注册、周期规则换算、逐任务订阅（约 500 行），
+   全部冒烟场景（任务、详情、定时与错过补跑、对话、联网、连接页、热生效）通过
 
 **内核侧待办（P1，不阻塞上面）**
 
+- 按任务 / 按 Agent 指定模型：现在路由全局一套策略。Agent 编辑器的「使用模型」接内核时需要
+  `run(goal, { model })` 或按 Agent 配置的模型集合
 - `@melon-ai/memory`（三层记忆 + 上下文装配）：宿主现在用的是 40 条固定窗口的
   最小实现，长会话必炸。这是 P1 验收「40 轮不炸窗口」的正主
 - `skills` 的内置工具（记忆 / 历史 / artifact）：依赖上面这个
@@ -1011,6 +1036,26 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     这个任务的 id，也就没法 `watch` —— 界面不会动，只能轮询任务表。
     `createAgent` 新增 `onSubmitted(task)`：手动提交与定时触发都回调一次，
     回调抛错只记日志、不影响提交。
+
+#### 宿主 API（装一个包就能跑）
+
+52. **SQLite 的记忆检索搜不到中文。** FTS5 默认分词器把一整串中文当成一个词，
+    「周报用要点列表」只能被整句命中，搜「周报」什么都返回不了。
+    一直没暴露是因为长期记忆还没接到任何宿主；给内存存储写一致性测试时，
+    同一组断言在内存版（子串匹配）通过、SQLite 版失败才发现。
+    修法：写入全文索引时把连续的 CJK 字符切成重叠的二字组，查询用同一种切法、每段都要命中；
+    老库打开时按 `meta.fts_tokenizer` 重建一次索引（表结构没变，不升 SCHEMA_VERSION，见第 47 条）。
+53. **引擎停了，watch 还在转。** `watch` 对没结束的任务每 50ms 轮询一次，`stop()` 不会让它收尾：
+    存储已关时每次轮询都抛错（Jolly 退出时的 "database connection is not open"），
+    存储还开着时（内存存储）进程永远退不出。Jolly 当时在宿主侧把错误吞掉了，治标不治本。
+    修法：`stop()` 置停止标记并叫醒所有在等的 watch，watch 看到标记即收尾；补了回归测试，撤掉修复会挂。
+54. **厂商实现写进了引擎的技能。** 联网技能进 skills 时把 `bocha()` 一起放了进去，
+    `@melon-ai/agent/web` 直接导出它 —— 引擎替所有宿主选了一家国内搜索厂商，
+    换个海外宿主这段代码毫无用处。模型那边没这个问题，是因为 OpenAI 兼容是事实上的通用协议，
+    预设只是配置；搜索没有通用协议。改为：`SearchProvider` 协议进 core，
+    skills/web 只认协议（新增 `testSearch` 给宿主的配置页用），博查进新的扩展包
+    `@melon-ai/plugins/bocha`。规则 `nothing-depends-on-plugins` 保证引擎任何包都引用不到插件，
+    `plugins/independent` 保证插件之间互不引用，两条都造过违规验证会挂。
 
 #### 包结构合并（14 → 8）
 

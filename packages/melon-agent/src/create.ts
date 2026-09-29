@@ -1,166 +1,354 @@
 import type {
-  AgentEngine, AgentId, AuditRecorder, AuditSink, ContextBundle, IdempotencyStore, ModelTool,
-  Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, SchemaValidator, StoreBundle,
-  Task, ToolResolver, ToolsetSnapshot,
+  AgentId, ApprovalDecision, AuditSink, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
+  ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
+  ScheduleStatus, SchemaValidator, Sequenced, SkillProvider, StoreBundle, Task, TaskEvent, TaskId,
+  TaskKind, TaskState, ToolResolver, ToolsetSnapshot,
 } from '@melon-ai/core';
-import { ChainedRecorder, DEFAULT_RETENTION, assertRetention } from '@melon-ai/audit';
-import { ToolPipeline } from '@melon-ai/skills';
-import { Runtime } from '@melon-ai/engine';
-import { Scheduler } from '@melon-ai/engine';
+import { asAgentId, asScheduleId } from '@melon-ai/core';
+import { describeRule, whenToRule } from '@melon-ai/engine';
+import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
+import { KeywordIntentClassifier, ModelPool, ReActPlanner, testModel } from '@melon-ai/llm';
+import type { ModelTestResult, RouteStrategy } from '@melon-ai/llm';
+import { ToolRegistry, basicValidator } from '@melon-ai/skills';
+import type { Tool } from '@melon-ai/skills';
+import { memoryStorage } from '@melon-ai/store';
+import { assemble } from './assemble.js';
+import type { AssembledAgent } from './assemble.js';
+import { basicContext } from './context.js';
+import { nodePlatform } from './platform.js';
 
-export interface CreateAgentOptions {
-  /** 全套存储。换基础设施就是换这一个对象。 */
-  readonly stores: StoreBundle & {
-    readonly audit: AuditSink;
-    readonly idempotency?: IdempotencyStore;
-  };
-  /** 可插拔的「大脑」。ReAct 只是其中一种实现。 */
-  readonly planner: Planner;
-  readonly resolver: ToolResolver;
-  readonly validator: SchemaValidator;
-  /** 时间、随机、日志、哈希、链路。见 `nodePlatform()`。 */
-  readonly platform: Platform;
+/** 存储：全套端口 + 审计 sink（+ 可选的幂等表）。`memoryStorage()` 与 `sqlite()` 都满足。 */
+export type Storage = StoreBundle & { readonly audit: AuditSink; readonly idempotency?: IdempotencyStore };
 
-  /** 执行权限策略。可以按任务动态决定（例如不同 Agent 不同档位）。 */
+export interface AgentOptions {
+  /** 可用的模型。多个时按 `strategy` 路由。例：`[deepseek({ apiKey }), claude({ apiKey })]` */
+  readonly models?: readonly ModelEntry[];
+  /** 多模型时的路由策略。默认 balanced。 */
+  readonly strategy?: RouteStrategy;
+  /** 存储。不传 = 内存（进程退出即丢失）；要持久化用 `@melon-ai/agent/sqlite`。 */
+  readonly storage?: Storage;
+  /** 宿主自己的工具，用 `defineTool` 定义。 */
+  readonly tools?: readonly Tool[];
+  /** 技能来源（联网、将来的 MCP……），实现 `SkillProvider`。 */
+  readonly skills?: readonly SkillProvider[];
+  /**
+   * 执行权限。默认 `low-risk-auto`：读与本地写自动，对外操作要确认。
+   * （`ask` 会让只读工具也弹审批，点一次运行要批好几次 —— §10 第 35 条）
+   */
   readonly policy?: PolicyMode | ((task: Task) => PolicyMode);
+  /** 默认的 Agent 标识。`run()` 不指定时用它。 */
+  readonly agentId?: string;
+  /** 创建后立即启动（崩溃恢复 + 定时轮询）。默认 true。 */
+  readonly start?: boolean;
+  /** 未传 `platform` 时的日志级别。默认 info。 */
+  readonly logLevel?: LogLevel;
+
+  // ── 进阶：替换默认部件 ──
+  /** 上下文装配。默认「任务目标 + 最近的步骤」（`basicContext`）。 */
+  readonly context?: (task: Task) => Promise<ContextBundle>;
+  /** 规划器。默认 ReAct（用 `models` 路由）。 */
+  readonly planner?: Planner;
+  /** 参数校验。默认 `basicValidator`（JSON Schema 的常用子集）。 */
+  readonly validator?: SchemaValidator;
+  /** 时间、随机、日志、哈希、链路。默认 `nodePlatform()`。 */
+  readonly platform?: Platform;
   readonly retention?: RetentionPolicy;
-  readonly toolset?: () => ToolsetSnapshot;
   readonly quotaOf?: (agentId: AgentId) => Promise<QuotaSnapshot | null>;
-  /** 上下文装配。P0 未提供时用最小实现，`@melon-ai/context` 就位后传真的。 */
-  readonly buildContext?: (task: Task) => Promise<ContextBundle>;
-  /** 本轮可用的工具，带全量 schema。默认空数组 —— 不给工具模型就只能直答。 */
-  readonly availableTools?: (task: Task) => Promise<readonly ModelTool[]>;
-  readonly recallSkills?: (task: Task, query: string) => Promise<readonly string[]>;
-  readonly pollIntervalMs?: number;
   readonly execute?: { timeoutMs?: number; maxRetries?: number; backoffBaseMs?: number };
-  /**
-   * 定时任务的轮询间隔。默认 30s —— 到点后最晚 30s 触发。
-   *
-   * 不做成「精确到秒的定时器」是因为进程可能在两次触发之间被杀掉，
-   * 精确定时器救不了这种情况，而轮询 + `nextFireAt` 落库天然能恢复。
-   */
+  readonly pollIntervalMs?: number;
+  /** 定时轮询间隔。默认 30s。 */
   readonly schedulePollMs?: number;
-  /**
-   * 任何来源提交的任务落库后回调一次 —— 宿主 `submit()`、定时触发都算。
-   *
-   * 定时触发的任务是调度器直接提交的，宿主手里没有它的 id，也就没法 `watch`。
-   * 没有这个钩子，宿主只能轮询任务表才知道「定时任务刚跑出来一个新任务」。
-   * 回调抛错只记日志，不影响提交本身。
-   */
+  readonly recallSkills?: (task: Task, query: string) => Promise<readonly string[]>;
+
+  // ── 兼容：底层写法（assemble 的入参）──
+  readonly stores?: Storage;
+  readonly resolver?: ToolResolver;
+  readonly buildContext?: (task: Task) => Promise<ContextBundle>;
+  readonly availableTools?: (task: Task) => Promise<readonly ModelTool[]>;
+  readonly toolset?: () => ToolsetSnapshot;
   readonly onSubmitted?: (task: Task) => void;
 }
 
-export interface MelonAgent extends AgentEngine {
-  readonly audit: AuditRecorder & { verify(): Promise<unknown>; };
-  readonly pipeline: ToolPipeline;
+export interface RunOptions {
+  readonly agentId?: string;
+  readonly kind?: TaskKind;
   /**
-   * 定时任务。调度器不认识 AgentEngine —— 这里把 `submit` 注给它（§4.8 边界一），
-   * 宿主拿到的是接好线的成品。
+   * 宿主自己的关联标识，原样记在 `task.trigger.ref`。
+   * 例：对话 id —— 宿主用它把几轮串成一次对话，或在 `when` 里判断「是不是对话」。
    */
-  readonly schedules: Scheduler;
-  readonly stores: CreateAgentOptions['stores'];
-  /** 等所有在跑的推进链结束。测试与优雅关闭用。 */
-  drain(): Promise<void>;
-  recover(): Promise<number>;
+  readonly ref?: string;
+  readonly budget?: Partial<Budget>;
 }
 
+/** `schedules.create` 的友好写法：写目标和「什么时候」，其余有默认值。 */
+export interface ScheduleInput {
+  readonly goal: string;
+  readonly when: When;
+  readonly title?: string;
+  readonly agentId?: string;
+  readonly kind?: TaskKind;
+  /** 停机期间错过的触发：skip = 只补一次（默认），all = 每次都补。 */
+  readonly catchUp?: 'skip' | 'all';
+}
+
+export interface Schedules {
+  /** 新建。`when` 写法见 `When`；规则非法（时间已过、没选星期）时抛错并带原因。 */
+  create(input: ScheduleInput | CreateScheduleInput): Promise<Schedule>;
+  /** 改配置走版本链：返回新的一条，旧的指向它（§2.5）。 */
+  update(id: string, patch: UpdateScheduleInput): Promise<Schedule>;
+  pause(id: string): Promise<Schedule>;
+  resume(id: string): Promise<Schedule>;
+  /** 停用，不物理删 —— 历史任务还指着它。 */
+  remove(id: string): Promise<Schedule>;
+  get(id: string): Promise<Schedule | null>;
+  list(status?: ScheduleStatus): Promise<readonly Schedule[]>;
+  /** 「每周五 16:00」「仅一次 · 10月2日 09:00」。 */
+  describe(schedule: Schedule): string;
+  /** 立即跑一轮到期检查（测试与宿主自控节奏用）。 */
+  tick(): Promise<number>;
+}
+
+export interface AgentEvents {
+  /** 任何任务有了新进展（新建、每一步、结束）。给的是最新的任务。 */
+  task: (task: Task) => void;
+  /** 定时任务新建、修改、暂停、恢复、删除，或刚触发了一次。 */
+  schedule: (schedule: Schedule) => void;
+}
+
+export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
+  /** 让 Agent 做一件事。返回刚创建的任务；进展通过 `on('task')` 或 `watch` 看。 */
+  run(goal: string, opts?: RunOptions): Promise<Task>;
+  /** 回应待确认的操作。不用传 callId —— 一个任务同一时刻只有一个待确认。 */
+  approve(taskId: string, decision: ApprovalDecision): Promise<void>;
+  on<E extends keyof AgentEvents>(event: E, cb: AgentEvents[E]): () => void;
+  readonly tasks: {
+    get(id: string): Promise<Task | null>;
+    /** 默认全部状态、按创建时间，最多 200 条。 */
+    list(opts?: { states?: readonly TaskState[]; limit?: number }): Promise<readonly Task[]>;
+    /** 任务的完整事件流（重放用、调试面板用）。 */
+    history(id: string): Promise<readonly Sequenced<TaskEvent>[]>;
+  };
+  readonly schedules: Schedules;
+  readonly models: {
+    /** 至少有一个可用模型。 */
+    readonly ready: boolean;
+    readonly entries: readonly ModelEntry[];
+    /** 用一次最便宜的调用验证模型可用（key、网络、模型名）。 */
+    test(entry: ModelEntry): Promise<ModelTestResult>;
+  };
+  readonly tools: ToolRegistry;
+  /** 运行中替换模型、工具、技能来源、执行权限 —— 不重启，在跑的任务不受影响。 */
+  configure(patch: {
+    models?: readonly ModelEntry[];
+    strategy?: RouteStrategy;
+    tools?: readonly Tool[];
+    skills?: readonly SkillProvider[];
+    policy?: PolicyMode | ((task: Task) => PolicyMode);
+  }): Promise<void>;
+  /** 底层调度器。一般用 `schedules` 就够了。 */
+  readonly scheduler: Scheduler;
+}
+
+const ALL_STATES: readonly TaskState[] = [
+  'PENDING', 'PLANNING', 'ADMITTING', 'EXECUTING', 'OBSERVING',
+  'AWAITING_APPROVAL', 'SUSPENDED', 'SUCCEEDED', 'FAILED', 'CANCELLED',
+];
+const TERMINAL = new Set<TaskState>(['SUCCEEDED', 'FAILED', 'CANCELLED']);
+
 /**
- * P0 的最小上下文。
+ * 创建一个 Agent。**所有选项都有默认值**，最少只需要模型：
  *
- * 只够让规划器跑起来 —— 没有预算分配、没有压缩、没有 L1 检索。
- * `@melon-ai/context` 就位后通过 `buildContext` 传入真实实现。
+ * ```ts
+ * const agent = await createAgent({ models: [deepseek({ apiKey })] });
+ * const task = await agent.run('汇总本周进展');
+ * agent.on('task', (t) => render(t));
+ * ```
  */
-const minimalContext = (window = 200_000): ContextBundle => ({
-  messages: [], tools: [], slots: [], totalTokens: 0, window, watermark: 0.7,
-});
+export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> {
+  const platform = opts.platform ?? nodePlatform({ min: opts.logLevel ?? 'info' });
+  const { logger } = platform;
+  const stores: Storage = opts.storage ?? opts.stores ?? memoryStorage();
+  const defaultAgent = opts.agentId ?? 'default';
 
-const DEFAULT_TOOLSET: ToolsetSnapshot = { takenAt: 0, skills: [] };
+  const pool = new ModelPool(opts.models ?? [], opts.strategy ?? 'balanced');
+  const registry = new ToolRegistry({ tools: opts.tools ?? [], providers: opts.skills ?? [] });
+  await registry.ready();
 
-/**
- * 组装一个 Agent。
- *
- * 这是**唯一允许 import 所有层的地方**（§2.1）—— 它的职责就是接线。
- * 宿主只依赖这一个包，换存储、换规划器、换模型都是换一个入参。
- */
-export async function createAgent(opts: CreateAgentOptions): Promise<MelonAgent> {
-  assertRetention(opts.retention ?? DEFAULT_RETENTION);
+  let policy = opts.policy ?? 'low-risk-auto';
+  const policyMode = (task: Task): PolicyMode => (typeof policy === 'function' ? policy(task) : policy);
 
-  const { clock, ids, logger, hasher, tracer } = opts.platform;
-  const { stores } = opts;
+  const planner = opts.planner ?? new ReActPlanner({
+    router: pool,
+    classifier: new KeywordIntentClassifier(),
+    ids: platform.ids,
+    hash: (x) => platform.hasher.sha256(x).slice(0, 16),
+  });
 
-  // 链尾必须从 sink 恢复，否则重启后会从 seq=1 重写、把审计链写断
-  const audit = new ChainedRecorder({ sink: stores.audit, hasher, clock, logger });
-  await audit.resume();
+  // ── 事件：宿主不必自己给每个任务挂 watch ──
+  const listeners = { task: new Set<AgentEvents['task']>(), schedule: new Set<AgentEvents['schedule']>() };
+  const emit = <E extends keyof AgentEvents>(event: E, value: Parameters<AgentEvents[E]>[0]): void => {
+    for (const cb of listeners[event]) {
+      try { (cb as (v: typeof value) => void)(value); } catch (e) {
+        logger.log('error', `${event} 监听器抛错`, { error: String(e) });
+      }
+    }
+  };
+  const following = new Set<string>();
+  let stopping = false;
 
-  const pipeline = new ToolPipeline({
-    resolver: opts.resolver,
-    validator: opts.validator,
-    grants: stores.grants,
-    artifacts: stores.artifacts,
-    audit, clock, hasher, tracer, logger,
-    ...(stores.idempotency ? { idempotency: stores.idempotency } : {}),
+  const base = await assemble({
+    stores,
+    planner,
+    resolver: opts.resolver ?? registry,
+    validator: opts.validator ?? basicValidator,
+    platform,
+    policy: policyMode,
+    buildContext: opts.buildContext ?? opts.context ?? basicContext(stores.episodes),
+    availableTools: opts.availableTools ?? (async (task) => registry.modelTools(task)),
+    toolset: opts.toolset ?? (() => registry.toolset()),
+    ...(opts.retention ? { retention: opts.retention } : {}),
     ...(opts.quotaOf ? { quotaOf: opts.quotaOf } : {}),
     ...(opts.execute ? { execute: opts.execute } : {}),
-  });
-
-  const configured = opts.policy;
-  const policyMode: (task: Task) => PolicyMode = typeof configured === 'function'
-    ? configured
-    : () => configured ?? 'ask';
-
-  const runtime = new Runtime({
-    tasks: stores.tasks,
-    events: stores.events,
-    episodes: stores.episodes,
-    pipeline,
-    planner: opts.planner,
-    ids, tracer, logger,
-    now: () => clock.now(),
-    transaction: stores.transaction,
-    policyMode,
-    buildContext: opts.buildContext ?? (async () => minimalContext()),
-    availableTools: opts.availableTools ?? (async () => []),
-    ...(opts.recallSkills ? { recallSkills: opts.recallSkills } : {}),
-    toolset: opts.toolset ?? ((): ToolsetSnapshot => DEFAULT_TOOLSET),
     ...(opts.pollIntervalMs !== undefined ? { pollIntervalMs: opts.pollIntervalMs } : {}),
-  });
-
-  const submit = async (spec: Parameters<Runtime['submit']>[0]): Promise<Task> => {
-    const task = await runtime.submit(spec);
-    try {
+    ...(opts.schedulePollMs !== undefined ? { schedulePollMs: opts.schedulePollMs } : {}),
+    ...(opts.recallSkills ? { recallSkills: opts.recallSkills } : {}),
+    onSubmitted: (task) => {
+      follow(task.id);
+      // 定时触发出来的任务：顺带通知那条定时任务（它的触发次数、下次时间变了）
+      if (task.trigger.type === 'schedule' && task.trigger.ref) void emitSchedule(task.trigger.ref);
       opts.onSubmitted?.(task);
-    } catch (e) {
-      logger.log('error', 'onSubmitted 回调抛错', { taskId: task.id, error: String(e) });
-    }
-    return task;
-  };
-
-  const schedules = new Scheduler({
-    store: stores.schedules,
-    submit,
-    clock, ids, logger,
+    },
   });
 
-  return {
-    submit,
-    get: (id) => runtime.get(id),
-    cancel: (id, reason) => runtime.cancel(id, reason),
-    resolveApproval: (id, callId, decision) => runtime.resolveApproval(id, callId, decision),
-    watch: (id, fromSeq) => runtime.watch(id, fromSeq),
-    start: async () => {
-      await runtime.start();
-      // 放在 runtime.start() 之后：崩溃恢复先跑完，再让定时器往里灌新任务
-      schedules.start(opts.schedulePollMs ?? 30_000);
+  /**
+   * 跟住一个任务直到它结束，每个事件之后报一次最新状态。
+   * 用 watch 而不是直接订阅事件：watch 在事务提交之后才吐事件，报出去的任务不会比事件旧。
+   */
+  function follow(id: string): void {
+    if (following.has(id)) return;
+    following.add(id);
+    void (async () => {
+      try {
+        for await (const _e of base.watch(id as TaskId)) await report(id);
+      } catch (e) {
+        // 停机时存储先关，还在等人的任务的 watch 会在下一次轮询时抛错 —— 正常收尾
+        if (!stopping) logger.log('error', '任务跟踪中断', { taskId: id, error: String(e) });
+      } finally {
+        following.delete(id);
+        if (!stopping) await report(id);
+      }
+    })();
+  }
+  async function report(id: string): Promise<void> {
+    const t = await base.get(id as TaskId).catch(() => null);
+    if (t) emit('task', t);
+  }
+  async function emitSchedule(id: string): Promise<void> {
+    const s = await base.schedules.get(asScheduleId(id)).catch(() => null);
+    if (s) emit('schedule', s);
+  }
+
+  const schedules: Schedules = {
+    async create(input) {
+      let s: Schedule;
+      if ('when' in input) {
+        const built = whenToRule(input.when);
+        if (!built.ok) throw new Error(built.error);
+        s = await base.schedules.create({
+          title: input.title ?? '',
+          template: { agentId: asAgentId(input.agentId ?? defaultAgent), kind: input.kind ?? 'automation', goal: input.goal },
+          rule: built.rule,
+          catchUp: input.catchUp ?? 'skip',
+        });
+      } else {
+        s = await base.schedules.create(input);
+      }
+      emit('schedule', s);
+      return s;
     },
-    stop: async () => {
-      schedules.stop();
-      await runtime.stop();
+    async update(id, patch) {
+      const s = await base.schedules.update(asScheduleId(id), patch);
+      emit('schedule', s);
+      return s;
     },
-    drain: () => runtime.drain(),
-    recover: () => runtime.recover(),
-    audit,
-    pipeline,
-    schedules,
-    stores,
+    async pause(id) {
+      const s = await base.schedules.setStatus(asScheduleId(id), 'paused');
+      emit('schedule', s);
+      return s;
+    },
+    async resume(id) {
+      const s = await base.schedules.resume(asScheduleId(id));
+      emit('schedule', s);
+      return s;
+    },
+    async remove(id) {
+      const s = await base.schedules.setStatus(asScheduleId(id), 'removed');
+      emit('schedule', s);
+      return s;
+    },
+    get: (id) => base.schedules.get(asScheduleId(id) as ScheduleId),
+    list: (status) => base.schedules.list(undefined, status),
+    describe: (s) => describeRule(s.rule),
+    tick: () => base.schedules.tick(),
   };
+
+  const agent: MelonAgent = {
+    ...base,
+    scheduler: base.schedules,
+    schedules,
+    tools: registry,
+    run(goal, o = {}) {
+      return base.submit({
+        agentId: asAgentId(o.agentId ?? defaultAgent),
+        kind: o.kind ?? 'conversation',
+        goal,
+        trigger: o.ref !== undefined ? { type: 'manual', ref: o.ref } : { type: 'manual' },
+        ...(o.budget ? { budget: o.budget } : {}),
+      });
+    },
+    async approve(taskId, decision) {
+      const t = await base.get(taskId as TaskId);
+      if (!t?.pendingCall) throw new Error(`任务 ${taskId} 没有在等确认`);
+      await base.resolveApproval(taskId as TaskId, t.pendingCall.callId, decision);
+    },
+    on(event, cb) {
+      (listeners[event] as Set<typeof cb>).add(cb);
+      return () => { (listeners[event] as Set<typeof cb>).delete(cb); };
+    },
+    tasks: {
+      get: (id) => base.get(id as TaskId),
+      list: (o = {}) => stores.tasks.listByState(o.states ?? ALL_STATES, o.limit ?? 200),
+      async history(id) {
+        const rows: Sequenced<TaskEvent>[] = [];
+        for await (const r of stores.events.read(id as TaskId)) rows.push(r);
+        return rows;
+      },
+    },
+    models: {
+      get ready() { return pool.ready; },
+      get entries() { return pool.current.entries; },
+      test: (entry) => testModel(entry),
+    },
+    async configure(patch) {
+      if (patch.models !== undefined || patch.strategy !== undefined) {
+        pool.set(patch.models ?? pool.current.entries, patch.strategy ?? pool.current.strategy);
+      }
+      if (patch.tools !== undefined) registry.setTools(patch.tools);
+      if (patch.skills !== undefined) await registry.setProviders(patch.skills);
+      if (patch.policy !== undefined) policy = patch.policy;
+    },
+    async start() {
+      stopping = false;
+      await base.start();
+      // 重启后接着跟住没结束的任务 —— 宿主的界面要继续动
+      for (const t of await stores.tasks.listByState(ALL_STATES.filter((s) => !TERMINAL.has(s)), 1000)) follow(t.id);
+    },
+    async stop() {
+      stopping = true;
+      await base.stop();
+    },
+  };
+
+  if (opts.start !== false) await agent.start();
+  return agent;
 }
