@@ -101,7 +101,8 @@ export class ReActPlanner implements Planner {
 
     // ── 参数来源核对：「必须是用户给的」参数（收件人……），值得在用户说过的话里出现过 ──
     const userText = [task.goal, ...input.context.messages
-      .filter((m) => m.role === 'user' && (m.from ?? 'user') === 'user').map((m) => m.content)].join('\n');
+      // 记忆也算：它来自用户之前的原话（写入时过了污点与注入审查）——「发到我的邮箱」要能用上记住的地址
+      .filter((m) => m.role === 'user' && ['user', 'memory'].includes(m.from ?? 'user')).map((m) => m.content)].join('\n');
     const bad = (c: ModelToolCall) => unsuppliedValues((c.args ?? {}) as Record<string, unknown>, tools.find((t) => t.name === c.name), userText);
     const accept = async (text: string, c: ModelToolCall, base: readonly Message[]): Promise<PlanStep> => {
       const miss = bad(c);

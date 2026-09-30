@@ -1,5 +1,5 @@
 import type {
-  AgentId, ApprovalDecision, AuditSink, Grant, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
+  AgentId, ApprovalDecision, AuditSink, Grant, Memory, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
   ScheduleStatus, SchemaValidator, Sequenced, SkillProvider, StoreBundle, Task, TaskEvent, TaskId,
   TaskKind, TaskState, ToolResolver, ToolsetSnapshot,
@@ -9,12 +9,13 @@ import { describeRule, whenToRule } from '@melon-ai/engine';
 import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
 import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelPool, ReActPlanner, testModel } from '@melon-ai/llm';
 import type { ModelTestResult, RouteStrategy } from '@melon-ai/llm';
-import { ToolRegistry, artifact, basicValidator, schedule } from '@melon-ai/skills';
+import { ToolRegistry, activeMemories, artifact, basicValidator, memory, schedule } from '@melon-ai/skills';
 import type { Tool } from '@melon-ai/skills';
 import { memoryStorage } from '@melon-ai/store';
 import { assemble } from './assemble.js';
 import type { AssembledAgent } from './assemble.js';
 import { basicContext } from './context.js';
+import { withMemory } from './memory.js';
 import { defaultPlatform } from './platform.js';
 
 /** 存储：全套端口 + 审计 sink（+ 可选的幂等表）。`memoryStorage()` 与 `sqlite()` 都满足。 */
@@ -41,6 +42,12 @@ export interface AgentOptions {
    * 传 `{ when }` 可以收窄到某些任务（比如只在对话里）；默认是「不是定时触发的任务」。
    */
   readonly scheduleDrafts?: boolean | { readonly when?: (task: Task) => boolean };
+  /**
+   * 跨对话记忆（内置的记住 / 回忆 / 忘掉三个工具，每轮开始前把记忆带进上下文）。默认关。
+   * 只记用户明确让记的；读过网页的任务里写记忆要用户确认；删除每次都确认。
+   * `{ enabled }` 让宿主随时开关（设置页的开关），关着时工具不给模型、也不带记忆。
+   */
+  readonly memory?: boolean | { readonly enabled?: () => boolean };
   /**
    * 动作词：话里有这些词、却没有任何工具能做时，引擎直接回答「没有合适的工具」，不让模型编。
    * 在默认词表（`DEFAULT_ACTION_WORDS`）基础上**追加**。
@@ -156,6 +163,16 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
    * 「始终允许」过的操作。宿主做授权清单用：列出来给用户看，让用户能撤销。
    * `scope` 是人可读的范围（如 `to=a@b.com`，`*` 表示不限）。
    */
+  /**
+   * 用户的长期记忆。宿主做「记忆」管理用：列出来给用户看，让用户删。
+   * 删除是物理删除（privacy），并记审计。
+   */
+  readonly memories: {
+    list(): Promise<readonly Memory[]>;
+    forget(id: string): Promise<boolean>;
+    /** 全部清除。返回删了几条。 */
+    clear(): Promise<number>;
+  };
   readonly grants: {
     list(agentId?: string): Promise<readonly Grant[]>;
     /** 不传 scope 撤销这个工具的全部授权。 */
@@ -195,10 +212,15 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   const defaultAgent = opts.agentId ?? 'default';
 
   const pool = new ModelPool(opts.models ?? [], opts.strategy ?? 'balanced');
+  const memoryOn = (): boolean => (typeof opts.memory === 'object' ? (opts.memory.enabled?.() ?? true) : !!opts.memory);
   // 内置技能总在最前：注册表按来源定先后，宿主和用户装的技能不能顶替它们
   const drafts = opts.scheduleDrafts;
   const builtins: SkillProvider[] = [
     artifact(),
+    ...(opts.memory ? [memory({
+      store: stores.memories, purger: stores.purger, ids: platform.ids, now: platform.clock.now,
+      enabled: () => memoryOn(),
+    })] : []),
     ...(drafts ? [schedule({
       check: (when) => {
         if (when.repeat === 'now') return { ok: true as const };
@@ -241,7 +263,9 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     validator: opts.validator ?? basicValidator,
     platform,
     policy: policyMode,
-    buildContext: opts.buildContext ?? opts.context ?? basicContext(stores.episodes),
+    buildContext: opts.memory
+      ? withMemory(opts.buildContext ?? opts.context ?? basicContext(stores.episodes), stores.memories, memoryOn)
+      : opts.buildContext ?? opts.context ?? basicContext(stores.episodes),
     availableTools: opts.availableTools ?? (async (task) => registry.modelTools(task)),
     toolset: opts.toolset ?? (() => registry.toolset()),
     ...(opts.retention ? { retention: opts.retention } : {}),
@@ -284,6 +308,23 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   async function emitSchedule(id: string): Promise<void> {
     const s = await base.schedules.get(asScheduleId(id)).catch(() => null);
     if (s) emit('schedule', s);
+  }
+
+  /** 用户在宿主界面上删记忆：物理删除，每条记一笔审计（谁、什么时候删的）。 */
+  async function forgetMemories(ids: readonly string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const res = await stores.purger.purge({
+      refs: ids.map((ref) => ({ kind: 'memory', ref })), motive: 'privacy', reason: '用户在记忆管理里删除',
+    });
+    const traceId = platform.tracer.root().traceId;
+    for (const t of res.tombstones) {
+      await base.audit.record({
+        at: platform.clock.now(), actor: { kind: 'user', id: 'user' }, action: 'memory.write',
+        resource: { kind: 'memory', ref: t.ref }, outcome: 'ok', traceId,
+        dimensions: { change: 'forget', by: 'user' }, basis: { motive: 'privacy' },
+      });
+    }
+    return res.tombstones.length;
   }
 
   const schedules: Schedules = {
@@ -361,6 +402,11 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
         for await (const r of stores.events.read(id as TaskId)) rows.push(r);
         return rows;
       },
+    },
+    memories: {
+      list: () => activeMemories(stores.memories, 500),
+      forget: async (id) => (await forgetMemories([id])) > 0,
+      clear: async () => forgetMemories((await activeMemories(stores.memories, 10_000)).map((m) => m.id)),
     },
     grants: {
       list: (id) => stores.grants.listByAgent(asAgentId(id ?? defaultAgent)),

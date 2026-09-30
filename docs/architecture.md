@@ -436,7 +436,8 @@ plugins 不被任何引擎包依赖（含 agent）—— 它实现 core 的协�
 | | `builtin/web/` | 内置：网页搜索（只认 core 的 `SearchProvider` 协议）+ 读网页（内网拦截）+ `testSearch`。`/web` 子路径（Node） | core | ✅ |
 | | `builtin/mail/` | 内置：发邮件（自写的最小 SMTP 客户端，465 SSL / 587 STARTTLS，不在明文连接上发授权码）+ `testMail`。`/mail` 子路径（Node） | core | ✅ |
 | | `agentskills/` | 加载用户装的 **Agent Skills**（agentskills.io 规范，Claude 的技能格式）：发现、审查（说明文字 + 脚本）、三个工具 `skill.activate` / `skill.read` / `skill.run`。`/agentskills` 子路径（Node） | core | ✅ |
-| | （待建） | 记忆 / 历史类内置工具（等 memory）、MCP 接入 | core | P1/P2 |
+| | `builtin/memory/` | 内置：跨对话记忆（记住 / 回忆 / 忘掉，沿用 core 的 `BUILTIN_TOOLS.MEMORY_*`）。只记用户明确让记的；写入过注入审查；删除不可撤销。宿主 `memory` 开启 | core | ✅ |
+| | （待建） | 历史类内置工具、MCP 接入 | core | P1/P2 |
 | **@melon-ai/llm** | `router/` | 按用途 × 策略 × 健康 × 配额选模型（§4.6） | core | ✅ |
 | | `planner/` | ReAct 规划器 + 意图短路，原生 tool use | core | ✅ |
 | | `openai/` | OpenAI 兼容适配器 + 各家工厂（`deepseek` / `qwen` / `openai` / `kimi` / 通用 `compatible`），只用 fetch | core | ✅ |
@@ -773,6 +774,7 @@ const agent = await createAgent({
     agentSkills({ dirs: [`${home}/.myapp/skills`] }),      // 注册前审查；执行技能脚本每次确认
   ],
   scheduleDrafts: true,                                     // 允许 Agent 拟定时任务草稿（宿主画成卡片）
+  memory: { enabled: () => settings.memory },               // 跨对话记忆：记住用户让记的，每轮带进上下文
   policy: 'low-risk-auto',                                  // 默认值；对外操作要确认
 });                                                         // 默认创建即启动（含崩溃恢复）
 
@@ -790,6 +792,7 @@ await agent.configure({ models: [...], tools: [...] });    // 热替换，不重
 | 看进展 | `on('task', cb)` / `on('schedule', cb)`；单个任务的事件流 `watch(id)`；`tasks.list / get / history` |
 | 回应确认 | `approve(taskId, 'allow' \| 'always' \| 'deny')`；`always` 记下授权（同一工具、同一范围不再问；花钱、不可撤销的不能，看 `request.canAlways`） |
 | 授权清单 | `grants.list()` / `grants.revoke(toolId, scope?)` —— 给用户看「始终允许过什么」并能撤销 |
+| 记忆管理 | `memories.list()` / `forget(id)` / `clear()` —— 物理删除并记审计 |
 | 定义工具 | `defineTool({ id, description, risk, input, scope, triggers, when, untrustedOutput, run })`，`input` 可用简写 |
 | 定时 | `schedules.create({ goal, when })` / `pause` / `resume` / `remove` / `describe` |
 | 换模型 / 工具 / 权限 | `configure({ models, strategy, tools, skills, policy })` |
@@ -909,7 +912,7 @@ await agent.configure({ models: [...], tools: [...] });    // 热替换，不重
 - [ ] 记忆 / 历史类内置工具（skills 的 `builtin/`，等 memory）
 - [ ] memory：三层记忆 + 上下文预算与压缩（宿主目前用 `basicContext` 顶着）
 
-**测试总数 316，全绿；`lint:deps` 372 条依赖零违规。**
+**测试总数 322，全绿；`lint:deps` 372 条依赖零违规。**
 
 ### 10.1 宿主（Jolly）集成进度
 
@@ -1179,6 +1182,20 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
 75. **收件人多了，准入就失败。** 准入把授权范围（`to=a@x,b@y,…`）同时写进审计的维度与依据，维度有 64 字上限，
     超了审计抛错，整个任务以「effect Admit 失败」收尾。范围要可读（用户复核授权），但它是长度不定的内容，
     只放依据，不放维度。
+
+#### 跨对话记忆（2026-09）
+
+76. **记忆的第一版：只记用户明确让记的。** 三个内置工具（`builtin.memory_write / recall / forget`）放在 skills 的
+    `builtin/memory/`，没有新建 memory 包 —— 压缩与上下文预算做的时候再定要不要建。决策：
+    - **写入由模型调工具发起**，「帮我记住 / 别忘了 / 以后都」是触发词（规划器要求真的调用）；不做每轮结束后的自动提炼 ——
+      多一次模型调用，也容易记进垃圾和隐私。`PromoteMemory` effect 仍是空的。
+    - **每轮开始前把记忆带进上下文**（`withMemory` 包在宿主的上下文装配外面，放在最前 —— 记忆少变，前缀稳定吃得到缓存）。
+      不超过 30 条全带，多了按目标检索 + 最重要的。这是 §2.7「预召回种子」的让步：第一轮模型不知道该去查。
+    - **记忆算用户说过的话**（`Message.from = 'memory'`）：参数来源核对时，「发到我的邮箱」能用上记住的地址。
+      它来自用户原话，写入时过了注入审查，读过网页的任务里写入要确认（`DURABLE_WRITE_TOOLS` 的污点覆盖）。
+    - 同一主题新的替代旧的（`supersede`，不原地改）；删除走 `purger` 物理删除（privacy），对话里删每次确认、不给始终允许。
+    - 「好的，我记住了」但没调工具 → 算编造已完成（动作守卫③的说法里加上「记住了 / 记下了」）——
+      测试替身不理会 `toolChoice: required`，真实供应商也未必都遵守，这一道兜底不能省。
 
 #### 包结构合并（14 → 8）
 

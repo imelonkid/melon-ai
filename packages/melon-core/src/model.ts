@@ -22,8 +22,9 @@ export interface Message {
    * 这条消息是谁说的。observation 这类工具结果也以 user 角色回灌（模型把它当「刚发生的事实」），
    * 但它**不是用户说的** —— 判断「收件人是不是用户给的」时必须分开（见 `ToolDescriptor.userSupplied`）。
    * 不填按用户说的算。适配器不发这个字段。
+   * `memory` 是之前对话里用户让记住的事 —— 来自用户、写入时过了审查，参数来源核对时算用户说过。
    */
-  readonly from?: 'user' | 'host' | 'tool';
+  readonly from?: 'user' | 'host' | 'tool' | 'memory';
 }
 
 /**

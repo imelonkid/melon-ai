@@ -27,7 +27,8 @@ export const DEFAULT_ACTION_WORDS: readonly string[] = [
 ];
 
 /** 「做成了」的说法。 */
-const CLAIM = /(已|已经)(成功)?(帮你|为你|给你)?(发送|发出|发给|寄出|转发|删除|删掉|清空|发布|上传|提交|支付|付款|转账|下单|购买|预订|订好)|(发送|删除|发布|上传|提交|支付|付款|转账|下单|预订)(已)?(成功|完成)|\b(has been|have been|was|were)\s+(sent|deleted|published|uploaded|submitted|paid|transferred|booked)\b|\bsuccessfully\s+(sent|deleted|published|uploaded|submitted|paid|booked)\b/i;
+// 「记住了 / 记下了」也算：没调记忆工具就这么说，下次对话它其实什么都不记得（第 76 条）
+const CLAIM = /(已|已经)(成功)?(帮你|为你|给你)?(发送|发出|发给|寄出|转发|删除|删掉|清空|发布|上传|提交|支付|付款|转账|下单|购买|预订|订好|记住|记下)|(我)?(记住|记下)(了|啦)|(发送|删除|发布|上传|提交|支付|付款|转账|下单|预订)(已)?(成功|完成)|\b(has been|have been|was|were)\s+(sent|deleted|published|uploaded|submitted|paid|transferred|booked)\b|\bsuccessfully\s+(sent|deleted|published|uploaded|submitted|paid|booked)\b/i;
 
 const lower = (s: string): string => s.toLowerCase();
 

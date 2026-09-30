@@ -15,6 +15,7 @@
  */
 export * from './create.js';
 export * from './context.js';
+export { memoriesFor, memoryMessage } from './memory.js';
 export * from './platform.js';
 
 // ── 宿主常用的部件，从这里一并拿到，不必再装内部包 ──
@@ -34,7 +35,7 @@ export { memoryStorage } from '@melon-ai/store';
 export { ToolError, BUILTIN_TOOLS } from '@melon-ai/core';
 export type {
   Task, TaskState, TaskEvent, Sequenced, Schedule, ScheduleStatus, ModelEntry, PolicyMode,
-  ApprovalDecision, ApprovalRequest, Grant, SkillProvider, ToolContext, ToolOutput, Message,
+  ApprovalDecision, ApprovalRequest, Grant, Memory, SkillProvider, ToolContext, ToolOutput, Message,
 } from '@melon-ai/core';
 
 /** 兼容旧名。 */
