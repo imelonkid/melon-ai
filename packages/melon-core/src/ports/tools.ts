@@ -1,6 +1,6 @@
 import type { JSONSchema, ToolDescriptor, ToolHandler, ToolResult } from '../tool.js';
 import type { ToolId } from '../ids.js';
-import type { ToolsetSnapshot } from '../skill.js';
+import type { ToolsetSnapshot } from '../task.js';
 
 /**
  * 工具解析。

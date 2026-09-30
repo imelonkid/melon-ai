@@ -4,8 +4,12 @@ import type {
 } from '@melon-ai/core';
 import { asCallId, asToolId } from '@melon-ai/core';
 import { REACT_PROMPT, REACT_SYSTEM } from './prompt.js';
+import {
+  DEFAULT_ACTION_WORDS, claimsDone, correctionFor, isActionTool, matchActionTools, mentionsAction,
+} from './action.js';
 
 export * from './prompt.js';
+export * from './action.js';
 
 export interface ReActOptions {
   readonly router: ModelRouter;
@@ -15,6 +19,8 @@ export interface ReActOptions {
   /** 生成 callId / argsHash。宿主注入以保持确定性。 */
   readonly ids?: { next(prefix?: string): string };
   readonly hash?: (s: string) => string;
+  /** 动作词表（「没有合适的工具」的判定依据）。默认 `DEFAULT_ACTION_WORDS`，宿主可扩充。 */
+  readonly actionWords?: readonly string[];
 }
 
 /**
@@ -40,32 +46,74 @@ export class ReActPlanner implements Planner {
   constructor(private readonly opts: ReActOptions) {}
 
   async plan(input: PlanInput, signal: AbortSignal): Promise<PlanStep> {
+    const { task } = input;
     const intent = await this.classify(input, signal);
     // 闲聊 / 纯问答：不召回、不注入任何 tool schema
     const tools: readonly ModelTool[] = intent === 'task' ? input.availableTools : [];
+    const called = task.toolsCalled ?? [];
+    const succeeded = task.toolsSucceeded ?? [];
+
+    // ── 动作守卫①：命中了有副作用工具的触发词，而且还没尝试过 → 必须调用工具 ──
+    const matched = matchActionTools(task.goal, tools);
+    const mustAct = matched.some((t) => !called.includes(t.name));
+
+    // ── 动作守卫②：要做一件事，却没有任何工具能做 → 不问模型，直接说 ──
+    if (task.usage.steps === 0 && matched.length === 0) {
+      const verb = mentionsAction(task.goal, this.opts.actionWords ?? DEFAULT_ACTION_WORDS);
+      // 有「没写触发词」的副作用工具时交给模型判断 —— 可能正是它能做
+      const untriggered = tools.some((t) => isActionTool(t) && !(t.triggers?.length));
+      if (verb && !untriggered) {
+        return {
+          kind: 'abort',
+          thought: `动作词「${verb}」没有匹配的工具`,
+          reason: `没有能完成「${verb}」的工具，这件事没有做。可以在「连接」或技能里接入对应的能力后再试。`,
+        };
+      }
+    }
 
     const decision = await this.opts.router.select(intent === 'task' ? 'plan' : 'answer', signal);
     const messages = this.assemble(input.context, tools.length > 0);
-
-    const res = await decision.primary.generate({
-      messages,
-      ...(tools.length > 0 ? { tools, toolChoice: 'auto' as const } : {}),
+    const generate = (msgs: readonly Message[], required: boolean) => decision.primary.generate({
+      messages: msgs,
+      ...(tools.length > 0 ? { tools, toolChoice: required ? 'required' as const : 'auto' as const } : {}),
       signal,
     });
 
+    const res = await generate(messages, mustAct);
     if (res.stopReason === 'filtered') {
       return { kind: 'final', thought: '被安全策略拦截', answer: res.text };
     }
-
     const call = res.toolCalls?.[0];
     if (call) return this.toToolCall(res.text, call);
 
-    // 没选工具 = 模型认为可以收敛了
-    return {
-      kind: 'final',
-      thought: '模型未请求工具，视为可以作答',
-      answer: res.text.trim() || '（模型没有返回内容）',
-    };
+    // ── 动作守卫③：答复里说做成了，本任务却没有成功执行过任何有副作用的工具 ──
+    const answer = res.text.trim() || '（模型没有返回内容）';
+    const claim = claimsDone(answer);
+    const acted = succeeded.some((id) => {
+      const t = input.availableTools.find((x) => x.name === id);
+      return t ? isActionTool(t) : false;
+    });
+    if (claim && !acted) {
+      // 纠正一次：它可能只是想先说后做，给它一次真的去调工具的机会
+      const retry = await generate(
+        [...messages, { role: 'assistant', content: answer }, { role: 'user', content: correctionFor(claim) }],
+        tools.some(isActionTool),
+      );
+      const again = retry.toolCalls?.[0];
+      if (again) return this.toToolCall(retry.text, again);
+      const second = retry.text.trim();
+      if (!second || claimsDone(second)) {
+        return {
+          kind: 'abort',
+          thought: `模型声称「${claim}」，但没有执行任何对应的工具`,
+          reason: `这件事没有做成：回答里说「${claim}」，但实际上没有执行任何对应的操作。`,
+        };
+      }
+      return { kind: 'final', thought: '纠正后如实作答', answer: second };
+    }
+
+    // 没选工具 = 模型认为可以收敛了（包括向用户追问缺的信息）
+    return { kind: 'final', thought: '模型未请求工具，视为可以作答', answer };
   }
 
   private async classify(input: PlanInput, signal: AbortSignal): Promise<Intent> {

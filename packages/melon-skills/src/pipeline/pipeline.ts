@@ -7,7 +7,7 @@ import { computeScope, decide } from '../policy/index.js';
 import { CircuitBreaker } from './breaker.js';
 import { DEFAULT_EXECUTE, execute } from './execute.js';
 import type { ExecuteConfig } from './execute.js';
-import { idempotencyKey } from './argshash.js';
+import { idempotencyKey, repeatKey } from './argshash.js';
 import { emptyMetrics, normalizeErr, normalizeOk } from './normalize.js';
 import { toToolError } from './errors.js';
 import { ToolError } from '@melon-ai/core';
@@ -60,6 +60,12 @@ export type AdmitOutcome =
  */
 export class ToolPipeline {
   private readonly breaker = new CircuitBreaker();
+  /** 没有幂等表时的重复调用缓存（进程内，有上限）。有幂等表时用它，重启后也生效。 */
+  private readonly repeats = new Map<string, ToolResult>();
+  private rememberRepeat(key: string, result: ToolResult): void {
+    if (this.repeats.size >= 500) this.repeats.delete(this.repeats.keys().next().value as string);
+    this.repeats.set(key, result);
+  }
 
   constructor(private readonly deps: PipelineDeps) {}
 
@@ -169,6 +175,25 @@ export class ToolPipeline {
       ? undefined
       : idempotencyKey(this.deps.hasher, call.toolId, call.callId, call.args);
 
+    /*
+     * 重复调用缓存：同一任务里、同一个幂等工具、参数完全相同，直接返回上次成功的结果。
+     * 模型常会反复读同一份东西（实测 DeepSeek 连读 4 次同一个句柄），再跑一遍只是白花时间和配额。
+     * 返回里说明是复用的 —— 模型得知道「再调也一样」，不然它会接着调。
+     * 只缓存成功的结果；失败的下次还该真的再试。
+     */
+    const rKey = descriptor.idempotent ? repeatKey(this.deps.hasher, task.id, call.toolId, call.args) : undefined;
+    if (rKey !== undefined) {
+      const prev = this.deps.idempotency ? await this.deps.idempotency.get(rKey) : this.repeats.get(rKey);
+      if (prev) {
+        this.deps.logger.log('info', '重复调用命中缓存，直接复用上次结果', { toolId: call.toolId, callId: call.callId });
+        return {
+          ...prev,
+          summary: `（这与本任务中之前的一次调用完全相同，结果不会变化，以下是上次的结果。不要再重复调用。）\n${prev.summary}`,
+          metrics: emptyMetrics(0),
+        };
+      }
+    }
+
     // 幂等短路：effect 重跑（崩溃恢复）时不要真的再发一次邮件
     if (key !== undefined && this.deps.idempotency) {
       const cached = await this.deps.idempotency.get(key);
@@ -210,13 +235,17 @@ export class ToolPipeline {
 
     const metrics = { ms: ex.ms, bytes: 0, retries: ex.retries };
     const normalized = ex.output
-      ? await normalizeOk({ output: ex.output, metrics, cx })
+      ? await normalizeOk({ output: ex.output, metrics, cx, ...(descriptor.outputLimit ? { limit: descriptor.outputLimit } : {}) })
       : normalizeErr(ex.error ?? toToolError(new Error('未知失败')), metrics);
     // 失败也标：错误信息里同样可能带着远端返回的内容
     const result = descriptor.untrustedOutput ? { ...normalized, untrusted: true } : normalized;
 
     if (key !== undefined && this.deps.idempotency && result.ok) {
       await this.deps.idempotency.put(key, result, this.deps.idempotencyTtlMs ?? 3_600_000);
+    }
+    if (rKey !== undefined && result.ok) {
+      if (this.deps.idempotency) await this.deps.idempotency.put(rKey, result, this.deps.idempotencyTtlMs ?? 3_600_000);
+      else this.rememberRepeat(rKey, result);
     }
 
     await this.recordAudit(task, call, 'tool.invoke', result.ok ? 'ok' : 'error', {

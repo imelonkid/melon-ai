@@ -1,9 +1,17 @@
-import type { AgentId, ArtifactRef, CallId, EpisodeId, TaskId } from './ids.js';
+import type { AgentId, ArtifactRef, CallId, EpisodeId, SkillId, TaskId } from './ids.js';
 import type { ToolCall, ToolResultMeta, RiskClass } from './tool.js';
-import type { ToolsetSnapshot } from './skill.js';
 import type { Usage } from './model.js';
 import type { PromptRef } from './prompt.js';
 import type { SpanId, TraceContext } from './trace.js';
+
+/**
+ * 任务启动时对可用工具集做的快照。
+ * **必须钉住版本**：否则 MCP server 中途更新会让同一个 toolId 含义改变，事件日志就不可重放了。
+ */
+export interface ToolsetSnapshot {
+  readonly takenAt: number;
+  readonly skills: readonly { readonly id: SkillId; readonly version: string }[];
+}
 
 export type TaskState =
   | 'PENDING'            // 待执行
@@ -128,6 +136,16 @@ export interface Task {
   readonly tainted: boolean;
   /** 守卫窗口。纯 reducer 只能看到 task，循环与无进展检测所需的历史必须挂在这里。 */
   readonly guard: GuardWindow;
+  /**
+   * 本任务里**执行成功过**的工具（去重，按首次成功的顺序）。
+   *
+   * 规划器据此判断「说做了的事到底做没做」：答复里写「已发送」，这里却没有任何
+   * 发送类工具，那就是模型在编。由 reducer 在 `ToolCallFinished.meta.ok` 时追加。
+   * 旧数据没有这个字段，按空处理。
+   */
+  readonly toolsSucceeded?: readonly string[];
+  /** 本任务里**模型发起过调用**的工具（去重）。动作守卫据此判断「该做的动作有没有尝试过」。 */
+  readonly toolsCalled?: readonly string[];
   /** 当前挂起的审批（state=AWAITING_APPROVAL 时非空）。 */
   readonly pendingCall?: ToolCall;
   /** 正在等待的子任务。 */
@@ -162,7 +180,14 @@ export type PlanStep =
   | { readonly kind: 'skill_query'; readonly thought: string; readonly query: string }
   | { readonly kind: 'tool_call'; readonly thought: string; readonly call: ToolCall }
   | { readonly kind: 'spawn'; readonly thought: string; readonly specs: readonly TaskSpec[] }
-  | { readonly kind: 'final'; readonly thought: string; readonly answer: string };
+  | { readonly kind: 'final'; readonly thought: string; readonly answer: string }
+  /**
+   * 规划器判定这件事**没有做成**，任务以 FAILED 收尾。
+   *
+   * 和 `final` 分开：「没有合适的工具」「模型没执行却说做了」这类结果如果走 `final`，
+   * 任务会记成成功，界面上就是「已完成」—— 用户会以为邮件已经发出去了。
+   */
+  | { readonly kind: 'abort'; readonly thought: string; readonly reason: string };
 
 // ─────────────────────────────  事件  ─────────────────────────────
 

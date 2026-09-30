@@ -56,6 +56,21 @@ export interface ToolDescriptor {
    * 模型分不清这是用户的意思还是网页的意思 —— 所以由人来分。
    */
   readonly untrustedOutput?: boolean;
+  /**
+   * 触发词：用户这句话里出现其中任何一个，引擎就认定要用到这个工具（规则判定，不问模型）。
+   *
+   * 对有副作用的工具（risk 不是 read）尤其重要：召回到了，引擎就要求模型必须调用它，
+   * 模型只回一段话不算数 —— 见 llm/planner 的动作守卫。例：`mail.send` 写 `['发邮件', '邮件', 'email']`。
+   */
+  readonly triggers?: readonly string[];
+  /**
+   * 结果摘要进上下文的字符上限。默认 2048（约 512 token），超出部分落 artifact。
+   *
+   * 大多数工具不该改它：大结果就该走句柄。例外是「结果本身就是给模型的指令」的工具，
+   * 比如激活一个技能要把整份操作说明交给模型 —— 截断了模型就只看到半份说明。
+   * 注册时上限封顶 32000。
+   */
+  readonly outputLimit?: number;
 }
 
 export interface ToolCall {

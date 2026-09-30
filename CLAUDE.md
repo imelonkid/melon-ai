@@ -27,7 +27,7 @@ melon-ai 是**可嵌入的 AI Agent 引擎**。Jolly（`../jolly`）是基于它
 ```
 core     契约：类型与端口，零运行时依赖
 engine   引擎：task/ · runtime/ · trigger/
-skills   技能：pipeline/ · policy/ · registry/ · web/（子路径）（待建：技能召回、内置工具、MCP）
+skills   技能：pipeline/ · policy/ · registry/（注册与审查）· builtin/（内置：artifact、schedule、web、mail）· agentskills/（用户技能）（待建：MCP）
 llm      模型：router/ · planner/ · openai/ · anthropic/（子路径）
 store    存储：sqlite/（子路径）
 audit    审计（横切，独立成包）
@@ -37,6 +37,10 @@ testkit  测试替身
 ```
 
 - **新能力先归进已有的域，不新建包。** 例如联网工具属于 skills，模型适配器属于 llm。
+- **技能的边界**：引擎自带的能力放 `skills/src/builtin/<名字>/`（每个一个目录、互不引用）；用户扩展一律是
+  **Agent Skills 规范**（agentskills.io，Claude 的技能格式）的目录，放在宿主指定的**用户目录**（Jolly 是 `~/.jolly/skills`），
+  由 `agentskills/` 加载。**任何来源注册前都要过校验、净化、审查**；内置工具不能被覆盖；技能不能给自己预先授权。
+- **有副作用的事做没做，由规则判定，不靠提示词。** 有副作用的工具要写 `triggers`；不要用改提示词的办法修「模型没调工具」。
 - **协议在 core，机制在域包，厂商实现在 plugins。** 引擎内置的是**通信协议**的适配（OpenAI 兼容、Anthropic），预设（`deepseek()` 等）只是协议上的一组配置；没有通用协议的能力（网页搜索……），引擎只在 core 定接口，各厂商实现进 `plugins` 的子路径（一家一个目录，不为厂商新建包）。宿主按需引入，也可以自己实现接口。
 - 只有两种情况值得新包：**新的业务域**（如 memory），或**与任何业务域无关的横切关注点**（如 audit）。新增、合并、改归属**必须先出方案给用户确认**。
 - 包名是业务域（`engine` / `skills` / `llm`），不是组件名；组件在包内各占一个目录。

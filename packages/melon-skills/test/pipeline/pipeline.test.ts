@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { PolicyMode, Task, ToolCall, ToolDescriptor, ToolHandler } from '@melon-ai/core';
-import { BUILTIN_TOOLS, ToolError, asSkillId, asToolId } from '@melon-ai/core';
+import { BUILTIN_TOOLS, ToolError, asSkillId, asTaskId, asToolId } from '@melon-ai/core';
 import {
   ChainedRecorder, DEFAULT_RETENTION, assertRetention,
 } from '@melon-ai/audit';
@@ -296,7 +296,7 @@ test('幂等短路：重放不会真的再发一次', async () => {
   assert.equal(h.idem.hits.length, 1);
 });
 
-test('幂等工具不分配 key，不写缓存', async () => {
+test('幂等工具不分配重放 key；同一任务同样参数的第二次直接复用上次结果', async () => {
   let n = 0;
   const h = await harness({
     descriptor: desc({ id: READER, risk: 'read', idempotent: true, input: {}, scopeKeys: [] }),
@@ -304,10 +304,29 @@ test('幂等工具不分配 key，不写缓存', async () => {
     idempotency: true,
   });
   const c = { ...toolCall('doc.read'), args: {} };
-  await invokeAll(h, task(), c, 'all-auto');
-  await invokeAll(h, task(), c, 'all-auto');
-  assert.equal(n, 2, '幂等工具本来就能重复调，不必走缓存');
-  assert.equal(h.idem.hits.length, 0);
+  const t = task();
+  await invokeAll(h, t, c, 'all-auto');
+  const second = await invokeAll(h, t, c, 'all-auto');
+  assert.equal(n, 1, '同一任务里同样的读，第二次不再真的执行');
+  assert.equal(second.kind, 'executed');
+  if (second.kind === 'executed') assert.match(second.result.summary, /完全相同/);
+  // 别的任务同样的参数不复用 —— 缓存只在任务内
+  await invokeAll(h, task({ id: asTaskId('task-other') }), c, 'all-auto');
+  assert.equal(n, 2);
+});
+
+test('重复调用缓存只缓存成功的结果', async () => {
+  let n = 0;
+  const h = await harness({
+    descriptor: desc({ id: READER, risk: 'read', idempotent: true, input: {}, scopeKeys: [] }),
+    handler: async () => { n++; throw new ToolError('NOT_FOUND', '没有'); },
+    idempotency: true,
+  });
+  const t = task();
+  const c = { ...toolCall('doc.read'), args: {} };
+  await invokeAll(h, t, c, 'all-auto');
+  await invokeAll(h, t, c, 'all-auto');
+  assert.equal(n, 2, '失败的下次还该真的再试');
 });
 
 // ───────────────────── resume ─────────────────────

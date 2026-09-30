@@ -26,13 +26,23 @@
       "types": "./dist/web.d.ts",
       "import": "./dist/web.js",
       "require": "./dist/web.cjs"
+    },
+    "./mail": {
+      "types": "./dist/mail.d.ts",
+      "import": "./dist/mail.js",
+      "require": "./dist/mail.cjs"
+    },
+    "./agentskills": {
+      "types": "./dist/agentskills.d.ts",
+      "import": "./dist/agentskills.js",
+      "require": "./dist/agentskills.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup --entry.index src/index.ts --entry.sqlite src/sqlite.ts --entry.anthropic src/anthropic.ts --entry.web src/web.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.index src/index.ts --entry.sqlite src/sqlite.ts --entry.anthropic src/anthropic.ts --entry.web src/web.ts --entry.mail src/mail.ts --entry.agentskills src/agentskills.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

@@ -6,8 +6,8 @@ import type { ToolContext } from '@melon-ai/core';
 import { ToolError } from '@melon-ai/core';
 import {
   WEB_FETCH, WEB_SEARCH, WebSkillProvider, assertPublicUrl, fetchPage, testSearch, htmlToText, isPrivateAddress,
-} from '../../src/web/index.js';
-import type { Lookup, SearchProvider } from '../../src/web/index.js';
+} from '../../src/builtin/web/index.js';
+import type { Lookup, SearchProvider } from '../../src/builtin/web/index.js';
 
 const fakeLookup = (table: Record<string, string[]>): Lookup => async (host) => {
   const r = table[host];

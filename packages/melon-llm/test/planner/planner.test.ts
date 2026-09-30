@@ -147,3 +147,84 @@ test('提示词有版本号 —— 它要进事件日志才能重放', () => {
   assert.equal(REACT_PROMPT.name, 'react.system');
   assert.ok(REACT_PROMPT.version.length > 0);
 });
+
+// ───────────────────── 动作守卫 ─────────────────────
+
+const MAIL: ModelTool = {
+  name: 'mail.send', description: '发邮件', input: { type: 'object' }, risk: 'external', triggers: ['发邮件', '发给'],
+};
+const SEARCH: ModelTool = { name: 'web.search', description: '搜索', input: { type: 'object' }, risk: 'read' };
+const withTask = (over: Partial<PlanInput['task']>, tools: ModelTool[] = [MAIL, SEARCH]): PlanInput => {
+  const base = input();
+  return { ...base, task: { ...base.task, ...over }, availableTools: tools };
+};
+
+test('动作守卫①：命中发邮件的触发词、还没尝试过 → 要求模型必须调用工具', async () => {
+  const m = new StubModel([{ stopReason: 'tool', toolCalls: [{ id: 'x', name: 'mail.send', args: { to: 'a@x.com' } }] }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: '把周报发邮件给产品组' }), sig);
+  assert.equal(step.kind, 'tool_call');
+  assert.equal(m.requests[0]!.toolChoice, 'required');
+});
+
+test('动作守卫①：已经尝试过发邮件（比如收件人不对被退回）→ 不再强制，模型可以去问用户', async () => {
+  const m = new StubModel([{ text: '请告诉我产品组的邮箱地址。' }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(
+    withTask({ goal: '把周报发邮件给产品组', toolsCalled: ['mail.send'], usage: { steps: 2, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
+  assert.equal(m.requests[0]!.toolChoice, 'auto');
+  assert.deepEqual(step, { kind: 'final', thought: '模型未请求工具，视为可以作答', answer: '请告诉我产品组的邮箱地址。' });
+});
+
+test('动作守卫②：要做一件事（删除）却没有任何工具能做 → 不问模型，直接以失败收尾说没有合适的工具', async () => {
+  const m = new StubModel([{ text: '好的，已删除。' }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: '把上周的会议记录删除' }, [MAIL, SEARCH]), sig);
+  assert.equal(step.kind, 'abort');
+  if (step.kind === 'abort') assert.match(step.reason, /没有能完成「删除」的工具/);
+  assert.equal(m.requests.length, 0, '根本不该去问模型');
+});
+
+test('动作守卫②：纯问答（没有动作词）照常让模型回答', async () => {
+  const m = new StubModel([{ text: 'RAG 是检索增强生成……' }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: '解释一下什么是 RAG' }), sig);
+  assert.equal(step.kind, 'final');
+});
+
+test('动作守卫②：有没写触发词的副作用工具时交给模型判断 —— 可能正是它能做', async () => {
+  const runner: ModelTool = { name: 'skill.run', description: '跑脚本', input: { type: 'object' }, risk: 'external' };
+  const m = new StubModel([{ text: '需要先确认要删除哪个文件。' }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: '把临时文件删除' }, [runner]), sig);
+  assert.equal(step.kind, 'final');
+});
+
+test('动作守卫③（E5 复现）：用户只回了个邮箱，模型直接说「邮件已发送」却没调任何工具 → 纠正一次，仍不调就失败收尾', async () => {
+  const m = new StubModel([{ text: '邮件已发送。收件人：a@x.com' }, { text: '邮件已经发送成功。' }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: 'a@x.com' }), sig);
+  assert.equal(step.kind, 'abort');
+  if (step.kind === 'abort') assert.match(step.reason, /实际上没有执行任何对应的操作/);
+  assert.equal(m.requests.length, 2);
+  const nudge = m.requests[1]!.messages.at(-1)!;
+  assert.equal(nudge.role, 'user');
+  assert.match(nudge.content, /没有成功执行过任何对应的工具/);
+  assert.equal(m.requests[1]!.toolChoice, 'required', '纠正时要求它真的去调工具');
+});
+
+test('动作守卫③：纠正之后模型真的去调工具 → 走正常的工具调用（之后由准入弹确认）', async () => {
+  const m = new StubModel([
+    { text: '邮件已发送。' },
+    { stopReason: 'tool', toolCalls: [{ id: 'x', name: 'mail.send', args: { to: 'a@x.com' } }] },
+  ]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: 'a@x.com' }), sig);
+  assert.equal(step.kind, 'tool_call');
+});
+
+test('动作守卫③：发邮件真的成功过，答复说「已发送」是实话 → 放行', async () => {
+  const m = new StubModel([{ text: '邮件已发送给 a@x.com。' }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(
+    withTask({ goal: '发邮件给 a@x.com', toolsCalled: ['mail.send'], toolsSucceeded: ['mail.send'], usage: { steps: 3, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
+  assert.equal(step.kind, 'final');
+});
+
+test('动作词按整词匹配：notebook 不算 book，display 不算 pay', async () => {
+  const m = new StubModel([{ text: '好的' }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: 'summarize my notebook display settings' }), sig);
+  assert.equal(step.kind, 'final');
+});

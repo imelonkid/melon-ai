@@ -49,7 +49,7 @@ test('默认校验器：必填、类型（数组的 typeof 是 object）、枚�
   assert.deepEqual(issues, ['/days/1', '/mode', '/n', '/to']);
 });
 
-const provider = (tools: string[]): SkillProvider & { fire(): void; set(t: string[]): void } => {
+const provider = (tools: string[], kind: 'builtin' | 'extension' = 'builtin'): SkillProvider & { fire(): void; set(t: string[]): void } => {
   let names = tools;
   const subs = new Set<() => void>();
   return {
@@ -57,7 +57,8 @@ const provider = (tools: string[]): SkillProvider & { fire(): void; set(t: strin
     async list(): Promise<readonly SkillBundle[]> {
       return [{
         skill: {
-          id: asSkillId('web'), name: 'web', purpose: '', keywords: [], source: { kind: 'builtin' },
+          id: asSkillId('web'), name: 'web', purpose: '', keywords: [],
+          source: kind === 'builtin' ? { kind: 'builtin' } : { kind: 'extension', providerId: 'p', version: '1' },
           tools: names.map((n) => ({ id: asToolId(n), skillId: asSkillId('web'), name: n, description: n, input: {}, risk: 'read' as const, idempotent: true })),
         },
         handlers: new Map(names.map((n) => [n, async () => ({ summary: `from ${n}` })])),
@@ -70,15 +71,28 @@ const provider = (tools: string[]): SkillProvider & { fire(): void; set(t: strin
   };
 };
 
-test('注册表：合并宿主工具与技能来源；宿主同名工具优先', async () => {
+test('注册表：合并宿主工具与技能来源；内置工具不能被宿主覆盖，拒绝原因进报告', async () => {
   const p = provider(['web.search', 'web.fetch']);
   const mine = defineTool({ id: 'web.fetch', description: '宿主自己的', run: () => 'mine' });
   const r = new ToolRegistry({ tools: [mine], providers: [p] });
   await r.ready();
   assert.deepEqual(r.list().map((d) => d.id).sort(), ['web.fetch', 'web.search']);
   const fetch = await r.resolve(asToolId('web.fetch'));
-  assert.deepEqual(await fetch!.handler({}, cx), { summary: 'mine' });
+  assert.deepEqual(await fetch!.handler({}, cx), { summary: 'from web.fetch' }, '内置的留下，宿主的被拒');
   assert.equal(await r.isEnabledFor(asToolId('nope.x')), false);
+  const rej = r.report().rejected;
+  assert.equal(rej.length, 1);
+  assert.equal(rej[0]!.origin, 'host');
+  assert.match(rej[0]!.reasons.join(), /内置工具不能被覆盖/);
+});
+
+test('注册表：扩展来源的同名工具让位给宿主工具', async () => {
+  const p = provider(['doc.read'], 'extension');
+  const mine = defineTool({ id: 'doc.read', description: '宿主自己的', run: () => 'mine' });
+  const r = new ToolRegistry({ tools: [mine], providers: [p] });
+  await r.ready();
+  assert.deepEqual(await (await r.resolve(asToolId('doc.read')))!.handler({}, cx), { summary: 'mine' });
+  assert.equal(r.report().rejected[0]!.origin, 'extension');
 });
 
 test('注册表：来源通知变化后工具集跟着变', async () => {
@@ -92,20 +106,31 @@ test('注册表：来源通知变化后工具集跟着变', async () => {
 });
 
 test('注册表：when 不满足的工具不给模型；schema 带 additionalProperties:false', () => {
-  const chatOnly = defineTool({ id: 'task.propose', description: '', when: (t) => t.trigger.ref === 'chat', run: () => '' });
-  const always = defineTool({ id: 'doc.read', description: '', input: { q: 'string' }, run: () => '' });
+  const chatOnly = defineTool({ id: 'task.propose', description: '拟任务', when: (t) => t.trigger.ref === 'chat', run: () => '' });
+  const always = defineTool({ id: 'doc.read', description: '读文档', input: { q: 'string' }, run: () => '' });
   const r = new ToolRegistry({ tools: [chatOnly, always] });
   assert.deepEqual(r.modelTools(newTask()).map((t) => t.name), ['doc.read']);
   assert.deepEqual(r.modelTools(newTask({ trigger: { type: 'manual', ref: 'chat' } })).map((t) => t.name).sort(), ['doc.read', 'task.propose']);
   assert.equal(r.modelTools(newTask())[0]!.input['additionalProperties'], false);
 });
 
-test('注册表：setTools 热替换；重复 id 直接拒绝', () => {
+test('注册表：setTools 热替换；重复 id 只留第一个，第二个进拒绝报告', () => {
   const r = new ToolRegistry();
-  r.setTools([defineTool({ id: 'a.b', description: '', run: () => '' })]);
+  r.setTools([defineTool({ id: 'a.b', description: '一', run: () => '' })]);
   assert.equal(r.list().length, 1);
-  assert.throws(() => r.setTools([
-    defineTool({ id: 'a.b', description: '', run: () => '' }),
-    defineTool({ id: 'a.b', description: '', run: () => '' }),
-  ]), /重复/);
+  r.setTools([
+    defineTool({ id: 'a.b', description: '一', run: () => '' }),
+    defineTool({ id: 'a.b', description: '二', run: () => '' }),
+  ]);
+  assert.equal(r.list().length, 1);
+  assert.match(r.report().rejected[0]!.reasons.join(), /重名/);
+});
+
+test('注册表：modelTools 带上风险与触发词给规划器用', () => {
+  const r = new ToolRegistry({ tools: [defineTool({
+    id: 'mail.send', description: '发邮件', risk: 'external', triggers: ['发邮件', 'email'], run: () => '',
+  })] });
+  const [t] = r.modelTools(newTask());
+  assert.equal(t!.risk, 'external');
+  assert.deepEqual(t!.triggers, ['发邮件', 'email']);
 });
