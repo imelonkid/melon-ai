@@ -5,11 +5,15 @@ import type { ToolsetSnapshot } from '../task.js';
 /**
  * 工具解析。
  *
- * `melon-tools` 只认识这个端口，不认识技能注册表 —— 所以管线不依赖 `melon-skills`，
+ * 管线（`skills/pipeline`）只认识这个端口，不认识技能注册表（`skills/registry`），
  * 两者在这里相遇。
  *
- * **必须按任务的 toolset 快照解析**：任务执行期间 MCP server 可能更新，
+ * **契约：应当按任务的 toolset 快照解析**：任务执行期间 MCP server 可能更新，
  * 若不按快照解析，同一个 `toolId` 在不同时刻含义不同，事件日志就不可重放。
+ *
+ * ⚠️ 现状（§10 第 68 条）：默认实现 `ToolRegistry` 还**没有**按快照解析（按当前注册的工具解析），
+ * `isEnabledFor` 也还不区分 Agent（注册了就算开启）。宿主现在只有一个 Agent、工具集在任务内很少变，
+ * 所以还没出问题；接 MCP 或做多 Agent 时必须补上。
  */
 export interface ToolResolver {
   resolve(toolId: ToolId, snapshot: ToolsetSnapshot): Promise<ResolvedTool | null>;
@@ -31,7 +35,7 @@ export interface ValidationIssue {
 /**
  * 参数校验。
  *
- * 做成端口而不是在 `melon-tools` 里内置 ajv：宿主往往已经有校验器，
+ * 做成端口而不是在管线里内置 ajv：宿主往往已经有校验器，
  * 而 Electron 里多打一个 ajv 进包是实打实的体积。
  * 契约层不绑定任何实现，换 zod / typebox 只是换一个适配器。
  */

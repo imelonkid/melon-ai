@@ -11,6 +11,7 @@
  * - `@melon-ai/agent/web`       联网技能（Node）；搜索服务的厂商实现在扩展包 `@melon-ai/plugins`
  * - `@melon-ai/agent/mail`      发邮件（SMTP，Node）
  * - `@melon-ai/agent/agentskills` 加载用户装的 Agent Skills（Claude 的技能格式，Node）
+ * - `@melon-ai/agent/node`      Node 原生的平台实现（可选；根入口的默认实现在 Node 上也能用）
  */
 export * from './create.js';
 export * from './context.js';
@@ -33,7 +34,7 @@ export { memoryStorage } from '@melon-ai/store';
 export { ToolError, BUILTIN_TOOLS } from '@melon-ai/core';
 export type {
   Task, TaskState, TaskEvent, Sequenced, Schedule, ScheduleStatus, ModelEntry, PolicyMode,
-  ApprovalDecision, SkillProvider, ToolContext, ToolOutput, Message,
+  ApprovalDecision, ApprovalRequest, Grant, SkillProvider, ToolContext, ToolOutput, Message,
 } from '@melon-ai/core';
 
 /** 兼容旧名。 */

@@ -180,11 +180,22 @@ export interface ApprovalRequest {
   readonly risk: RiskClass;
   /** 给用户看的一句话，比如「将周报发送至 产品组（6 人），今天 17:00 定时发出」。 */
   readonly summary: string;
+  /** 这次能不能「始终允许」。花钱、不可撤销的操作每次都要问（`GRANTABLE_RISKS`），宿主据此决定显不显示这个按钮。 */
+  readonly canAlways?: boolean;
 }
 
 // ─────────────────────────────  规划步骤  ─────────────────────────────
 
-export type PlanStep =
+/**
+ * 这一步是怎么得出的：用的哪版提示词、哪个模型。运行时把它写进 `PlanProduced`，
+ * 重放历史时才知道当时的条件（§2.3）。没问模型就得出的步骤（守卫直接拒绝）没有 `modelId`。
+ */
+export interface PlanVia {
+  readonly promptRef?: PromptRef;
+  readonly modelId?: string;
+}
+
+export type PlanStep = (
   | { readonly kind: 'skill_query'; readonly thought: string; readonly query: string }
   | { readonly kind: 'tool_call'; readonly thought: string; readonly call: ToolCall }
   | { readonly kind: 'spawn'; readonly thought: string; readonly specs: readonly TaskSpec[] }
@@ -195,7 +206,8 @@ export type PlanStep =
    * 和 `final` 分开：「没有合适的工具」「模型没执行却说做了」这类结果如果走 `final`，
    * 任务会记成成功，界面上就是「已完成」—— 用户会以为邮件已经发出去了。
    */
-  | { readonly kind: 'abort'; readonly thought: string; readonly reason: string };
+  | { readonly kind: 'abort'; readonly thought: string; readonly reason: string }
+) & { readonly via?: PlanVia };
 
 // ─────────────────────────────  事件  ─────────────────────────────
 
@@ -259,6 +271,8 @@ export type Effect =
   | { readonly k: 'CallPlanner'; readonly taskId: TaskId }
   | { readonly k: 'Admit'; readonly taskId: TaskId; readonly call: ToolCall }
   | { readonly k: 'InvokeTool'; readonly taskId: TaskId; readonly call: ToolCall }
+  /** 用户点了「始终允许」：记下授权，以后同一工具、同一范围不再问。 */
+  | { readonly k: 'Grant'; readonly taskId: TaskId; readonly call: ToolCall }
   | { readonly k: 'AskUser'; readonly taskId: TaskId; readonly request: ApprovalRequest }
   | { readonly k: 'RecallSkills'; readonly taskId: TaskId; readonly query: string }
   | { readonly k: 'SpawnChildren'; readonly parentId: TaskId; readonly specs: readonly TaskSpec[] }

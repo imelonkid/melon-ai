@@ -2,7 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import type {
   ChatModel, GenerateRequest, GenerateResult, Message, ModelCapabilities, ModelToolCall, Usage,
 } from '@melon-ai/core';
-import { ToolError, toolNameCodec } from '@melon-ai/core';
+import { ToolError } from '@melon-ai/core';
+import { toolNameCodec } from '../shared/toolname.js';
 
 /**
  * 模型目录。

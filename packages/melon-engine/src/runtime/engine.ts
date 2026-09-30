@@ -23,7 +23,7 @@ export interface EngineDeps extends ApplyDeps, Omit<EffectDeps, 'createChild' | 
  * 运行时。
  *
  * 职责边界：
- * - **状态机是纯的**，在 `@melon-ai/task`
+ * - **状态机是纯的**，在 `engine/task`
  * - **事务边界在 `apply`**：一个外部事件 + 它纯粹派生的所有事件 = 一个事务
  * - **I/O 在 `runEffect`**
  * - 本类负责把三者串起来，并保证同一任务的推进是串行的

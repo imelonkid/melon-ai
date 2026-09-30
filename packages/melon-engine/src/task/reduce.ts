@@ -17,7 +17,7 @@ export interface ReduceOptions {
  * `Task.pendingCall` 的契约是「state=AWAITING_APPROVAL 时非空」，
  * 但初版 reducer 从不清除它 —— 任务跑完后它还挂着，宿主按它查找待审批任务
  * 会找到已完成的任务，然后对终态发 ApprovalResolved 而抛 IllegalTransitionError。
- * 这是集成 Jolly 时才暴露出来的。
+ * 这是接第一个宿主时才暴露出来的。
  *
  * `exactOptionalPropertyTypes` 下不能赋 undefined，必须省略这个键。
  */
@@ -183,7 +183,10 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
       if (!call) throw new IllegalTransitionError(task.state, 'ApprovalResolved 无 pendingCall');
       return {
         task: patch({}, 'EXECUTING'),
-        effects: [{ k: 'InvokeTool', taskId: task.id, call }],
+        // 「始终允许」先记授权再执行；初版两者走同一分支，always 等于 allow（§10 第 66 条）
+        effects: event.decision === 'always'
+          ? [{ k: 'Grant', taskId: task.id, call }, { k: 'InvokeTool', taskId: task.id, call }]
+          : [{ k: 'InvokeTool', taskId: task.id, call }],
       };
     }
 

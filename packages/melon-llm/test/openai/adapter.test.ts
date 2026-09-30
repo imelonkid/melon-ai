@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ModelTool } from '@melon-ai/core';
-import { toolNameCodec } from '@melon-ai/core';
+import { toolNameCodec } from '../../src/shared/toolname.js';
 import { OpenAICompatibleChatModel } from '../../src/openai/index.js';
 
 const TOOLS: ModelTool[] = [

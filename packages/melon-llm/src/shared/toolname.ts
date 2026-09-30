@@ -1,4 +1,4 @@
-import type { ModelTool } from './model.js';
+import type { ModelTool } from '@melon-ai/core';
 
 /**
  * 工具名的传输层编解码。

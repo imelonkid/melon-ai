@@ -23,7 +23,7 @@ export class ScriptedPlanner implements Planner {
   get remaining(): number { return this.script.length - this.i; }
 }
 
-/** P0 的最小上下文：只够让管线和规划器跑起来，@melon-ai/context 就位后替换。 */
+/** P0 的最小上下文：只够让管线和规划器跑起来，带压缩的实现等 memory。 */
 export function stubContext(tokens = 100): ContextBundle {
   return {
     messages: [], tools: [], slots: [], totalTokens: tokens, window: 200_000, watermark: 0.7,

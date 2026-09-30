@@ -111,7 +111,7 @@ export type RouteIntent =
 
 /**
  * 路由决策。返回**候选序列**而不是单个模型：
- * router 只负责「选」，真正的重试与熔断由 melon-tools 那套统一机制执行 ——
+ * router 只负责「选」，真正的重试与熔断由 skills 的工具管线统一执行 ——
  * 不要在系统里养两套重试逻辑。理由见 docs/architecture.md §4.6。
  */
 export interface RouteDecision {

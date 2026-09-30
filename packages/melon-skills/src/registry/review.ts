@@ -101,6 +101,8 @@ export function reviewTool(d: ToolDescriptor): ToolReview {
   if (String(d.description ?? '').length > DESCRIPTION_MAX) warn(`说明超过 ${DESCRIPTION_MAX} 字，已截断`);
   if (d.outputLimit !== undefined && !(d.outputLimit > 0)) err('outputLimit 必须是正数');
   if ((d.outputLimit ?? 0) > OUTPUT_LIMIT_MAX) warn(`outputLimit 超过 ${OUTPUT_LIMIT_MAX}，已按上限处理`);
+  // 做没做由规则判定：没有触发词，用户明说「发给他」时引擎认不出该用它，模型只回一段话也拦不住
+  if (d.risk !== 'read' && d.triggers === undefined) warn('有副作用却没写触发词（triggers）：用户明说要做时，引擎判定不了它有没有真的做');
 
   const input = d.input ?? {};
   const props = (input['properties'] ?? {}) as Record<string, Record<string, unknown>>;

@@ -27,22 +27,15 @@ export const MAIL_SEND = 'mail.send';
  * 常见邮箱服务的 SMTP 参数。和模型预设一样只是一组配置（地址、端口、加密方式），宿主的配置页据此自动填，
  * 用户只用填邮箱地址和授权码。名字给人看的部分由宿主决定。
  */
-export const SMTP_PRESETS: Readonly<Record<string, { readonly host: string; readonly port: number; readonly secure: boolean; readonly domains: readonly string[] }>> = {
-  '163': { host: 'smtp.163.com', port: 465, secure: true, domains: ['163.com'] },
-  '126': { host: 'smtp.126.com', port: 465, secure: true, domains: ['126.com'] },
-  qq: { host: 'smtp.qq.com', port: 465, secure: true, domains: ['qq.com', 'foxmail.com'] },
-  exmail: { host: 'smtp.exmail.qq.com', port: 465, secure: true, domains: [] },
-  aliyun: { host: 'smtp.aliyun.com', port: 465, secure: true, domains: ['aliyun.com'] },
-  gmail: { host: 'smtp.gmail.com', port: 465, secure: true, domains: ['gmail.com', 'googlemail.com'] },
-  outlook: { host: 'smtp-mail.outlook.com', port: 587, secure: false, domains: ['outlook.com', 'hotmail.com', 'live.com'] },
+export const SMTP_PRESETS: Readonly<Record<string, { readonly host: string; readonly port: number; readonly secure: boolean }>> = {
+  '163': { host: 'smtp.163.com', port: 465, secure: true },
+  '126': { host: 'smtp.126.com', port: 465, secure: true },
+  qq: { host: 'smtp.qq.com', port: 465, secure: true },
+  exmail: { host: 'smtp.exmail.qq.com', port: 465, secure: true },
+  aliyun: { host: 'smtp.aliyun.com', port: 465, secure: true },
+  gmail: { host: 'smtp.gmail.com', port: 465, secure: true },
+  outlook: { host: 'smtp-mail.outlook.com', port: 587, secure: false },
 };
-
-/** 按邮箱地址的域名猜是哪家。猜不出返回 null（企业邮箱通常要用户自己选或填）。 */
-export function smtpPresetFor(address: string): string | null {
-  const domain = String(address ?? '').split('@')[1]?.toLowerCase().trim();
-  if (!domain) return null;
-  return Object.entries(SMTP_PRESETS).find(([, p]) => p.domains.includes(domain))?.[0] ?? null;
-}
 
 /** 发邮件的触发词。用户的话里出现这些，模型就必须真的调用发邮件工具。 */
 export const MAIL_TRIGGERS: readonly string[] = [

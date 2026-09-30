@@ -1,7 +1,7 @@
 {
   "name": "@melon-ai/agent",
   "version": "0.0.1",
-  "description": "宿主入口：装这一个包就能跑。可选能力在 ./sqlite、./anthropic、./web 子路径。",
+  "description": "宿主入口：装这一个包就能跑。可选能力在 ./sqlite、./anthropic、./web 等子路径。",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -36,13 +36,18 @@
       "types": "./dist/agentskills.d.ts",
       "import": "./dist/agentskills.js",
       "require": "./dist/agentskills.cjs"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js",
+      "require": "./dist/node.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup --entry.index src/index.ts --entry.sqlite src/sqlite.ts --entry.anthropic src/anthropic.ts --entry.web src/web.ts --entry.mail src/mail.ts --entry.agentskills src/agentskills.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.index src/index.ts --entry.sqlite src/sqlite.ts --entry.anthropic src/anthropic.ts --entry.web src/web.ts --entry.mail src/mail.ts --entry.agentskills src/agentskills.ts --entry.node src/node.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

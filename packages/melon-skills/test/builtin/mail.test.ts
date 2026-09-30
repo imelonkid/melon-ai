@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import type { AddressInfo, Server } from 'node:net';
 import type { ToolContext } from '@melon-ai/core';
 import { ToolError } from '@melon-ai/core';
-import { MAIL_SEND, SMTP_PRESETS, mail, parseRecipients, sendMail, smtpPresetFor, testMail } from '../../src/builtin/mail/index.js';
+import { MAIL_SEND, SMTP_PRESETS, mail, parseRecipients, sendMail, testMail } from '../../src/builtin/mail/index.js';
 import { basicValidator } from '../../src/pipeline/validator.js';
 import type { SmtpConfig } from '../../src/builtin/mail/index.js';
 
@@ -199,10 +199,7 @@ test('testMail：能登录就 ok，不发信；授权码错带错误码与提示
   } finally { await s.close(); }
 });
 
-test('SMTP 预设：按域名认出常见邮箱；认不出返回 null', () => {
-  assert.equal(smtpPresetFor('me@163.com'), '163');
-  assert.equal(smtpPresetFor('Me@FoxMail.com'), 'qq');
-  assert.equal(smtpPresetFor('me@corp.example'), null);
+test('SMTP 预设：地址、端口、加密方式', () => {
   assert.deepEqual([SMTP_PRESETS['163']!.port, SMTP_PRESETS['163']!.secure], [465, true]);
   assert.deepEqual([SMTP_PRESETS['outlook']!.port, SMTP_PRESETS['outlook']!.secure], [587, false]);
 });

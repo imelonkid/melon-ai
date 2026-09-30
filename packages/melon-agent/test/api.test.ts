@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { GenerateResult, ModelEntry } from '@melon-ai/core';
 import { ScriptedModel } from '@melon-ai/testkit';
-import { consoleLogger, createAgent, defineTool, nodePlatform } from '../src/index.js';
+import { consoleLogger, createAgent, defineTool } from '../src/index.js';
+import { nodePlatform } from '../src/node.js';
 import type { MelonAgent, Task } from '../src/index.js';
 import { sqlite } from '../src/sqlite.js';
 
@@ -68,6 +69,56 @@ test('defineTool + 对外操作要确认；approve 不用传 callId', async () =
     assert.equal((await done).outcome?.answer, '发好了');
     assert.equal(sent, 1);
     await assert.rejects(() => agent.approve(task.id, 'allow'), /没有在等确认/);
+  } finally { await agent.stop(); }
+});
+
+test('始终允许：同一工具同一范围下次不再问；换了收件人照样问；撤销后又问；花钱的不能始终允许', async () => {
+  let sent = 0;
+  const mailSend = defineTool({
+    id: 'mail.send', description: '发邮件', risk: 'external', scope: ['to'], triggers: ['发给'],
+    input: { to: 'string', subject: 'string' },
+    run: ({ to }: { to: string }) => { sent++; return `已发送至 ${to}`; },
+  });
+  const buy = defineTool({ id: 'shop.buy', description: '下单', risk: 'spend', input: { item: 'string' }, run: () => '已下单' });
+  const { entry: e } = entry([
+    call('mail.send', { to: 'a@x.com', subject: '周报' }), '发好了',
+    call('mail.send', { to: 'a@x.com', subject: '月报' }), '又发好了',
+    call('mail.send', { to: 'b@x.com', subject: '周报' }), '发给 b 了',
+    call('shop.buy', { item: '纸' }), '买了',
+  ]);
+  const agent = await createAgent({ models: [e], tools: [mailSend, buy], platform: quiet });
+  try {
+    const ask1 = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const t1 = await agent.run('把周报发给 a@x.com');
+    assert.equal((await ask1).id, t1.id);
+    const done1 = until(agent, (t) => t.id === t1.id && t.state === 'SUCCEEDED');
+    await agent.approve(t1.id, 'always');
+    await done1;
+    assert.deepEqual((await agent.grants.list()).map((g) => [g.toolId, g.scope]), [['mail.send', 'to=a@x.com']]);
+
+    const done2 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === '又发好了');
+    await agent.run('把月报发给 a@x.com');
+    await done2;
+    assert.equal(sent, 2, '同一收件人：命中授权，不再问');
+
+    const ask3 = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const t3 = await agent.run('把周报发给 b@x.com');
+    await ask3;
+    assert.equal(sent, 2, '换了收件人：授权不覆盖，照样问');
+    await agent.approve(t3.id, 'deny');
+
+    await agent.grants.revoke('mail.send');
+    assert.deepEqual(await agent.grants.list(), []);
+
+    const ask4 = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const t4 = await agent.run('买纸');
+    const waiting = await ask4;
+    const req = (await agent.tasks.history(t4.id)).map((r) => r.value).find((ev) => ev.t === 'ApprovalRequested');
+    assert.equal(req?.t === 'ApprovalRequested' && req.request.canAlways, false, '花钱的操作不给「始终允许」');
+    const done4 = until(agent, (t) => t.id === waiting.id && t.state === 'SUCCEEDED');
+    await agent.approve(t4.id, 'always');
+    await done4;
+    assert.deepEqual(await agent.grants.list(), [], '点了也不记授权');
   } finally { await agent.stop(); }
 });
 

@@ -104,7 +104,15 @@ module.exports = {
       comment: '路由、规划器、各供应商适配器互不认识，只通过 core 的端口相遇',
       severity: 'error',
       from: { path: '^packages/melon-llm/src/(router|planner|openai|anthropic)/' },
-      to: { path: ONLY_CORE, pathNot: '^packages/melon-llm/src/$1/' },
+      // shared/ 是适配器共用的协议工具（工具名编解码），不是组件
+      to: { path: ONLY_CORE, pathNot: '^packages/melon-llm/src/($1|shared)/' },
+    },
+    {
+      name: 'llm/shared-is-leaf',
+      comment: 'shared 只放各组件共用的纯函数，不认识任何组件',
+      severity: 'error',
+      from: { path: '^packages/melon-llm/src/shared/' },
+      to: { path: ONLY_CORE, pathNot: '^packages/melon-llm/src/shared/' },
     },
 
     {

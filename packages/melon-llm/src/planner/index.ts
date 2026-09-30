@@ -1,4 +1,4 @@
-import type {
+import type { PromptRef,
   ContextBundle, Intent, IntentClassifier, Message, ModelRouter, ModelTool, ModelToolCall,
   PlanInput, PlanStep, Planner, ToolCall,
 } from '@melon-ai/core';
@@ -17,6 +17,8 @@ export interface ReActOptions {
   /** 意图分类。不传则不做短路 —— 每轮都会带上工具。 */
   readonly classifier?: IntentClassifier;
   readonly system?: string;
+  /** 自定义 `system` 的版本号，进事件日志。不传则自定义提示词不记版本。 */
+  readonly promptRef?: PromptRef;
   /** 生成 callId / argsHash。宿主注入以保持确定性。 */
   readonly ids?: { next(prefix?: string): string };
   readonly hash?: (s: string) => string;
@@ -46,7 +48,15 @@ export class ReActPlanner implements Planner {
 
   constructor(private readonly opts: ReActOptions) {}
 
+  /** 每一步都带上提示词版本与实际应答的模型，由运行时写进事件日志（§10 第 67 条）。 */
   async plan(input: PlanInput, signal: AbortSignal): Promise<PlanStep> {
+    let modelId: string | undefined;
+    const step = await this.decide(input, signal, (id) => { modelId = id; });
+    const promptRef = this.opts.system === undefined ? REACT_PROMPT : this.opts.promptRef;
+    return { ...step, via: { ...(promptRef ? { promptRef } : {}), ...(modelId ? { modelId } : {}) } };
+  }
+
+  private async decide(input: PlanInput, signal: AbortSignal, answeredBy: (modelId: string) => void): Promise<PlanStep> {
     const { task } = input;
     const intent = await this.classify(input, signal);
     // 闲聊 / 纯问答：不召回、不注入任何 tool schema
@@ -74,11 +84,15 @@ export class ReActPlanner implements Planner {
 
     const decision = await this.opts.router.select(intent === 'task' ? 'plan' : 'answer', signal);
     const messages = this.assemble(input.context, tools.length > 0);
-    const generate = (msgs: readonly Message[], required: boolean) => decision.primary.generate({
-      messages: msgs,
-      ...(tools.length > 0 ? { tools, toolChoice: required ? 'required' as const : 'auto' as const } : {}),
-      signal,
-    });
+    const generate = async (msgs: readonly Message[], required: boolean) => {
+      const res = await decision.primary.generate({
+        messages: msgs,
+        ...(tools.length > 0 ? { tools, toolChoice: required ? 'required' as const : 'auto' as const } : {}),
+        signal,
+      });
+      answeredBy(res.modelId);
+      return res;
+    };
 
     // ── 参数来源核对：「必须是用户给的」参数（收件人……），值得在用户说过的话里出现过 ──
     const userText = [task.goal, ...input.context.messages

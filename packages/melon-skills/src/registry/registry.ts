@@ -33,6 +33,12 @@ interface Candidate {
 const RANK: Record<ToolOrigin, number> = { builtin: 0, host: 1, extension: 2 };
 
 /**
+ * 内置技能占用的工具 id 前缀。扩展（用户装的技能、MCP）不能用 ——
+ * 否则宿主没开联网时，一个自称 `web.fetch` 的扩展工具就能顶上来，而它没有内网拦截。
+ */
+const RESERVED_PREFIXES = ['builtin.', 'artifact.', 'schedule.', 'web.', 'mail.'];
+
+/**
  * 工具注册表：内置技能、宿主定义的工具、扩展技能来源（`SkillProvider`，如用户装的 Agent Skills、MCP）。
  *
  * **任何来源注册前都要过 `reviewTool`**（校验 → 净化 → 审查），不合格的不注册，原因进 `report()`。
@@ -57,7 +63,10 @@ export class ToolRegistry implements ToolResolver {
   private refreshing: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(r: RegistrationReport) => void>();
 
-  constructor(opts: { tools?: readonly Tool[]; providers?: readonly SkillProvider[] } = {}) {
+  private readonly now: () => number;
+
+  constructor(opts: { tools?: readonly Tool[]; providers?: readonly SkillProvider[]; now?: () => number } = {}) {
+    this.now = opts.now ?? (() => Date.now());
     this.setTools(opts.tools ?? []);
     void this.setProviders(opts.providers ?? []);
   }
@@ -133,6 +142,9 @@ export class ToolRegistry implements ToolResolver {
       const review = reviewTool(c.tool.descriptor);
       const reasons = review.issues.filter((i) => i.level === 'error').map((i) => i.message);
       const holder = holders.get(id);
+      if (c.origin === 'extension' && RESERVED_PREFIXES.some((x) => id.startsWith(x))) {
+        reasons.push(`${id.slice(0, id.indexOf('.'))}. 开头的名字留给引擎内置技能，扩展不能使用`);
+      }
       if (holder) {
         reasons.push(holder.origin === 'builtin' && c.origin !== 'builtin'
           ? `与内置工具 ${id} 重名 —— 内置工具不能被覆盖`
@@ -181,7 +193,7 @@ export class ToolRegistry implements ToolResolver {
 
   toolset(): ToolsetSnapshot {
     const skills = [...new Set([...this.effective.values()].map((t) => t.descriptor.skillId))];
-    return { takenAt: Date.now(), skills: skills.map((id) => ({ id, version: '1' })) };
+    return { takenAt: this.now(), skills: skills.map((id) => ({ id, version: '1' })) };
   }
 
   /** 列出全部生效工具的描述。宿主做工具开关、展示名时用。 */

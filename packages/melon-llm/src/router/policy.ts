@@ -24,7 +24,7 @@ export class HeuristicTokenizer implements Tokenizer {
  * 按用途与策略选模型。
  *
  * **只负责「选」，不负责重试。** `select()` 返回候选序列（primary + fallbacks），
- * 真正的重试与熔断由 `@melon-ai/tools` 的管线统一执行 ——
+ * 真正的重试与熔断由 skills 的工具管线统一执行 ——
  * 不要在系统里养两套重试逻辑（见 architecture.md §4.6）。
  */
 export class PolicyRouter implements ModelRouter {

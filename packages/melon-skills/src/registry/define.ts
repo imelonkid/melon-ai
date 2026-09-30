@@ -46,6 +46,7 @@ export interface ToolSpec<A = Record<string, unknown>> {
   /**
    * 触发词：用户的话里出现其中之一，引擎就认定要用这个工具（规则判定，不问模型）。
    * 有副作用的工具一定要写 —— 召回到了，模型就必须调用它，只回一段话不算数。
+   * 没写会在注册报告里给警告；确实没有对应说法的（通用执行器）显式写 `[]`。
    */
   readonly triggers?: readonly string[];
   /** 结果摘要进上下文的上限（字符）。只有「结果就是给模型的指令」的工具需要调大。 */
@@ -67,9 +68,9 @@ export interface Tool {
  *
  * ```ts
  * const mailSend = defineTool({
- *   id: 'mail.send', description: '以用户名义发送邮件', risk: 'external',
- *   input: { to: 'string', subject: 'string', body: 'string?' }, scope: ['to'],
- *   run: async ({ to, subject }) => `已将「${subject}」发送至 ${to}`,
+ *   id: 'crm.note', description: '在客户记录里追加一条跟进', risk: 'write',
+ *   input: { customer: 'string', note: 'string' }, scope: ['customer'], triggers: ['记一笔', '写跟进'],
+ *   run: async ({ customer }) => `已记到 ${customer} 的跟进里`,
  * });
  * ```
  *
@@ -91,7 +92,7 @@ export function defineTool<A = Record<string, unknown>>(spec: ToolSpec<A>): Tool
     idempotent: spec.idempotent ?? risk === 'read',
     ...(spec.scope ? { scopeKeys: spec.scope } : {}),
     ...(spec.untrustedOutput ? { untrustedOutput: true } : {}),
-    ...(spec.triggers?.length ? { triggers: spec.triggers } : {}),
+    ...(spec.triggers !== undefined ? { triggers: spec.triggers } : {}),
     ...(spec.outputLimit ? { outputLimit: spec.outputLimit } : {}),
     ...(userSuppliedOf(spec.input) ? { userSupplied: userSuppliedOf(spec.input)! } : {}),
   };
@@ -144,15 +145,24 @@ export interface SkillSpec {
   readonly purpose: string;
   readonly keywords?: readonly string[];
   readonly tools: readonly Tool[];
-  /**
-   * 引擎自带的技能标 true。注册表据此定先后：内置的不能被宿主或用户装的技能覆盖。
-   * 宿主自己的代码可以用；用户装的技能由加载器创建，永远不是内置。
-   */
-  readonly builtin?: boolean;
 }
 
-/** 把一组工具打包成一个技能来源（`SkillProvider`），交给 `createAgent({ skills })`。 */
+/**
+ * 把一组工具打包成一个技能来源（`SkillProvider`），交给 `createAgent({ skills })`。
+ *
+ * 宿主定义的技能总是「扩展」—— 公开 API 不能自称内置（§10 第 65 条）：
+ * 内置工具（读网页的内网拦截、发邮件的收件人核对）不能被同名的宿主技能顶替。
+ */
 export function defineSkill(spec: SkillSpec): SkillProvider {
+  return bundleOf(spec, false);
+}
+
+/** 引擎内置技能专用。不从包入口导出 —— 只有 `builtin/*` 能用。 */
+export function defineBuiltinSkill(spec: SkillSpec): SkillProvider {
+  return bundleOf(spec, true);
+}
+
+function bundleOf(spec: SkillSpec, builtin: boolean): SkillProvider {
   const skillId = asSkillId(spec.id);
   const bundle = {
     skill: {
@@ -161,7 +171,7 @@ export function defineSkill(spec: SkillSpec): SkillProvider {
       purpose: spec.purpose,
       keywords: spec.keywords ?? [],
       tools: spec.tools.map((t) => t.descriptor),
-      source: spec.builtin ? { kind: 'builtin' as const } : { kind: 'extension' as const, providerId: spec.id, version: '1' },
+      source: builtin ? { kind: 'builtin' as const } : { kind: 'extension' as const, providerId: spec.id, version: '1' },
     },
     handlers: new Map(spec.tools.map((t) => [String(t.descriptor.id), t.handler])),
     when: new Map(spec.tools.flatMap((t) => (t.when ? [[String(t.descriptor.id), t.when] as const] : []))),

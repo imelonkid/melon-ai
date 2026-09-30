@@ -27,7 +27,7 @@ import type { AgentSkill, RejectedSkill, ScanLimits } from './scan.js';
  */
 
 export interface AgentSkillsOptions {
-  /** 技能目录，按优先级排（同名时前面的赢）。如 `['~/.jolly/skills', '~/.agents/skills']`。 */
+  /** 技能目录，按优先级排（同名时前面的赢）。如 `['~/.myapp/skills', '~/.agents/skills']`。 */
   readonly dirs: readonly string[];
   /** 脚本的工作目录根；每个任务一个子目录。默认系统临时目录下的 melon-skills。 */
   readonly workDir?: string;
@@ -235,6 +235,8 @@ export class AgentSkillsProvider implements SkillProvider {
       // 跑的是用户装的代码：对外操作，每次确认；「始终允许」只放行同一个技能的同一个脚本
       risk: 'external',
       scope: ['name', 'script'],
+      // 通用执行器：没有固定的说法（「跑一下」对应哪个技能由模型判断），执行前每次都要确认
+      triggers: [],
       untrustedOutput: true,
       outputLimit: 8_000,
       run: async ({ name, script, args = [] }, cx) => {

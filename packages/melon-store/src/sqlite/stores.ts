@@ -237,7 +237,7 @@ export class SqliteGrantStore implements GrantStore {
     }
   }
 
-  /** 供设置页展示「我都始终允许过什么」—— scope 可读是这个功能的前提。 */
+  /** 供宿主的授权清单展示「我都始终允许过什么」—— scope 可读是这个功能的前提。 */
   async listByAgent(agentId: AgentId): Promise<readonly Grant[]> {
     const rows = this.cx.db.prepare('SELECT scope, tool_id, granted_at, expires_at FROM grants WHERE agent_id=?')
       .all(agentId) as { scope: string; tool_id: string; granted_at: number; expires_at: number | null }[];

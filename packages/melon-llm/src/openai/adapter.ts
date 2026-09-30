@@ -1,7 +1,8 @@
 import type {
   ChatModel, GenerateRequest, GenerateResult, ModelCapabilities, ModelToolCall, Usage,
 } from '@melon-ai/core';
-import { ToolError, toolNameCodec } from '@melon-ai/core';
+import { ToolError } from '@melon-ai/core';
+import { toolNameCodec } from '../shared/toolname.js';
 
 /**
  * 预置的 OpenAI 兼容服务。
@@ -62,7 +63,8 @@ export class OpenAICompatibleChatModel implements ChatModel {
     const preset = opts.preset ? OPENAI_COMPATIBLE_PRESETS[opts.preset] : undefined;
     this.id = opts.model;
     this.baseURL = (opts.baseURL ?? preset?.baseURL ?? '').replace(/\/$/, '');
-    this.apiKey = opts.apiKey ?? (preset ? process.env[preset.env] ?? '' : '');
+    // 非 Node 运行时没有 process：只用显式传入的 key
+    this.apiKey = opts.apiKey ?? (preset ? globalThis.process?.env?.[preset.env] ?? '' : '');
     this.doFetch = opts.fetchImpl ?? fetch;
     if (!this.baseURL) throw new Error('OpenAICompatibleChatModel 需要 baseURL 或 preset');
     this.capabilities = {
@@ -77,7 +79,7 @@ export class OpenAICompatibleChatModel implements ChatModel {
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
     if (!this.apiKey) {
-      throw new ToolError('FATAL', `${this.id} 缺少 API key`, { hint: '在设置里填入，或设对应环境变量' });
+      throw new ToolError('FATAL', `${this.id} 缺少 API key`, { hint: '由宿主传入 apiKey，或设置对应的环境变量' });
     }
     // 供应商不接受工具名里的点号，转码后发送、收到调用时再映射回来
     const codec = toolNameCodec(req.tools ?? []);

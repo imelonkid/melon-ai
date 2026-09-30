@@ -27,4 +27,5 @@ test('描述：工作日、每周几（周日排最后）、间隔、一次性�
   assert.equal(describeRule({ kind: 'weekly', days: [0, 5], time: { hour: 16, minute: 0 }, tz: 'UTC' }), '每周五、周日 16:00');
   assert.equal(describeRule({ kind: 'interval', everyMs: 2 * 3600_000 }), '每 2 小时');
   assert.equal(describeRule({ kind: 'once', at: Date.parse('2026-10-02T09:00:00+08:00') }, 'Asia/Shanghai'), '仅一次 · 10月2日 09:00');
+  assert.equal(describeRule({ kind: 'once', at: Date.parse('2026-10-02T09:00:00+08:00') }, 'Asia/Shanghai', { bare: true }), '10月2日 09:00');
 });

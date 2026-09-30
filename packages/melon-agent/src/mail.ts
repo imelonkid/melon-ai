@@ -11,6 +11,6 @@
  * 每封邮件发出前都会问用户；收件人必须是邮箱地址；没配邮箱时模型拿不到这个工具。
  */
 export {
-  mail, testMail, MailSkillProvider, MAIL_SEND, MAIL_TRIGGERS, SMTP_PRESETS, smtpPresetFor, EMAIL, parseRecipients, sendMail, verifySmtp, buildMessage,
+  mail, testMail, MailSkillProvider, MAIL_SEND, MAIL_TRIGGERS, SMTP_PRESETS, EMAIL, parseRecipients, sendMail, verifySmtp, buildMessage,
 } from '@melon-ai/skills/mail';
 export type { SmtpConfig, MailMessage, MailSkillOptions, MailTestResult } from '@melon-ai/skills/mail';

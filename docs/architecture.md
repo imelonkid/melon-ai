@@ -441,12 +441,14 @@ plugins 不被任何引擎包依赖（含 agent）—— 它实现 core 的协�
 | | `planner/` | ReAct 规划器 + 意图短路，原生 tool use | core | ✅ |
 | | `openai/` | OpenAI 兼容适配器 + 各家工厂（`deepseek` / `qwen` / `openai` / `kimi` / 通用 `compatible`），只用 fetch | core | ✅ |
 | | `anthropic/` | Claude 适配器，`@melon-ai/llm/anthropic` 子路径，可选 peer `@anthropic-ai/sdk` | core | ✅ |
+| | `shared/` | 适配器共用的协议工具（工具名编解码：供应商不接受点号）。不是组件，只认 core | core | ✅ |
 | | （待建） | 提示词注册与渲染（§4.7） | core | P1 |
-| **@melon-ai/store** | `sqlite/` | 全套存储端口的 SQLite 实现，`@melon-ai/store/sqlite` 子路径，可选 peer `better-sqlite3` | core | ✅ |
+| **@melon-ai/store** | `memory/` | 全套存储端口的内存实现（`memoryStorage()`，`createAgent` 的默认存储），根入口 | core | ✅ |
+| | `sqlite/` | 全套存储端口的 SQLite 实现，`@melon-ai/store/sqlite` 子路径，可选 peer `better-sqlite3` | core | ✅ |
 | **@melon-ai/memory** | | 三层记忆 + 上下文装配与压缩（两者紧耦合，放一起） | core | P1 待建 |
 | **@melon-ai/audit** | | 审计：哈希链、维度脱敏、保留期、跨任务查询（§4.5）。横切关注点，独立成包 | core | ✅ |
-| **@melon-ai/agent** | | 组装：`createAgent(deps)`，宿主的入口 | 全部 | ✅ |
-| **@melon-ai/testkit** | | 内存替身、假模型、驱动器 | core | ✅ |
+| **@melon-ai/agent** | | 组装：`createAgent(deps)`，宿主的入口。根入口只用 Web 标准 API（任何运行时可 import）；Node 专属的在子路径（`/node` `/sqlite` `/web` `/mail` `/agentskills`） | 全部 | ✅ |
+| **@melon-ai/testkit** | | 内存替身、假模型、驱动器 | core, store | ✅ |
 | **@melon-ai/plugins** | `bocha/` | 扩展插件：厂商对 core 协议的实现，每家一个子路径。博查实现 `SearchProvider`（`@melon-ai/plugins/bocha`） | core | ✅ |
 
 **2026-09 由 14 个包合并为 8 个**（另有 memory 待建）；随后为厂商实现加了 `plugins`（第 9 个，见 §4.2 末尾）。旧包名与新位置对照 ——
@@ -496,7 +498,8 @@ audit 被管线与组装层通过 core 的端口使用，放进任何一个业�
 ```js
 // 包之间
 core-is-pure            core 不依赖任何人
-skills / llm / store / audit / plugins / testkit -only-core
+skills / llm / store / audit / plugins -only-core
+testkit-core-and-store  测试替身复用 store 的内存实现
 nothing-depends-on-plugins  插件由宿主按需引入，引擎各包（含 agent）不依赖也不转导出
 engine-core-and-skills  引擎只认契约与技能
 // 包内目录之间
@@ -506,7 +509,8 @@ skills/policy-pure      准入判定是纯函数，只认 core
 skills/builtin-independent  内置技能互不认识：只认 core、自己的目录和注册表
 skills/agentskills-is-loader  用户技能加载器只认 core、自己的目录和注册表
 skills/root-runtime-agnostic  技能包根入口不引入 Node 专属的 web / mail / agentskills（它们走子路径）
-llm/components-independent  路由、规划器、各适配器互不认识
+llm/components-independent  路由、规划器、各适配器互不认识（共用的协议工具放 shared/）
+llm/shared-is-leaf      shared 只认 core，不认识任何组件
 plugins/independent     插件之间互不认识
 no-circular
 ```
@@ -752,16 +756,17 @@ import { mail } from '@melon-ai/agent/mail';             // 可选：发邮件�
 import { agentSkills } from '@melon-ai/agent/agentskills'; // 可选：用户装的 Agent Skills（Node）
 import { bocha } from '@melon-ai/plugins/bocha';          // 扩展包：搜索服务的厂商实现，按需装
 
-const mailSend = defineTool({
-  id: 'mail.send', description: '以用户名义发送邮件', risk: 'external',
-  input: { to: 'string', subject: 'string', body: 'string?' }, scope: ['to'],
-  run: async ({ to, subject }) => `已将「${subject}」发送至 ${to}`,
+// 宿主自己的工具。有副作用就写 triggers：用户明说要做时，引擎据此判定它有没有真的做
+const crmNote = defineTool({
+  id: 'crm.note', description: '在客户记录里追加一条跟进', risk: 'write',
+  input: { customer: 'string', note: 'string' }, scope: ['customer'], triggers: ['记一笔', '写跟进'],
+  run: async ({ customer }) => `已记到 ${customer} 的跟进里`,
 });
 
 const agent = await createAgent({
   models: [deepseek({ apiKey }), claude({ apiKey: k2 })],  // 多个时按 strategy 路由
   storage: sqlite({ file: 'app.db' }),                      // 不传 = 内存
-  tools: [mailSend],
+  tools: [crmNote],                                         // 不能与内置工具重名（web.* / mail.* 等）
   skills: [
     web({ search: bocha({ apiKey: k3 }) }),                 // 搜索结果不可信：读过之后对外操作一律要确认
     mail({ smtp: { host: 'smtp.163.com', port: 465, secure: true, user, pass } }),
@@ -783,16 +788,18 @@ await agent.configure({ models: [...], tools: [...] });    // 热替换，不重
 |---|---|
 | 让 Agent 做一件事 | `run(goal, { ref, kind, agentId, budget })` —— `ref` 原样记在 `task.trigger.ref`，宿主用它关联自己的对象（如对话） |
 | 看进展 | `on('task', cb)` / `on('schedule', cb)`；单个任务的事件流 `watch(id)`；`tasks.list / get / history` |
-| 回应确认 | `approve(taskId, 'allow' \| 'always' \| 'deny')` |
-| 定义工具 | `defineTool({ id, description, risk, input, scope, when, untrustedOutput, run })`，`input` 可用简写 |
+| 回应确认 | `approve(taskId, 'allow' \| 'always' \| 'deny')`；`always` 记下授权（同一工具、同一范围不再问；花钱、不可撤销的不能，看 `request.canAlways`） |
+| 授权清单 | `grants.list()` / `grants.revoke(toolId, scope?)` —— 给用户看「始终允许过什么」并能撤销 |
+| 定义工具 | `defineTool({ id, description, risk, input, scope, triggers, when, untrustedOutput, run })`，`input` 可用简写 |
 | 定时 | `schedules.create({ goal, when })` / `pause` / `resume` / `remove` / `describe` |
 | 换模型 / 工具 / 权限 | `configure({ models, strategy, tools, skills, policy })` |
 | 验证模型可用 | `models.test(entry)`；搜索 `testSearch(provider)`；邮箱 `testMail(smtp)` |
 | 看哪些工具 / 技能没注册上、为什么 | `tools.report()` / `tools.onReport(cb)`；用户技能另有 `agentSkills(...).report()` |
 | 让「没有合适工具」识别更多说法 | `actionWords: [...]`（在默认动作词表上追加） |
 
-进阶：`context`（上下文装配，默认「目标 + 最近步骤」，可用 `basicContext(..., { prelude })` 在前面加东西）、
-`planner`、`validator`、`platform`（默认 Node）都能替换；底层 `submit` / `resolveApproval` 仍然可用。
+进阶：`context`（上下文装配，默认「目标 + 当前时间 + 最近步骤」，可用 `basicContext(..., { prelude })` 在前面加东西）、
+`planner`、`validator`、`platform`（默认只用 Web 标准 API，任何运行时都能跑；Node 可换 `@melon-ai/agent/node` 的 `nodePlatform()`）
+都能替换；底层 `submit` / `resolveApproval` 仍然可用。
 
 三个要点：
 
@@ -899,10 +906,10 @@ await agent.configure({ models: [...], tools: [...] });    // 热替换，不重
 - [x] 依赖方向检查**真正生效**：专用 `tsconfig.depcruise.json` 把 `@melon-ai/*`
       映射到各包 src。此前跨包导入全被 `dist` 的 exclude 吃掉，
       规则空转（见下方第 46 条）。修后依赖数 153 → 223，零违规
-- [ ] `@melon-ai/skills-builtin`（等 memory / context）
-- [ ] `@melon-ai/context` / `@melon-ai/memory`（宿主目前用最小实现顶着）
+- [ ] 记忆 / 历史类内置工具（skills 的 `builtin/`，等 memory）
+- [ ] memory：三层记忆 + 上下文预算与压缩（宿主目前用 `basicContext` 顶着）
 
-**测试总数 309，全绿；`lint:deps` 366 条依赖零违规。**
+**测试总数 315，全绿；`lint:deps` 372 条依赖零违规。**
 
 ### 10.1 宿主（Jolly）集成进度
 
@@ -918,7 +925,7 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
 | 崩溃恢复 | ✅ `recover()` | ✅ 重启后继续 |
 | 多模型源 + 热生效 | ✅ `ModelRouter` | ✅ AI 源页 |
 | 定时任务 | ✅ | ✅ 与立即任务同一入口、同一列表 |
-| 始终允许（`always`） | ✅ | ❌ 界面只有批准/驳回 |
+| 始终允许（`always`） | ✅ 第 66 条前是假的：`always` 等于 `allow`，从不写授权 | 见下 |
 | 授权清单 / 撤销 | ✅ `GrantStore.listByAgent` | ❌ 无入口 |
 | 审计查询 / 链校验 | ✅ | ❌ 无入口 |
 | 执行权限策略分档 | ✅ `PolicyMode` | ❌ 设置页是假的，内核写死 `low-risk-auto` |
@@ -1123,6 +1130,43 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
 63. **中文标点被改成半角。** 净化用 NFKC 把「：，（」折成了半角，模型读到半角说明，回答也跟着用半角。
     改为说明文字保留 NFC，审查另用 NFKC 形式去查（形似字符的注入照样拦）。
 64. **一个时序不稳的测试。** integration 测试断言「tick 恰好数到 1」，调度器自己设的闹钟偶尔先到。改为只验「宿主收到了通知」。
+
+#### 规范审查（2026-09-30）暴露的问题
+
+按 CLAUDE.md 对引擎与 Jolly 做了一次通读审查。引擎这边的修正：
+
+65. **「内置工具不能被覆盖」可以被绕过。** 是不是内置，由技能来源自己声明（公开的 `defineSkill({ builtin: true })`）——
+    宿主或第三方来源自称内置、排在 `web()` 前面，就能顶替带内网拦截的 `web.fetch`。
+    修法：公开 API 不再能自称内置（引擎内部用 `defineBuiltinSkill`，不从包入口导出）；
+    扩展来源不能占用内置技能的名字空间（`builtin.` `web.` `mail.` 等），宿主没开联网时也顶不上来。
+    没做成「引擎私有标记」：tsup 给每个子路径各打一份代码，模块级的 WeakSet 跨不过去。
+66. **「始终允许」是假的。** `ApprovalResolved(always)` 与 `allow` 走同一分支，全部 src 里没有一处写授权 ——
+    §7 的 API、§10.1 的 ✅ 都是没验证就写上去的。修法：reducer 在 `always` 时先发 `Grant` effect 再执行，
+    管线按准入时同一个 `computeScope` 写授权并记审计（`policy.change`，actor 是用户）；
+    `agent.grants.list / revoke` 给宿主做授权清单。花钱、不可撤销的不能始终允许（`GRANTABLE_RISKS`，
+    `ApprovalRequest.canAlways` 告诉宿主显不显示按钮），授权匹配也只对这两类生效 —— 删用户记忆每次都得问。
+    污点仍在授权之前，授权放不过读过网页的任务。
+67. **提示词版本号从没进事件日志。** `prompt.ts` 写着「版本号会进 `PlanProduced.promptRef`」，§10 也标了已完成，
+    实际 `PlanProduced` 里既没有 `promptRef` 也没有 `modelId`。修法：`PlanStep.via` 带出提示词版本与实际应答的模型，
+    运行时写进事件。守卫直接拒绝的步骤没问模型，就没有 `modelId`。
+68. **「按工具集快照解析」「按 Agent 开关技能」是端口契约，没有实现。** 注册表的 `resolve` 忽略快照，
+    `isEnabledFor` 不看 Agent。现在只有一个 Agent、工具集在任务内很少变，所以没出问题；端口注释已改成
+    「契约 + 现状」，接 MCP 或多 Agent 时必须补。
+69. **根入口硬依赖 Node。** `@melon-ai/agent` 根入口引用 `node:crypto`、默认 `nodePlatform()`，与同文件注释
+    「刻意不做默认值」正相反。修法：默认平台只用 Web 标准 API（`crypto.randomUUID`，SHA-256 自己算 —— 端口要求同步，
+    WebCrypto 是异步的），Node 原生哈希挪到 `@melon-ai/agent/node`；llm 读环境变量改成 `globalThis.process?.env`。
+    测试守着：根入口的文件不许出现 `node:` 与 `process.`。
+70. **通用的 Agent 行为写在了宿主的提示词里。** Jolly 的开场说明里有「没有合适的工具就直说、别拿别的工具凑数」
+    「回答里不要出现工具名和内部句柄」「现在是几点」—— 换个宿主同样需要。前两条进 `REACT_SYSTEM`（版本 2），
+    当前时间由 `basicContext` 默认带上（放在目标之后，不破坏历史部分的前缀缓存）。
+71. **运行时文案假设了宿主的界面。** 纠正语写「系统会弹出确认卡」（CLI 没有卡）、SMTP 报错点名 163 / QQ、
+    缺 key 提示「在设置里填入」—— 都改成不依赖界面、不点名厂商的说法。按域名猜邮箱厂商（`smtpPresetFor`）是配置页的事，删掉。
+72. **有副作用的工具不写触发词，没有任何提醒。** 规约要求写，§7 的示例自己就没写（而且和内置 `mail.send` 重名，照抄会被拒）。
+    审查对「有副作用、没写 triggers」给警告；确实没有固定说法的通用执行器（`skill.run`）显式写 `[]`。
+    示例改成宿主自己的 `crm.note`。
+73. **给模型的提示里让它去调不存在的工具**（`builtin.skill_find`）。改成「只能用本轮提供的工具」。
+    同批清理：注释里的 Jolly 路径与页面名、合包前的旧包名、互相矛盾的注释、绕过注入时钟的 `Date.now()`、
+    工具名编解码这段运行时逻辑从 core 挪到 `llm/shared/`（core 只放类型与端口）。
 
 #### 包结构合并（14 → 8）
 

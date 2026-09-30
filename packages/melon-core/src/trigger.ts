@@ -3,7 +3,7 @@ import type { Health } from './skill.js';
 /**
  * ─── 触发源 ───
  * Agent 的三种触发方式（手动 / 定时 / 事件）里，事件触发需要一个外部事件源抽象。
- * cron 由 melon-trigger 内置实现；外部事件源（邮件到达、消息关键词命中）做成适配器。
+ * 定时由 engine 的 `trigger/` 内置实现；外部事件源（邮件到达、消息关键词命中）做成适配器。
  */
 export interface TriggerEvent {
   readonly sourceId: string;

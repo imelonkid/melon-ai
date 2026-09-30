@@ -10,7 +10,8 @@ import type { ExecuteConfig } from './execute.js';
 import { idempotencyKey, repeatKey } from './argshash.js';
 import { emptyMetrics, normalizeErr, normalizeOk } from './normalize.js';
 import { toToolError } from './errors.js';
-import { ToolError } from '@melon-ai/core';
+import { GRANTABLE_RISKS, ToolError } from '@melon-ai/core';
+import type { Grant } from '@melon-ai/core';
 
 export interface PipelineDeps {
   readonly resolver: ToolResolver;
@@ -82,7 +83,7 @@ export class ToolPipeline {
           code: 'INVALID_ARGS',
           message: `工具 ${call.toolId} 不存在或未在本任务的工具集快照中`,
           retriable: false,
-          hint: '用 builtin.skill_find 重新查找可用工具',
+          hint: '只能用本轮提供的工具，换一个或直接回答',
         }, t0);
       }
       const { descriptor } = resolved;
@@ -134,6 +135,7 @@ export class ToolPipeline {
             toolId: call.toolId,
             risk: descriptor.risk,
             summary: admission.reason,
+            canAlways: GRANTABLE_RISKS.includes(descriptor.risk),
           },
         };
       }
@@ -270,6 +272,38 @@ export class ToolPipeline {
   }
 
   /** §2.4：审计只存引用与维度，不存 payload。 */
+  /**
+   * 用户点了「始终允许」：记下这个工具、这个范围的授权。
+   *
+   * 范围与准入时算的是同一个（`computeScope`），所以下次同样的调用在第 ④ 道闸命中。
+   * 污点覆盖仍在授权之前（第 ③ 道闸），授权放不过读过网页的任务。
+   * 幂等：崩溃恢复重发时再写一次同样的记录。
+   */
+  async grant(task: Task, call: ToolCall): Promise<Grant | null> {
+    const resolved = await this.deps.resolver.resolve(call.toolId, task.toolset);
+    if (!resolved || !GRANTABLE_RISKS.includes(resolved.descriptor.risk)) return null;
+    const g: Grant = {
+      agentId: task.agentId,
+      toolId: call.toolId,
+      scope: computeScope(resolved.descriptor, call.args),
+      grantedAt: this.deps.clock.now(),
+    };
+    await this.deps.grants.put(g);
+    await this.deps.audit.record({
+      at: g.grantedAt,
+      actor: { kind: 'user', id: 'user' },
+      action: 'policy.change',
+      resource: { kind: 'grant', ref: `${g.toolId} ${g.scope}` },
+      outcome: 'allow',
+      traceId: task.trace.traceId,
+      spanId: task.trace.spanId,
+      taskId: task.id,
+      dimensions: { toolId: g.toolId, scope: g.scope, change: 'grant' },
+      basis: { decision: 'always', callId: call.callId },
+    });
+    return g;
+  }
+
   private async recordAudit(
     task: Task,
     call: ToolCall,

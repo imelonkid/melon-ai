@@ -1,7 +1,7 @@
 import type { AgentId, ToolId } from './ids.js';
 import type { RiskClass } from './tool.js';
 
-/** 对应设置页「Agent 执行权限」三档。 */
+/** 执行权限三档。宿主通常在自己的权限设置里让用户选。 */
 export type PolicyMode = 'ask' | 'low-risk-auto' | 'all-auto';
 
 export type AdmissionDecision = 'allow' | 'ask' | 'deny';
@@ -13,6 +13,12 @@ export type AdmissionDecision = 'allow' | 'ask' | 'deny';
  * 用户点「全部自动」时想的是「别拿读邮件这种事烦我」，不是「可以替我花钱」。
  * 这条写死在矩阵里，不留给运行时判断。
  */
+/**
+ * 能「始终允许」的风险类。花钱、不可撤销的不能 —— 矩阵在三档下都要求它们每次确认，
+ * 一次「始终允许」不该把这条推翻（删掉用户记忆也属于不可撤销）。
+ */
+export const GRANTABLE_RISKS: readonly RiskClass[] = ['write', 'external'];
+
 export const ADMISSION_MATRIX: Readonly<Record<PolicyMode, Readonly<Record<RiskClass, AdmissionDecision>>>> = {
   'ask': {
     read: 'ask', write: 'ask', external: 'ask', spend: 'ask', irreversible: 'ask',
@@ -32,7 +38,7 @@ export const ADMISSION_MATRIX: Readonly<Record<PolicyMode, Readonly<Record<RiskC
  * 「始终允许周报助手给产品组发邮件」不应该等于「允许它给任何人发邮件」。
  *
  * `scope` 不用哈希，用**可读的规范化字符串**（如 `to=产品组`）。三个理由：
- * 1. 用户要能在设置页复核「我都始终允许过什么」—— 一串哈希对此毫无用处；
+ * 1. 用户要能在宿主的授权清单里复核「我都始终允许过什么」—— 一串哈希对此毫无用处；
  * 2. 审计记录里 `scope` 直接可读，不必解引用；
  * 3. 哈希碰撞会授予意料之外的权限，而这里根本不需要承担这个风险。
  *

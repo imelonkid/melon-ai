@@ -103,15 +103,14 @@ test('用户拒绝审批 → OBSERVING，模型可以改道', () => {
   assert.equal(r.task.state, 'OBSERVING');
 });
 
-test('审批通过 → EXECUTING 并真的去调工具', () => {
+test('审批通过 → EXECUTING 并真的去调工具；「始终允许」先记授权再执行', () => {
   const call = toolCall();
-  for (const decision of ['allow', 'always'] as const) {
-    const r = R(fresh({ state: 'AWAITING_APPROVAL', pendingCall: call }), {
-      t: 'ApprovalResolved', callId: call.callId, decision,
-    });
-    assert.equal(r.task.state, 'EXECUTING');
-    assert.deepEqual(r.effects, [{ k: 'InvokeTool', taskId: TASK_ID, call }]);
-  }
+  const allow = R(fresh({ state: 'AWAITING_APPROVAL', pendingCall: call }), { t: 'ApprovalResolved', callId: call.callId, decision: 'allow' });
+  assert.equal(allow.task.state, 'EXECUTING');
+  assert.deepEqual(allow.effects, [{ k: 'InvokeTool', taskId: TASK_ID, call }]);
+  const always = R(fresh({ state: 'AWAITING_APPROVAL', pendingCall: call }), { t: 'ApprovalResolved', callId: call.callId, decision: 'always' });
+  assert.equal(always.task.state, 'EXECUTING');
+  assert.deepEqual(always.effects, [{ k: 'Grant', taskId: TASK_ID, call }, { k: 'InvokeTool', taskId: TASK_ID, call }]);
 });
 
 // ───────────────────────────── 守卫 ─────────────────────────────

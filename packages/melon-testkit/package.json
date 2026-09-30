@@ -27,8 +27,5 @@
   "publishConfig": {
     "access": "public"
   },
-  "license": "MIT",
-  "devDependencies": {
-    "@melon-ai/core": "workspace:*"
-  }
+  "license": "MIT"
 }

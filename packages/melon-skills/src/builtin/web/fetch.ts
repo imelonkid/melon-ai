@@ -3,7 +3,7 @@ import { ToolError } from '@melon-ai/core';
 
 /**
  * 主机名 → 全部 IP。可注入：测试用假解析，非 Node 宿主用自己的实现。
- * 默认走 Node 的 `dns.lookup` —— 本包因此只适用于 Node 宿主（与 store-sqlite 一样）。
+ * 默认走 Node 的 `dns.lookup` —— 本包因此只适用于 Node 宿主（所以走 `/web` 子路径）。
  */
 export type Lookup = (host: string) => Promise<readonly string[]>;
 

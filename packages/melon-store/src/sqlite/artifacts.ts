@@ -20,7 +20,7 @@ export class SqliteArtifactStore implements ArtifactStore {
 
   async put(taskId: TaskId, data: Uint8Array | string, meta: { mime: string; summary: string }): Promise<ArtifactRef> {
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-    const ref = asArtifactRef(`art-${Date.now()}-${++this.n}`);
+    const ref = asArtifactRef(`art-${this.now()}-${++this.n}`);
     const path = join(this.cx.artifactDir, ref);
     writeFileSync(path, bytes);
     this.cx.db.prepare(

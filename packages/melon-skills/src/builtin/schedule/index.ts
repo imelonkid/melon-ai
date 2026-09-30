@@ -1,5 +1,5 @@
 import type { SkillProvider, Task } from '@melon-ai/core';
-import { defineSkill, defineTool } from '../../registry/define.js';
+import { defineBuiltinSkill, defineTool } from '../../registry/define.js';
 
 /**
  * 「什么时候跑」。与引擎 trigger 的 `When` 同形（这里不能依赖 engine，只描述形状）；
@@ -88,11 +88,10 @@ export function schedule(opts: ScheduleSkillOptions): SkillProvider {
       return '任务草稿已展示给用户，等用户确认创建。用一句话告诉用户草稿拟好了即可，不要重复提议。';
     },
   });
-  return defineSkill({
+  return defineBuiltinSkill({
     id: 'schedule',
     name: '定时任务',
     purpose: '用户想让你稍后、定期或作为独立任务去做某件事时使用',
     tools: [propose],
-    builtin: true,
   });
 }

@@ -130,7 +130,7 @@ function smtpError(r: Reply, what: string): ToolError {
   const text = `${what}失败：${r.code} ${r.lines.join(' ')}`.trim();
   if (r.code === 535 || r.code === 534 || r.code === 530) {
     return new ToolError('DENIED', `邮件服务器拒绝登录（${r.code}）`, {
-      retriable: false, hint: '检查邮箱地址和授权码。163 / QQ 邮箱要在网页版设置里开启 SMTP，并使用授权码而不是登录密码',
+      retriable: false, hint: '检查邮箱地址和密码。不少邮箱要先在网页端开启 SMTP，并使用专用的授权码而不是登录密码',
     });
   }
   if (what.startsWith('收件人') && r.code >= 500) {

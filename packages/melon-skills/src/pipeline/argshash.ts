@@ -15,7 +15,7 @@ export function canonicalJson(v: unknown): string {
 /**
  * 全量参数哈希。
  *
- * **只用于循环检测与幂等，不用于授权** —— 授权用 `melon-policy` 的可读 `scope`。
+ * **只用于循环检测与幂等，不用于授权** —— 授权用 `policy/scope` 的可读 `scope`。
  * 两者混用会导致「改了个无关参数就得重新授权」或「授权范围被意外放宽」。
  */
 export const argsHash = (h: Hasher, args: unknown): string =>

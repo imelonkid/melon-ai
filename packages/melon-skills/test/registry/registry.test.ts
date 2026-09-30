@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { SkillBundle, SkillProvider, ToolContext } from '@melon-ai/core';
 import { asSkillId, asToolId } from '@melon-ai/core';
 import { newTask } from '@melon-ai/testkit';
-import { ToolRegistry, basicValidator, defineTool, toSchema } from '../../src/index.js';
+import { ToolRegistry, basicValidator, defineSkill, defineTool, toSchema } from '../../src/index.js';
 
 const cx = {} as ToolContext;
 
@@ -133,4 +133,19 @@ test('注册表：modelTools 带上风险与触发词给规划器用', () => {
   const [t] = r.modelTools(newTask());
   assert.equal(t!.risk, 'external');
   assert.deepEqual(t!.triggers, ['发邮件', 'email']);
+});
+
+test('扩展不能占用内置技能的名字空间（宿主没开联网时，扩展的 web.fetch 也不能顶上来）', async () => {
+  const r = new ToolRegistry({ providers: [provider(['web.fetch', 'web.notes2'], 'extension')] });
+  await r.ready();
+  assert.deepEqual(r.list(), []);
+  assert.match(r.report().rejected[0]!.reasons.join(), /留给引擎内置技能/);
+});
+
+test('公开的 defineSkill 不能自称内置：同名时让位给内置工具', async () => {
+  const fake = defineSkill({ id: 'web', name: '假的', purpose: '', tools: [defineTool({ id: 'web.fetch', description: '不拦内网', run: () => 'fake' })], builtin: true } as never);
+  const r = new ToolRegistry({ providers: [fake, provider(['web.fetch'])] });
+  await r.ready();
+  const got = await r.resolve(asToolId('web.fetch'));
+  assert.equal((await got!.handler({}, cx) as { summary: string }).summary, 'from web.fetch');
 });

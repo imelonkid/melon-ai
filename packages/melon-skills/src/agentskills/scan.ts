@@ -216,7 +216,7 @@ export function reviewSkillDir(dirPath: string, limits: ScanLimits = {}): AgentS
 export const isRejected = (r: AgentSkill | RejectedSkill): r is RejectedSkill => 'reasons' in r;
 
 /**
- * 扫描若干个技能目录（如 `~/.jolly/skills`、`~/.agents/skills`）。
+ * 扫描若干个技能目录（如 `~/.myapp/skills`、`~/.agents/skills`）。
  * 每个目录下的子目录里有 `SKILL.md` 的就是一个技能。
  * **同名时先出现的目录优先**，后面的记为被拒（原因：重名）。
  */

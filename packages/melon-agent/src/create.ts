@@ -1,10 +1,10 @@
 import type {
-  AgentId, ApprovalDecision, AuditSink, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
+  AgentId, ApprovalDecision, AuditSink, Grant, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
   ScheduleStatus, SchemaValidator, Sequenced, SkillProvider, StoreBundle, Task, TaskEvent, TaskId,
   TaskKind, TaskState, ToolResolver, ToolsetSnapshot,
 } from '@melon-ai/core';
-import { asAgentId, asScheduleId } from '@melon-ai/core';
+import { TERMINAL_STATES, asAgentId, asScheduleId } from '@melon-ai/core';
 import { describeRule, whenToRule } from '@melon-ai/engine';
 import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
 import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelPool, ReActPlanner, testModel } from '@melon-ai/llm';
@@ -15,7 +15,7 @@ import { memoryStorage } from '@melon-ai/store';
 import { assemble } from './assemble.js';
 import type { AssembledAgent } from './assemble.js';
 import { basicContext } from './context.js';
-import { nodePlatform } from './platform.js';
+import { defaultPlatform } from './platform.js';
 
 /** 存储：全套端口 + 审计 sink（+ 可选的幂等表）。`memoryStorage()` 与 `sqlite()` 都满足。 */
 export type Storage = StoreBundle & { readonly audit: AuditSink; readonly idempotency?: IdempotencyStore };
@@ -65,7 +65,7 @@ export interface AgentOptions {
   readonly planner?: Planner;
   /** 参数校验。默认 `basicValidator`（JSON Schema 的常用子集）。 */
   readonly validator?: SchemaValidator;
-  /** 时间、随机、日志、哈希、链路。默认 `nodePlatform()`。 */
+  /** 时间、随机、日志、哈希、链路。默认 `defaultPlatform()`（只用 Web 标准 API）；Node 上可换 `@melon-ai/agent/node` 的 `nodePlatform()`。 */
   readonly platform?: Platform;
   readonly retention?: RetentionPolicy;
   readonly quotaOf?: (agentId: AgentId) => Promise<QuotaSnapshot | null>;
@@ -152,6 +152,15 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     test(entry: ModelEntry): Promise<ModelTestResult>;
   };
   readonly tools: ToolRegistry;
+  /**
+   * 「始终允许」过的操作。宿主做授权清单用：列出来给用户看，让用户能撤销。
+   * `scope` 是人可读的范围（如 `to=a@b.com`，`*` 表示不限）。
+   */
+  readonly grants: {
+    list(agentId?: string): Promise<readonly Grant[]>;
+    /** 不传 scope 撤销这个工具的全部授权。 */
+    revoke(toolId: string, scope?: string, agentId?: string): Promise<void>;
+  };
   /** 运行中替换模型、工具、技能来源、执行权限 —— 不重启，在跑的任务不受影响。 */
   configure(patch: {
     models?: readonly ModelEntry[];
@@ -168,7 +177,7 @@ const ALL_STATES: readonly TaskState[] = [
   'PENDING', 'PLANNING', 'ADMITTING', 'EXECUTING', 'OBSERVING',
   'AWAITING_APPROVAL', 'SUSPENDED', 'SUCCEEDED', 'FAILED', 'CANCELLED',
 ];
-const TERMINAL = new Set<TaskState>(['SUCCEEDED', 'FAILED', 'CANCELLED']);
+const TERMINAL = new Set<TaskState>(TERMINAL_STATES);
 
 /**
  * 创建一个 Agent。**所有选项都有默认值**，最少只需要模型：
@@ -180,7 +189,7 @@ const TERMINAL = new Set<TaskState>(['SUCCEEDED', 'FAILED', 'CANCELLED']);
  * ```
  */
 export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> {
-  const platform = opts.platform ?? nodePlatform({ min: opts.logLevel ?? 'info' });
+  const platform = opts.platform ?? defaultPlatform({ min: opts.logLevel ?? 'info' });
   const { logger } = platform;
   const stores: Storage = opts.storage ?? opts.stores ?? memoryStorage();
   const defaultAgent = opts.agentId ?? 'default';
@@ -193,13 +202,13 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     ...(drafts ? [schedule({
       check: (when) => {
         if (when.repeat === 'now') return { ok: true as const };
-        const r = whenToRule(when as When);
+        const r = whenToRule(when as When, { now: platform.clock.now() });
         return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
       },
       ...(typeof drafts === 'object' && drafts.when ? { when: drafts.when } : {}),
     })] : []),
   ];
-  const registry = new ToolRegistry({ tools: opts.tools ?? [], providers: [...builtins, ...(opts.skills ?? [])] });
+  const registry = new ToolRegistry({ tools: opts.tools ?? [], providers: [...builtins, ...(opts.skills ?? [])], now: platform.clock.now });
   await registry.ready();
 
   let policy = opts.policy ?? 'low-risk-auto';
@@ -281,7 +290,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     async create(input) {
       let s: Schedule;
       if ('when' in input) {
-        const built = whenToRule(input.when);
+        const built = whenToRule(input.when, { now: platform.clock.now() });
         if (!built.ok) throw new Error(built.error);
         s = await base.schedules.create({
           title: input.title ?? '',
@@ -352,6 +361,10 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
         for await (const r of stores.events.read(id as TaskId)) rows.push(r);
         return rows;
       },
+    },
+    grants: {
+      list: (id) => stores.grants.listByAgent(asAgentId(id ?? defaultAgent)),
+      revoke: (toolId, scope, id) => stores.grants.revoke(asAgentId(id ?? defaultAgent), toolId, scope),
     },
     models: {
       get ready() { return pool.ready; },

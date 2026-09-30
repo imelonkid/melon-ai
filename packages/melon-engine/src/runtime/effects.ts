@@ -20,7 +20,7 @@ export interface EffectDeps {
   readonly logger: Logger;
   readonly now: () => number;
   readonly policyMode: (task: Task) => PolicyMode;
-  /** 组装上下文。P0 先给一个最小实现，@melon-ai/context 就位后替换。 */
+  /** 组装上下文。默认 `basicContext`；带压缩的实现等 memory。 */
   readonly buildContext: (task: Task) => Promise<ContextBundle>;
   /** 本轮可用的工具，带全量 schema —— 供应商原生 tool use 需要。 */
   readonly availableTools: (task: Task) => Promise<readonly ModelTool[]>;
@@ -58,6 +58,8 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
           events: [{
             t: 'PlanProduced',
             step,
+            ...(step.via?.promptRef ? { promptRef: step.via.promptRef } : {}),
+            ...(step.via?.modelId ? { modelId: step.via.modelId } : {}),
             usage: { inputTokens: context.totalTokens, outputTokens: 0 },
           }],
         }];
@@ -101,6 +103,18 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
     case 'AskUser': {
       // 只记录。真正的等待由 AWAITING_APPROVAL 状态承担，可以等数小时
       return [{ taskId: effect.taskId, events: [{ t: 'ApprovalRequested', request: effect.request }] }];
+    }
+
+    case 'Grant': {
+      // 记不下授权不该拦住这一次 —— 用户已经批准了；最多下次再问一遍
+      try {
+        const task = await load(deps, effect.taskId);
+        const g = await deps.pipeline.grant(task, effect.call);
+        if (!g) deps.logger.log('warn', '这个操作不能始终允许，只放行这一次', { taskId: task.id, toolId: effect.call.toolId });
+      } catch (e) {
+        deps.logger.log('error', `记录「始终允许」失败：${e instanceof Error ? e.message : String(e)}`, { taskId: effect.taskId });
+      }
+      return [];
     }
 
     case 'InvokeTool': {
@@ -155,7 +169,7 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
 
     case 'Compact':
     case 'PromoteMemory':
-      // P0 先只关闭 episode。压缩与记忆提升等 @melon-ai/context / @melon-ai/memory 就位
+      // P0 先只关闭 episode。压缩与记忆提升等 memory（待建）
       if (effect.k === 'Compact') await deps.episodes.close(effect.episodeId, deps.now());
       deps.logger.log('debug', `${effect.k} 暂未实现，已跳过`, { taskId: effect.taskId });
       return [];

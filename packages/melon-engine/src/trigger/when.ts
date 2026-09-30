@@ -95,7 +95,12 @@ const pad = (n: number): string => String(n).padStart(2, '0');
  * 周期规则 → 一句话：「每个工作日 09:00」「每周五 16:00」「仅一次 · 10月2日 09:00」。
  * 一次性的日期按规则所在时区（没有则宿主时区）显示。
  */
-export function describeRule(rule: Recurrence, tz: string = hostTimeZone()): string {
+export interface DescribeOptions {
+  /** 一次性的只写时刻（「10月2日 09:00」），不带「仅一次 · 」—— 列表里已经按一次性归好类时用。 */
+  readonly bare?: boolean;
+}
+
+export function describeRule(rule: Recurrence, tz: string = hostTimeZone(), opts: DescribeOptions = {}): string {
   const hm = (t: TimeOfDay) => `${pad(t.hour)}:${pad(t.minute)}`;
   switch (rule.kind) {
     case 'once': {
@@ -103,7 +108,8 @@ export function describeRule(rule: Recurrence, tz: string = hostTimeZone()): str
         timeZone: tz, hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
       }).formatToParts(new Date(rule.at));
       const get = (t: string) => Number(p.find((x) => x.type === t)?.value ?? 0);
-      return `仅一次 · ${get('month')}月${get('day')}日 ${pad(get('hour') % 24)}:${pad(get('minute'))}`;
+      const at = `${get('month')}月${get('day')}日 ${pad(get('hour') % 24)}:${pad(get('minute'))}`;
+      return opts.bare ? at : `仅一次 · ${at}`;
     }
     case 'daily':
       return `每天 ${hm(rule.time)}`;

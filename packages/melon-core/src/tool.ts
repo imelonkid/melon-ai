@@ -82,7 +82,7 @@ export interface ToolCall {
   readonly callId: CallId;
   readonly toolId: ToolId;
   readonly args: unknown;
-  /** 对 args 归一化后的哈希。用于循环检测、幂等、以及「始终允许」的授权粒度。 */
+  /** 对 args 归一化后的哈希。用于循环检测与幂等。「始终允许」按人可读的 scope 匹配，不用它。 */
   readonly argsHash: string;
 }
 

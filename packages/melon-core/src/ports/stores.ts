@@ -10,7 +10,7 @@ import type { Archive, Purger } from '../deletion.js';
 /**
  * ─── 依赖倒置的核心 ───
  * 以下全部是**端口**。领域模块只依赖这些接口，永远不依赖任何具体存储。
- * 基础设施模块（melon-store-sqlite 等）实现它们，且只依赖 melon-core。
+ * 基础设施模块（store 的 `sqlite/` 与内存实现）实现它们，且只依赖 melon-core。
  * 所以适配器之间互不认识，换存储不动领域代码。
  */
 
@@ -90,7 +90,7 @@ export interface GrantStore {
   put(grant: Grant): Promise<void>;
   /** 不传 scope 则撤销该工具的全部授权。 */
   revoke(agentId: AgentId, toolId: string, scope?: string): Promise<void>;
-  /** 供设置页展示「我都始终允许过什么」—— scope 可读是这个功能的前提。 */
+  /** 供宿主的授权清单展示「我都始终允许过什么」—— scope 可读是这个功能的前提。 */
   listByAgent(agentId: AgentId): Promise<readonly Grant[]>;
 }
 

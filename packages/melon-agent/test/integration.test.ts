@@ -9,7 +9,8 @@ import { openSqliteStores } from '@melon-ai/store/sqlite';
 import {
   ScriptedPlanner, StaticToolResolver, StructuralValidator, noTools,
 } from '@melon-ai/testkit';
-import { consoleLogger, createAgent, nodePlatform } from '../src/index.js';
+import { consoleLogger, createAgent } from '../src/index.js';
+import { nodePlatform } from '../src/node.js';
 import type { MelonAgent } from '../src/index.js';
 
 const MAIL = asToolId('mail.send');

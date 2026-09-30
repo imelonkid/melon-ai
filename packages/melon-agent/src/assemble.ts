@@ -18,7 +18,7 @@ export interface AssembleOptions {
   readonly planner: Planner;
   readonly resolver: ToolResolver;
   readonly validator: SchemaValidator;
-  /** 时间、随机、日志、哈希、链路。见 `nodePlatform()`。 */
+  /** 时间、随机、日志、哈希、链路。见 `defaultPlatform()`。 */
   readonly platform: Platform;
 
   /** 执行权限策略。可以按任务动态决定（例如不同 Agent 不同档位）。 */
@@ -26,7 +26,7 @@ export interface AssembleOptions {
   readonly retention?: RetentionPolicy;
   readonly toolset?: () => ToolsetSnapshot;
   readonly quotaOf?: (agentId: AgentId) => Promise<QuotaSnapshot | null>;
-  /** 上下文装配。P0 未提供时用最小实现，`@melon-ai/context` 就位后传真的。 */
+  /** 上下文装配。默认「目标 + 当前时间 + 最近步骤」（`basicContext`）；预算分配与压缩等 memory。 */
   readonly buildContext?: (task: Task) => Promise<ContextBundle>;
   /** 本轮可用的工具，带全量 schema。默认空数组 —— 不给工具模型就只能直答。 */
   readonly availableTools?: (task: Task) => Promise<readonly ModelTool[]>;
@@ -68,7 +68,7 @@ export interface AssembledAgent extends AgentEngine {
  * P0 的最小上下文。
  *
  * 只够让规划器跑起来 —— 没有预算分配、没有压缩、没有 L1 检索。
- * `@melon-ai/context` 就位后通过 `buildContext` 传入真实实现。
+ * 带压缩与记忆的实现（memory，待建）就位后通过 `buildContext` 传入。
  */
 const minimalContext = (window = 200_000): ContextBundle => ({
   messages: [], tools: [], slots: [], totalTokens: 0, window, watermark: 0.7,

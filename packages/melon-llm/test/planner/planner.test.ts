@@ -171,7 +171,11 @@ test('动作守卫①：已经尝试过发邮件（比如收件人不对被退�
   const step = await new ReActPlanner({ router: router(m) }).plan(
     withTask({ goal: '把周报发邮件给产品组', toolsCalled: ['mail.send'], usage: { steps: 2, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
   assert.equal(m.requests[0]!.toolChoice, 'auto');
-  assert.deepEqual(step, { kind: 'final', thought: '模型未请求工具，视为可以作答', answer: '请告诉我产品组的邮箱地址。' });
+  const { via, ...rest } = step;
+  assert.deepEqual(rest, { kind: 'final', thought: '模型未请求工具，视为可以作答', answer: '请告诉我产品组的邮箱地址。' });
+  // 提示词版本与应答的模型随步骤带出，运行时写进 PlanProduced —— 否则重放不知道当时的条件
+  assert.equal(via?.promptRef?.name, 'react.system');
+  assert.ok(via?.modelId, '问过模型的步骤要带 modelId');
 });
 
 test('动作守卫②：要做一件事（删除）却没有任何工具能做 → 不问模型，直接以失败收尾说没有合适的工具', async () => {

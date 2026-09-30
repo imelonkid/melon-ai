@@ -3,7 +3,7 @@
  *
  * ```ts
  * import { agentSkills } from '@melon-ai/agent/agentskills';
- * const skills = agentSkills({ dirs: [`${home}/.jolly/skills`, `${home}/.agents/skills`] });
+ * const skills = agentSkills({ dirs: [`${home}/.myapp/skills`, `${home}/.agents/skills`] });
  * const agent = await createAgent({ skills: [skills] });
  * skills.report();   // 哪些加载了、哪些被拦下及原因（给界面展示）
  * ```

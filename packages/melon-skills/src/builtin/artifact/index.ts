@@ -1,6 +1,6 @@
 import type { SkillProvider } from '@melon-ai/core';
 import { BUILTIN_TOOLS, asArtifactRef } from '@melon-ai/core';
-import { defineSkill, defineTool } from '../../registry/define.js';
+import { defineBuiltinSkill, defineTool } from '../../registry/define.js';
 
 /** 一次读回的上限。更大的内容分段读（offset）。 */
 const CHUNK = 8000;
@@ -29,11 +29,10 @@ export const artifactRead = defineTool<{ ref: string; offset?: number }>({
 });
 
 export function artifact(): SkillProvider {
-  return defineSkill({
+  return defineBuiltinSkill({
     id: 'builtin',
     name: '完整内容',
     purpose: '需要读取工具结果的完整内容（摘要里给了句柄）时使用',
     tools: [artifactRead],
-    builtin: true,
   });
 }

@@ -2,7 +2,7 @@ import type {
   AdmissionDecision, AdmissionOutcome, AgentId, BuiltinToolId, Grant, PolicyMode,
   QuotaSnapshot, RiskClass, ToolId,
 } from '@melon-ai/core';
-import { ADMISSION_MATRIX, DURABLE_WRITE_TOOLS, TAINT_FORCES_ASK } from '@melon-ai/core';
+import { ADMISSION_MATRIX, DURABLE_WRITE_TOOLS, GRANTABLE_RISKS, TAINT_FORCES_ASK } from '@melon-ai/core';
 import { checkQuota } from './quota.js';
 import { scopeMatches } from './scope.js';
 
@@ -95,7 +95,7 @@ export function decide(input: DecideInput): AdmissionOutcome {
 
   // ④ 授权匹配
   const g = input.grant;
-  if (g && g.agentId === input.agentId && g.toolId === toolId && scopeMatches(g.scope, scope)) {
+  if (g && GRANTABLE_RISKS.includes(risk) && g.agentId === input.agentId && g.toolId === toolId && scopeMatches(g.scope, scope)) {
     if (g.expiresAt !== undefined && g.expiresAt <= input.now) {
       // 过期的授权不匹配，落回矩阵，而不是当成拒绝
     } else {
