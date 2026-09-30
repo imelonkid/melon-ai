@@ -923,12 +923,12 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
 | 自定义任务目标 | ✅ | ✅ 输入框 + 预设 |
 | 审批 / 驳回 | ✅ | ✅ 列表行内 + 详情页 |
 | 崩溃恢复 | ✅ `recover()` | ✅ 重启后继续 |
-| 多模型源 + 热生效 | ✅ `ModelRouter` | ✅ AI 源页 |
+| 多模型源 + 热生效 | ✅ `ModelRouter` | ✅ 资源页 |
 | 定时任务 | ✅ | ✅ 与立即任务同一入口、同一列表 |
-| 始终允许（`always`） | ✅ 第 66 条前是假的：`always` 等于 `allow`，从不写授权 | 见下 |
-| 授权清单 / 撤销 | ✅ `GrantStore.listByAgent` | ❌ 无入口 |
+| 始终允许（`always`） | ✅ 第 66 条前是假的：`always` 等于 `allow`，从不写授权 | ✅ 对话确认卡，写明管到哪儿 |
+| 授权清单 / 撤销 | ✅ `agent.grants.list / revoke` | ❌ 无入口 |
 | 审计查询 / 链校验 | ✅ | ❌ 无入口 |
-| 执行权限策略分档 | ✅ `PolicyMode` | ❌ 设置页是假的，内核写死 `low-risk-auto` |
+| 执行权限策略分档 | ✅ `PolicyMode` | ❌ 真实界面无入口（设计预览里的三档已不在真实界面显示），用 `low-risk-auto` |
 | 取消任务 | ✅ `cancel()` | ❌ 无按钮 |
 | 对话驱动 | —（宿主拼多轮，内核未改） | ✅ 多轮 + 任务草稿卡 + 对话内审批 |
 
@@ -1144,7 +1144,8 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     §7 的 API、§10.1 的 ✅ 都是没验证就写上去的。修法：reducer 在 `always` 时先发 `Grant` effect 再执行，
     管线按准入时同一个 `computeScope` 写授权并记审计（`policy.change`，actor 是用户）；
     `agent.grants.list / revoke` 给宿主做授权清单。花钱、不可撤销的不能始终允许（`GRANTABLE_RISKS`，
-    `ApprovalRequest.canAlways` 告诉宿主显不显示按钮），授权匹配也只对这两类生效 —— 删用户记忆每次都得问。
+    `ApprovalRequest.canAlways` 由 reducer 按准入结果的风险等级算，告诉宿主显不显示按钮 ——
+    初版写在管线的请求里，而 reducer 会按 `AdmissionResolved` 重建请求，那份根本没传出去；测试的断言也写弱了没抓到），授权匹配也只对这两类生效 —— 删用户记忆每次都得问。
     污点仍在授权之前，授权放不过读过网页的任务。
 67. **提示词版本号从没进事件日志。** `prompt.ts` 写着「版本号会进 `PlanProduced.promptRef`」，§10 也标了已完成，
     实际 `PlanProduced` 里既没有 `promptRef` 也没有 `modelId`。修法：`PlanStep.via` 带出提示词版本与实际应答的模型，

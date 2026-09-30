@@ -135,7 +135,6 @@ export class ToolPipeline {
             toolId: call.toolId,
             risk: descriptor.risk,
             summary: admission.reason,
-            canAlways: GRANTABLE_RISKS.includes(descriptor.risk),
           },
         };
       }

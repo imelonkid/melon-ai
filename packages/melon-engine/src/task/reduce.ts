@@ -1,7 +1,7 @@
 import type {
   Effect, GuardThresholds, Outcome, ReduceResult, Task, TaskEvent, TaskState,
 } from '@melon-ai/core';
-import { DEFAULT_GUARDS, IllegalTransitionError, TERMINAL_STATES } from '@melon-ai/core';
+import { DEFAULT_GUARDS, GRANTABLE_RISKS, IllegalTransitionError, TERMINAL_STATES } from '@melon-ai/core';
 import { lookup } from './transitions.js';
 import { addUsage, exhausted } from './budget.js';
 import { detectLoop, detectNoProgress, observe, recordCall } from './guards.js';
@@ -149,7 +149,10 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
             task: patch({}, 'AWAITING_APPROVAL'),
             effects: [{
               k: 'AskUser', taskId: task.id,
-              request: { callId: event.callId, toolId: call.toolId, risk: event.risk, summary: event.reason },
+              request: {
+                callId: event.callId, toolId: call.toolId, risk: event.risk, summary: event.reason,
+                canAlways: GRANTABLE_RISKS.includes(event.risk),
+              },
             }],
           };
         case 'deny':

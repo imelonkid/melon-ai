@@ -2,6 +2,9 @@ import type { ModelEntry } from '@melon-ai/core';
 import { ANTHROPIC_MODELS, AnthropicChatModel } from './adapter.js';
 import type { AnthropicModelId } from './adapter.js';
 
+/** 不指定模型时用的 Claude 模型。宿主的配置页拿它做占位，不必自己再写一份。 */
+export const CLAUDE_DEFAULT_MODEL: AnthropicModelId = 'claude-opus-5';
+
 export interface ClaudeOptions {
   /** 不传时由 SDK 读 ANTHROPIC_API_KEY。 */
   readonly apiKey?: string;
@@ -16,7 +19,7 @@ export interface ClaudeOptions {
  * 不用 Claude 的宿主不必装。
  */
 export function claude(o: ClaudeOptions = {}): ModelEntry {
-  const model = o.model ?? 'claude-opus-5';
+  const model = o.model ?? CLAUDE_DEFAULT_MODEL;
   return {
     label: 'Claude',
     model: new AnthropicChatModel({

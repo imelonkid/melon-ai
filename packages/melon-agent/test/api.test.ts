@@ -87,10 +87,20 @@ test('始终允许：同一工具同一范围下次不再问；换了收件人�
     call('shop.buy', { item: '纸' }), '买了',
   ]);
   const agent = await createAgent({ models: [e], tools: [mailSend, buy], platform: quiet });
+  // 状态先变成待确认，ApprovalRequested 随后才写进事件日志 —— 等它出现
+  const requestOf = async (id: string) => {
+    for (let i = 0; i < 100; i++) {
+      const req = (await agent.tasks.history(id)).map((r) => r.value).filter((ev) => ev.t === 'ApprovalRequested').pop();
+      if (req && req.t === 'ApprovalRequested') return req.request;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error('没有发出确认请求');
+  };
   try {
     const ask1 = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
     const t1 = await agent.run('把周报发给 a@x.com');
     assert.equal((await ask1).id, t1.id);
+    assert.equal((await requestOf(t1.id)).canAlways, true, '对外操作可以始终允许');
     const done1 = until(agent, (t) => t.id === t1.id && t.state === 'SUCCEEDED');
     await agent.approve(t1.id, 'always');
     await done1;
@@ -113,8 +123,7 @@ test('始终允许：同一工具同一范围下次不再问；换了收件人�
     const ask4 = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
     const t4 = await agent.run('买纸');
     const waiting = await ask4;
-    const req = (await agent.tasks.history(t4.id)).map((r) => r.value).find((ev) => ev.t === 'ApprovalRequested');
-    assert.equal(req?.t === 'ApprovalRequested' && req.request.canAlways, false, '花钱的操作不给「始终允许」');
+    assert.equal((await requestOf(t4.id)).canAlways, false, '花钱的操作不给「始终允许」');
     const done4 = until(agent, (t) => t.id === waiting.id && t.state === 'SUCCEEDED');
     await agent.approve(t4.id, 'always');
     await done4;
