@@ -248,3 +248,21 @@ test('reload：装了新技能后重新扫描，工具清单跟着变并通知�
     assert.equal((await p.list()).length, 1);
   } finally { r.done(); }
 });
+
+test('技能开关：关掉的不进清单、不能激活；报告里标为已停用；全关了就不注册工具', async () => {
+  const r = root();
+  try {
+    r.skill('a-skill', { 'SKILL.md': md('a-skill', '甲') });
+    r.skill('b-skill', { 'SKILL.md': md('b-skill', '乙') });
+    const p = agentSkills({ dirs: [r.dir], disabled: ['b-skill'] });
+    const [b] = await p.list();
+    assert.doesNotMatch(b!.skill.tools.find((t) => t.id === 'skill.activate')!.description, /b-skill/);
+    assert.equal(await code(b!.handlers.get('skill.activate')!({ name: 'b-skill' }, cx())), 'INVALID_ARGS');
+    assert.deepEqual(p.report().loaded.map((s) => [s.name, s.enabled]), [['a-skill', true], ['b-skill', false]]);
+    let fired = 0;
+    p.onChange(() => fired++);
+    p.setDisabled(['a-skill', 'b-skill']);
+    assert.equal(fired, 1);
+    assert.deepEqual(await p.list(), []);
+  } finally { r.done(); }
+});

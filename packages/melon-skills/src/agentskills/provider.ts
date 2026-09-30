@@ -36,10 +36,15 @@ export interface AgentSkillsOptions {
   /** 解释器。默认 python3 / node / bash / zsh（从 PATH 找）。 */
   readonly interpreters?: Readonly<Partial<Record<'py' | 'js' | 'sh' | 'zsh', string>>>;
   readonly limits?: ScanLimits;
+  /** 用户关掉的技能（按名字）。关掉的不进清单、不能激活；报告里标为已停用。 */
+  readonly disabled?: readonly string[];
 }
 
 export interface AgentSkillsReport {
-  readonly loaded: readonly { readonly name: string; readonly description: string; readonly dir: string; readonly warnings: readonly string[] }[];
+  readonly loaded: readonly {
+    readonly name: string; readonly description: string; readonly dir: string;
+    readonly files: readonly string[]; readonly warnings: readonly string[]; readonly enabled: boolean;
+  }[];
   readonly rejected: readonly RejectedSkill[];
 }
 
@@ -58,13 +63,26 @@ const tail = (s: string, n: number): string => (s.length > n ? `…（前面省�
 export class AgentSkillsProvider implements SkillProvider {
   readonly id = 'agent-skills';
   private loaded: readonly AgentSkill[] = [];
+  private disabled: ReadonlySet<string>;
   private refused: readonly RejectedSkill[] = [];
   private readonly listeners = new Set<() => void>();
   /** 同一任务里已激活过的技能，不重复注入。 */
   private readonly activated = new Map<string, Set<string>>();
 
   constructor(private readonly opts: AgentSkillsOptions) {
+    this.disabled = new Set(opts.disabled ?? []);
     this.reload();
+  }
+
+  /** 用户在界面上开关某个技能。 */
+  setDisabled(names: readonly string[]): void {
+    this.disabled = new Set(names);
+    for (const cb of this.listeners) cb();
+  }
+
+  /** 生效的技能：审查通过且没被用户关掉。 */
+  private active(): readonly AgentSkill[] {
+    return this.loaded.filter((s) => !this.disabled.has(s.name));
   }
 
   /** 重新扫描技能目录（用户装了新技能、改了文件之后）。改过的技能会重新审查。 */
@@ -78,13 +96,16 @@ export class AgentSkillsProvider implements SkillProvider {
 
   report(): AgentSkillsReport {
     return {
-      loaded: this.loaded.map((s) => ({ name: s.name, description: s.description, dir: s.dir, warnings: s.warnings })),
+      loaded: this.loaded.map((s) => ({
+        name: s.name, description: s.description, dir: s.dir, files: s.files, warnings: s.warnings,
+        enabled: !this.disabled.has(s.name),
+      })),
       rejected: this.refused,
     };
   }
 
   async list(): Promise<readonly SkillBundle[]> {
-    if (this.loaded.length === 0) return []; // 没有技能就不注册工具 —— 空清单只会让模型困惑
+    if (this.active().length === 0) return []; // 没有技能就不注册工具 —— 空清单只会让模型困惑
     const tools = [this.activateTool(), this.readTool(), this.runTool()];
     return [{
       skill: {
@@ -93,7 +114,7 @@ export class AgentSkillsProvider implements SkillProvider {
         purpose: '任务和某个已安装技能的描述对得上时使用',
         keywords: [],
         tools: tools.map((t) => t.descriptor),
-        source: { kind: 'extension', providerId: this.id, version: this.loaded.map((s) => s.hash.slice(0, 8)).join('.') },
+        source: { kind: 'extension', providerId: this.id, version: this.active().map((s) => s.hash.slice(0, 8)).join('.') },
       },
       handlers: new Map(tools.map((t) => [String(t.descriptor.id), t.handler])),
     }];
@@ -109,8 +130,8 @@ export class AgentSkillsProvider implements SkillProvider {
   }
 
   private find(name: string): AgentSkill {
-    const s = this.loaded.find((x) => x.name === name);
-    if (!s) throw new ToolError('INVALID_ARGS', `没有名为 ${name} 的技能`, { hint: `可用的技能：${this.loaded.map((x) => x.name).join('、')}` });
+    const s = this.active().find((x) => x.name === name);
+    if (!s) throw new ToolError('INVALID_ARGS', `没有名为 ${name} 的技能`, { hint: `可用的技能：${this.active().map((x) => x.name).join('、')}` });
     return s;
   }
 
@@ -129,11 +150,11 @@ export class AgentSkillsProvider implements SkillProvider {
   }
 
   private names(): string[] {
-    return this.loaded.map((s) => s.name);
+    return this.active().map((s) => s.name);
   }
 
   private activateTool(): Tool {
-    const catalog = this.loaded
+    const catalog = this.active()
       .map((s) => `<skill>\n<name>${s.name}</name>\n<description>${s.description}</description>\n</skill>`)
       .join('\n');
     return defineTool<{ name: string }>({

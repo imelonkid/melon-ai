@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import type { AddressInfo, Server } from 'node:net';
 import type { ToolContext } from '@melon-ai/core';
 import { ToolError } from '@melon-ai/core';
-import { MAIL_SEND, mail, parseRecipients, sendMail, testMail } from '../../src/builtin/mail/index.js';
+import { MAIL_SEND, SMTP_PRESETS, mail, parseRecipients, sendMail, smtpPresetFor, testMail } from '../../src/builtin/mail/index.js';
 import type { SmtpConfig } from '../../src/builtin/mail/index.js';
 
 /**
@@ -123,6 +123,15 @@ test('授权码错是 DENIED，提示用授权码；收件人被拒是 INVALID_A
   } finally { await s.close(); }
 });
 
+test('本机地址的服务器默认允许明文登录（回环连接不出本机）', async () => {
+  const s = await fakeSmtp();
+  try {
+    const { allowInsecureAuth: _drop, ...plain } = cfg(s.port);
+    await sendMail(plain, { to: ['a@x.com'], subject: 'x', text: 'y' }, new AbortController().signal);
+    assert.equal(s.data.length, 1);
+  } finally { await s.close(); }
+});
+
 test('服务器不支持加密时，拒绝在明文连接上发授权码', async () => {
   const s = await fakeSmtp();
   try {
@@ -187,4 +196,12 @@ test('testMail：能登录就 ok，不发信；授权码错带错误码与提示
     assert.deepEqual([bad.ok, bad.code], [false, 'DENIED']);
     assert.match(bad.hint ?? '', /授权码/);
   } finally { await s.close(); }
+});
+
+test('SMTP 预设：按域名认出常见邮箱；认不出返回 null', () => {
+  assert.equal(smtpPresetFor('me@163.com'), '163');
+  assert.equal(smtpPresetFor('Me@FoxMail.com'), 'qq');
+  assert.equal(smtpPresetFor('me@corp.example'), null);
+  assert.deepEqual([SMTP_PRESETS['163']!.port, SMTP_PRESETS['163']!.secure], [465, true]);
+  assert.deepEqual([SMTP_PRESETS['outlook']!.port, SMTP_PRESETS['outlook']!.secure], [587, false]);
 });

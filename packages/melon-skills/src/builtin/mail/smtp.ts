@@ -31,7 +31,10 @@ export interface SmtpConfig {
   readonly from?: string;
   /** 发件人显示名。 */
   readonly fromName?: string;
-  /** 只给本地测试服务器用：允许在没有 TLS 的连接上登录。 */
+  /**
+   * 允许在没有 TLS 的连接上登录。默认只对本机地址（127.0.0.1 / ::1 / localhost）放行 ——
+   * 回环连接不出本机，没有被窃听的可能；本地测试用的假邮件服务器就是这种。
+   */
   readonly allowInsecureAuth?: boolean;
   /** 单次操作的超时，默认 20s。 */
   readonly timeoutMs?: number;
@@ -185,6 +188,8 @@ function connectError(cfg: SmtpConfig, e: Error): ToolError {
 
 const capabilities = (r: Reply): Set<string> => new Set(r.lines.map((l) => l.toUpperCase()));
 
+const isLoopback = (host: string): boolean => /^(127\.\d+\.\d+\.\d+|::1|localhost)$/i.test(host.trim());
+
 /** 连上、握手、（升级 TLS）、登录。返回已登录的连接。 */
 async function login(cfg: SmtpConfig, signal: AbortSignal): Promise<Conn> {
   const c = await open(cfg, signal);
@@ -206,7 +211,7 @@ async function login(cfg: SmtpConfig, signal: AbortSignal): Promise<Conn> {
       encrypted = true;
       caps = capabilities(await c.cmd(`EHLO ${me}`, [250], '握手'));
     }
-    if (!encrypted && !cfg.allowInsecureAuth) {
+    if (!encrypted && !(cfg.allowInsecureAuth ?? isLoopback(cfg.host))) {
       throw new ToolError('DENIED', '邮件服务器不支持加密连接，拒绝明文发送授权码', {
         retriable: false, hint: '改用 465 端口 + SSL，或 587 端口 + STARTTLS',
       });
