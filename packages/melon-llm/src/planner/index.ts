@@ -58,12 +58,12 @@ export class ReActPlanner implements Planner {
     const matched = matchActionTools(task.goal, tools);
     const mustAct = matched.some((t) => !called.includes(t.name));
 
-    // ── 动作守卫②：要做一件事，却没有任何工具能做 → 不问模型，直接说 ──
+    // ── 动作守卫②：要做一件事，却连一个有副作用的工具都没有 → 不问模型，直接说 ──
+    // 只在「一个都没有」时才直接拒：有这类工具、只是说法没命中触发词（「发送周报」≠「发邮件」）时交给模型，
+    // 它若编造或只用文字征求确认，③④会拦 —— 误拒比漏拦更糟，用户换个说法就被拒绝
     if (task.usage.steps === 0 && matched.length === 0) {
       const verb = mentionsAction(task.goal, this.opts.actionWords ?? DEFAULT_ACTION_WORDS);
-      // 有「没写触发词」的副作用工具时交给模型判断 —— 可能正是它能做
-      const untriggered = tools.some((t) => isActionTool(t) && !(t.triggers?.length));
-      if (verb && !untriggered) {
+      if (verb && !tools.some(isActionTool)) {
         return {
           kind: 'abort',
           thought: `动作词「${verb}」没有匹配的工具`,

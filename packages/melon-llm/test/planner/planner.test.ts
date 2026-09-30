@@ -176,7 +176,7 @@ test('动作守卫①：已经尝试过发邮件（比如收件人不对被退�
 
 test('动作守卫②：要做一件事（删除）却没有任何工具能做 → 不问模型，直接以失败收尾说没有合适的工具', async () => {
   const m = new StubModel([{ text: '好的，已删除。' }]);
-  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: '把上周的会议记录删除' }, [MAIL, SEARCH]), sig);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: '把上周的会议记录删除' }, [SEARCH]), sig);
   assert.equal(step.kind, 'abort');
   if (step.kind === 'abort') assert.match(step.reason, /没有能完成「删除」的工具/);
   assert.equal(m.requests.length, 0, '根本不该去问模型');
@@ -259,4 +259,10 @@ test('动作守卫④：纠正后改为问清缺的信息（收件人地址）�
   const m = new StubModel([{ text: '在发送前想先和你确认一下' }, { text: '请告诉我产品组的邮箱地址。' }]);
   const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: '把新闻发邮件给产品组', usage: { steps: 1, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
   assert.deepEqual([step.kind, step.kind === 'final' ? step.answer : ''], ['final', '请告诉我产品组的邮箱地址。']);
+});
+
+test('动作守卫②：有发邮件工具、只是说法没命中触发词（「发送周报」）→ 不误拒，交给模型', async () => {
+  const m = new StubModel([{ stopReason: 'tool', toolCalls: [{ id: 'x', name: 'mail.send', args: { to: 'a@x.com' } }] }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: '汇总本周进展并发送周报' }), sig);
+  assert.equal(step.kind, 'tool_call');
 });
