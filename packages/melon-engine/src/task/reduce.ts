@@ -109,7 +109,7 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
           const called = task.toolsCalled ?? [];
           return {
             task: patch({
-              usage: withUsage, guard, pendingCall: step.call,
+              usage: withUsage, guard, pendingCall: step.call, queuedCalls: step.then ?? [],
               ...(called.includes(step.call.toolId) ? {} : { toolsCalled: [...called, step.call.toolId] }),
             }, 'ADMITTING'),
             effects: [{ k: 'Admit', taskId: task.id, call: step.call }],
@@ -224,6 +224,21 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
         return {
           task: patch({ guard }, 'OBSERVING'),
           effects: [{ k: 'Emit', taskId: task.id, event: { t: 'NoProgress', steps: guard.stagnantSteps } }],
+        };
+      }
+      // 同一轮里模型还给了别的调用：接着执行下一个，不再问模型（它已经决定了）
+      const [next, ...rest] = task.queuedCalls ?? [];
+      if (next) {
+        return {
+          task: patch({ guard }, 'PLANNING'),
+          effects: [{
+            k: 'Emit', taskId: task.id,
+            event: {
+              t: 'PlanProduced',
+              step: { kind: 'tool_call', thought: '同一轮里的下一个调用', call: next, ...(rest.length ? { then: rest } : {}) },
+              usage: { inputTokens: 0, outputTokens: 0 },
+            },
+          }],
         };
       }
       return {

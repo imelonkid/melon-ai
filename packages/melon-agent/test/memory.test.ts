@@ -136,3 +136,49 @@ test('宿主关掉记忆：工具不给模型，已有的记忆也不带进上�
     assert.equal((await agent.memories.list()).length, 1, '关掉不等于删掉');
   } finally { await agent.stop(); }
 });
+
+test('模型一轮给两个调用（称呼 + 邮箱）：两个都执行（初版只执行第一个，其余悄悄丢掉）', async () => {
+  const both: GenerateResult = {
+    text: '好的', modelId: 'scripted', stopReason: 'tool', usage: { inputTokens: 10, outputTokens: 5 },
+    toolCalls: [
+      { id: 'c1', name: 'builtin.memory_write', args: { statement: '用户希望被称作 Melonkid', subject: '称呼' } },
+      { id: 'c2', name: 'builtin.memory_write', args: { statement: '用户的邮箱是 me@x.com', subject: '邮箱' } },
+    ],
+  };
+  const { entry: e } = entry([both, '你好，Melonkid！都记下了。']);
+  const agent = await createAgent({ models: [e], platform: quiet, memory: true });
+  try {
+    const t = await run(agent, '你好，你以后叫我Melonkid 我的邮箱是me@x.com');
+    assert.equal(t.state, 'SUCCEEDED');
+    assert.deepEqual((await agent.memories.list()).map((m) => m.statement).sort(), ['用户的邮箱是 me@x.com', '用户希望被称作 Melonkid'].sort());
+  } finally { await agent.stop(); }
+});
+
+test('只记了称呼却说「邮箱 me@x.com 我记下了」：提到的邮箱没有任何工具结果对得上 → 纠正一次，让它真的去记', async () => {
+  const { entry: e, model } = entry([
+    call('builtin.memory_write', { statement: '用户希望被称作 Melonkid' }),
+    '你好，Melonkid！邮箱 me@x.com 我记下了。',
+    call('builtin.memory_write', { statement: '用户的邮箱是 me@x.com' }),
+    '都记下了。',
+  ]);
+  const agent = await createAgent({ models: [e], platform: quiet, memory: true });
+  try {
+    await run(agent, '你好，你以后叫我Melonkid 我的邮箱是me@x.com');
+    assert.ok(model.calls.some((c) => c.messages.some((m) => m.content.includes('没有任何工具结果提到 me@x.com'))), '要纠正');
+    assert.ok((await agent.memories.list()).some((m) => m.statement.includes('me@x.com')), '纠正后真的记了');
+  } finally { await agent.stop(); }
+});
+
+test('纠正后仍然只是嘴上说记下了：这一轮以「有一部分没有做成」收尾，不当成功', async () => {
+  const { entry: e } = entry([
+    call('builtin.memory_write', { statement: '用户希望被称作 Melonkid' }),
+    '邮箱 me@x.com 我记下了。',
+    '邮箱 me@x.com 已经记下了。',
+  ]);
+  const agent = await createAgent({ models: [e], platform: quiet, memory: true });
+  try {
+    const t = await run(agent, '你好，你以后叫我Melonkid 我的邮箱是me@x.com');
+    assert.equal(t.state, 'FAILED');
+    assert.match(t.outcome?.reason ?? '', /没有对 me@x\.com 执行任何操作/);
+  } finally { await agent.stop(); }
+});

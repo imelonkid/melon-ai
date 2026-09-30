@@ -156,6 +156,8 @@ export interface Task {
   readonly deniedRepeats?: number;
   /** 当前挂起的审批（state=AWAITING_APPROVAL 时非空）。 */
   readonly pendingCall?: ToolCall;
+  /** 同一轮里还没轮到的调用（`PlanStep.then`）。上一个有了结果就接着执行下一个，不再问模型。 */
+  readonly queuedCalls?: readonly ToolCall[];
   /** 正在等待的子任务。 */
   readonly waitingFor?: readonly TaskId[];
   readonly outcome?: Outcome;
@@ -199,7 +201,8 @@ export interface PlanVia {
 
 export type PlanStep = (
   | { readonly kind: 'skill_query'; readonly thought: string; readonly query: string }
-  | { readonly kind: 'tool_call'; readonly thought: string; readonly call: ToolCall }
+  /** `then`：模型同一轮给的其余调用，排队依次执行（每个照样走准入与守卫）。 */
+  | { readonly kind: 'tool_call'; readonly thought: string; readonly call: ToolCall; readonly then?: readonly ToolCall[] }
   | { readonly kind: 'spawn'; readonly thought: string; readonly specs: readonly TaskSpec[] }
   | { readonly kind: 'final'; readonly thought: string; readonly answer: string }
   /**

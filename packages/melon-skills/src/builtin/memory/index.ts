@@ -49,7 +49,8 @@ export function memory(opts: MemorySkillOptions): SkillProvider {
     id: BUILTIN_TOOLS.MEMORY_WRITE,
     description:
       '把用户明确要你记住的事存成长期记忆，以后的对话里都能用上。只记用户让你记的，或用户说「以后都…」这类长期偏好；'
-      + '不要记一次性的任务内容。statement 写成一句自包含的话（例：「周报发给 team@example.com」「用户叫老王」）。',
+      + '不要记一次性的任务内容。一次只记一件事，几件事就调用几次。'
+      + 'statement 写成一句自包含的话（例：「用户的邮箱是 me@163.com」「用户叫老王」）。',
     input: {
       statement: { type: 'string', description: '一句话，自包含，不依赖上下文就能看懂' },
       subject: { type: 'string', optional: true, description: '主题，如「周报收件人」。同一主题再记会替代旧的；不填按内容算' },

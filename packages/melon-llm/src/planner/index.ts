@@ -6,8 +6,7 @@ import { asCallId, asToolId } from '@melon-ai/core';
 import { REACT_PROMPT, REACT_SYSTEM } from './prompt.js';
 import {
   DEFAULT_ACTION_WORDS, asksConfirmation, claimsDone, confirmCorrection, correctionFor, isActionTool,
-  matchActionTools, mentionsAction, supplyCorrection, unsuppliedValues,
-} from './action.js';
+  matchActionTools, mentionsAction, supplyCorrection, unsuppliedValues, unbackedValues, unbackedCorrection } from './action.js';
 
 export * from './prompt.js';
 export * from './action.js';
@@ -104,9 +103,10 @@ export class ReActPlanner implements Planner {
       // 记忆也算：它来自用户之前的原话（写入时过了污点与注入审查）——「发到我的邮箱」要能用上记住的地址
       .filter((m) => m.role === 'user' && ['user', 'memory'].includes(m.from ?? 'user')).map((m) => m.content)].join('\n');
     const bad = (c: ModelToolCall) => unsuppliedValues((c.args ?? {}) as Record<string, unknown>, tools.find((t) => t.name === c.name), userText);
-    const accept = async (text: string, c: ModelToolCall, base: readonly Message[]): Promise<PlanStep> => {
+    const accept = async (text: string, c: ModelToolCall, base: readonly Message[], rest: readonly ModelToolCall[] = []): Promise<PlanStep> => {
       const miss = bad(c);
-      if (!miss) return this.toToolCall(text, c);
+      // 同一轮里其余的调用排队依次执行；参数来源不对的不排（它们没机会被退回去问用户）
+      if (!miss) return this.toToolCall(text, c, rest.filter((x) => !bad(x)));
       // 退回一次：让它去问用户。这一轮不强制调工具 —— 缺的信息只能问用户
       const retry = await generate(
         [...base, { role: 'assistant', content: text.trim() || `（准备调用 ${c.name}）` }, { role: 'user', content: supplyCorrection(miss.field, miss.values) }],
@@ -129,8 +129,10 @@ export class ReActPlanner implements Planner {
     if (res.stopReason === 'filtered') {
       return { kind: 'final', thought: '被安全策略拦截', answer: res.text };
     }
+    // 模型一次可能给好几个调用（「叫我 X，邮箱是 Y」→ 记两条）。初版只执行第一个、其余悄悄丢掉，
+    // 模型却以为都做了，回答「邮箱我记下了」（§10 第 77 条）—— 其余的排队，逐个走准入与守卫
     const call = res.toolCalls?.[0];
-    if (call) return accept(res.text, call, messages);
+    if (call) return accept(res.text, call, messages, res.toolCalls?.slice(1) ?? []);
 
     // ── 动作守卫③：答复里说做成了，本任务却没有成功执行过任何有副作用的工具 ──
     const answer = res.text.trim() || '（模型没有返回内容）';
@@ -139,20 +141,29 @@ export class ReActPlanner implements Planner {
       const t = input.availableTools.find((x) => x.name === id);
       return t ? isActionTool(t) : false;
     });
-    if (claim && !acted) {
+    // 做过一件事，不等于说到的每一件都做了：提到的邮箱、网址、手机号要在工具结果里出现过
+    const toolResults = input.context.messages.filter((m) => m.from === 'tool').map((m) => m.content).join('\n');
+    const unbacked = claim && acted ? unbackedValues(answer, toolResults) : [];
+    if (claim && (!acted || unbacked.length > 0)) {
       // 纠正一次：它可能只是想先说后做，给它一次真的去调工具的机会
       const retry = await generate(
-        [...messages, { role: 'assistant', content: answer }, { role: 'user', content: correctionFor(claim) }],
+        [...messages, { role: 'assistant', content: answer }, {
+          role: 'user',
+          content: unbacked.length > 0 ? unbackedCorrection(claim, unbacked) : correctionFor(claim),
+        }],
         tools.some(isActionTool),
       );
       const again = retry.toolCalls?.[0];
       if (again) return accept(retry.text, again, messages);
       const second = retry.text.trim();
-      if (!second || claimsDone(second)) {
+      const stillUnbacked = unbacked.length > 0 && unbackedValues(second, toolResults).length > 0 && !!claimsDone(second);
+      if (!second || (unbacked.length === 0 && claimsDone(second)) || stillUnbacked) {
         return {
           kind: 'abort',
-          thought: `模型声称「${claim}」，但没有执行任何对应的工具`,
-          reason: `这件事没有做成：回答里说「${claim}」，但实际上没有执行任何对应的操作。`,
+          thought: `模型声称「${claim}」，但没有执行任何对应的工具${unbacked.length ? `（${unbacked.join('、')}）` : ''}`,
+          reason: unbacked.length
+            ? `有一部分没有做成：回答里说「${claim}」，但实际上没有对 ${unbacked.join('、')} 执行任何操作。`
+            : `这件事没有做成：回答里说「${claim}」，但实际上没有执行任何对应的操作。`,
         };
       }
       return { kind: 'final', thought: '纠正后如实作答', answer: second };
@@ -217,16 +228,23 @@ export class ReActPlanner implements Planner {
     return body.length > 0 ? [...head, ...body] : [...head, { role: 'user', content: '（无历史）' }];
   }
 
-  private toToolCall(text: string, call: ModelToolCall): PlanStep {
+  private toToolCall(text: string, call: ModelToolCall, rest: readonly ModelToolCall[] = []): PlanStep {
+    const then = rest.map((c) => this.makeCall(c));
+    return {
+      kind: 'tool_call', thought: text.trim() || `调用 ${call.name}`, call: this.makeCall(call),
+      ...(then.length > 0 ? { then } : {}),
+    };
+  }
+
+  private makeCall(call: ModelToolCall): ToolCall {
     const args = call.args ?? {};
     const canonical = JSON.stringify(args, Object.keys(args as object).sort());
-    const toolCall: ToolCall = {
+    return {
       callId: asCallId(this.opts.ids?.next('call') ?? `call-${++this.seq}`),
       toolId: asToolId(call.name),
       args,
       argsHash: this.opts.hash ? this.opts.hash(canonical) : simpleHash(canonical),
     };
-    return { kind: 'tool_call', thought: text.trim() || `调用 ${call.name}`, call: toolCall };
   }
 }
 

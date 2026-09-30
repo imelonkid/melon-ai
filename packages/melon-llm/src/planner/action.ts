@@ -63,6 +63,20 @@ export function claimsDone(answer: string): string | null {
   return CLAIM.exec(answer)?.[0] ?? null;
 }
 
+/** 具体的值：邮箱、网址、手机号。「做成了」的答复里提到它们，工具结果里就得有 —— 否则就是没做的那一件。 */
+const CONCRETE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+|https?:\/\/[^\s，。、；）)]+|(?<!\d)1\d{10}(?!\d)/g;
+
+/**
+ * 答复声称做成了，其中提到的具体值哪些在本任务的工具结果里一次都没出现过。
+ *
+ * 守卫③只看「有没有成功做过某件有副作用的事」太粗：「叫我 X，邮箱是 Y」只记了称呼，
+ * 模型却答「邮箱 Y 我记下了」—— 做过一件事，就把两件都说成做了（§10 第 77 条）。
+ */
+export function unbackedValues(answer: string, toolResults: string): readonly string[] {
+  const seen = toolResults.toLowerCase();
+  return [...new Set(answer.match(CONCRETE) ?? [])].filter((v) => !seen.includes(v.toLowerCase()));
+}
+
 /**
  * 「用文字征求对外操作的确认」的说法。实测（第二轮人工验收）：模型读完资料写一句「在发送前想先和你确认一下」，
  * 然后把任务结束了 —— 界面显示「已完成」，邮件没发。对外操作的确认是系统的事（确认卡），不需要模型先用文字问。
@@ -73,6 +87,11 @@ const CONFIRM_ASK = /(确认|同意).{0,12}(发送|发出|发布|删除|提交|�
 export function asksConfirmation(answer: string): string | null {
   return CONFIRM_ASK.exec(answer)?.[0] ?? null;
 }
+
+/** 说做成了，其中某些值却没有任何工具结果对得上：要么真去做，要么如实说没做。 */
+export const unbackedCorrection = (claim: string, values: readonly string[]): string =>
+  `（系统检查：你说「${claim}」，但这个任务里没有任何工具结果提到 ${values.join('、')}。`
+  + '这一部分并没有做。要做就调用对应的工具（一件事调用一次）；不做就如实告诉用户这一部分没有做。）';
 
 export const confirmCorrection =
   '（系统检查：你在用文字征求用户确认，但还没有调用任何工具。对外操作不需要你先用文字确认 ——'
