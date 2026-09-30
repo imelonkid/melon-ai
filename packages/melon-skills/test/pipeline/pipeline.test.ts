@@ -378,3 +378,13 @@ test('跨任务读取被拒 —— 句柄是可猜的，不校验等于开横向
   const out = await invokeAll(h2, task(), call(), 'all-auto');
   assert.equal(out.kind === 'executed' ? out.result.error?.code : '', 'NOT_FOUND');
 });
+
+test('收件人一长串（授权范围超过审计维度上限）也能正常准入：范围只进依据，不进维度', async () => {
+  const h = await harness();
+  const to = 'alice@example.com,bob@example.com,carol@example.com,dave@example.com';
+  const out = await invokeAll(h, task(), { ...toolCall('mail.send', 'h9'), args: { to } }, 'low-risk-auto');
+  assert.equal(out.kind, 'needs-approval', '初版把 scope 放进维度，超 64 字审计抛错，准入跟着失败');
+  const rec = (await h.sink.query({ limit: 10 })).find((r) => r.action === 'approval.decide');
+  assert.equal(rec?.basis?.['scope'], `to=${to}`, '范围仍然可读，在依据里');
+  assert.equal(rec?.dimensions?.['scope'], undefined);
+});

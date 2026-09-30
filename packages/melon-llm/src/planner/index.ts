@@ -51,12 +51,16 @@ export class ReActPlanner implements Planner {
   /** 每一步都带上提示词版本与实际应答的模型，由运行时写进事件日志（§10 第 67 条）。 */
   async plan(input: PlanInput, signal: AbortSignal): Promise<PlanStep> {
     let modelId: string | undefined;
-    const step = await this.decide(input, signal, (id) => { modelId = id; });
+    let egress: string | undefined;
+    const step = await this.decide(input, signal, (id, to) => { modelId = id; egress = to; });
     const promptRef = this.opts.system === undefined ? REACT_PROMPT : this.opts.promptRef;
-    return { ...step, via: { ...(promptRef ? { promptRef } : {}), ...(modelId ? { modelId } : {}) } };
+    return {
+      ...step,
+      via: { ...(promptRef ? { promptRef } : {}), ...(modelId ? { modelId } : {}), ...(egress ? { egress } : {}) },
+    };
   }
 
-  private async decide(input: PlanInput, signal: AbortSignal, answeredBy: (modelId: string) => void): Promise<PlanStep> {
+  private async decide(input: PlanInput, signal: AbortSignal, answeredBy: (modelId: string, egress?: string) => void): Promise<PlanStep> {
     const { task } = input;
     const intent = await this.classify(input, signal);
     // 闲聊 / 纯问答：不召回、不注入任何 tool schema
@@ -90,7 +94,8 @@ export class ReActPlanner implements Planner {
         ...(tools.length > 0 ? { tools, toolChoice: required ? 'required' as const : 'auto' as const } : {}),
         signal,
       });
-      answeredBy(res.modelId);
+      // 只用首选模型：路由给的 egress 与候选同序，第一个就是它
+      answeredBy(res.modelId, decision.egress[0]);
       return res;
     };
 

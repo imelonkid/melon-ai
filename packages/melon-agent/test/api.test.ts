@@ -120,6 +120,17 @@ test('始终允许：同一工具同一范围下次不再问；换了收件人�
     await agent.grants.revoke('mail.send');
     assert.deepEqual(await agent.grants.list(), []);
 
+    // 审计：用户的审批决定、授权的授予与撤销、数据去向都有记录；审计里不出现收件人
+    const rows = [...await agent.stores.audit.query({ limit: 200 })].sort((a, b) => a.seq - b.seq);
+    const byUser = rows.filter((r) => r.action === 'approval.decide' && r.actor.kind === 'user');
+    assert.deepEqual(byUser.map((r) => [r.dimensions?.['decision'], r.outcome]), [['always', 'allow'], ['deny', 'deny']]);
+    assert.deepEqual(rows.filter((r) => r.action === 'policy.change').map((r) => r.dimensions?.['change']), ['grant', 'revoke']);
+    const routes = rows.filter((r) => r.action === 'model.route');
+    assert.ok(routes.length >= 3, '每次问模型都记一条数据去向');
+    assert.equal(routes[0]!.dimensions?.['egress'], 'test');
+    // 授权范围可读，放在依据里（维度有长度上限）
+    assert.deepEqual(rows.filter((r) => r.action === 'policy.change').map((r) => r.basis?.['scope']), ['to=a@x.com', '*']);
+
     const ask4 = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
     const t4 = await agent.run('买纸');
     const waiting = await ask4;

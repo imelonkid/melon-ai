@@ -193,6 +193,8 @@ export interface ApprovalRequest {
 export interface PlanVia {
   readonly promptRef?: PromptRef;
   readonly modelId?: string;
+  /** 这一步的上下文发给了哪家（`ModelEntry.egress`）。运行时据此记「数据去向」审计。 */
+  readonly egress?: string;
 }
 
 export type PlanStep = (

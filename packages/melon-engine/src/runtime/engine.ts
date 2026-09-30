@@ -85,7 +85,24 @@ export class Runtime implements AgentEngine {
   }
 
   async resolveApproval(id: TaskId, callId: string, decision: ApprovalDecision): Promise<void> {
+    const task = await this.deps.tasks.get(id);
     await this.advance(id, { t: 'ApprovalResolved', callId: callId as never, decision });
+    // 用户的决定要进审计：此前只记了「需要询问」，「是谁、在什么时候批的」只在任务的事件日志里，
+    // 任务按保留期清掉就没了
+    if (this.deps.audit && task) {
+      await this.deps.audit.record({
+        at: this.deps.now(),
+        actor: { kind: 'user', id: 'user' },
+        action: 'approval.decide',
+        resource: { kind: 'tool-call', ref: callId },
+        outcome: decision === 'deny' ? 'deny' : 'allow',
+        traceId: task.trace.traceId,
+        spanId: task.trace.spanId,
+        taskId: task.id,
+        dimensions: { toolId: task.pendingCall?.toolId ?? 'unknown', decision },
+        basis: { decidedBy: 'user', decision },
+      });
+    }
   }
 
   /**

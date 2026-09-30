@@ -59,6 +59,8 @@ export type AdmitOutcome =
  * 「记录」段只写审计。事件由运行时追加 —— 事件日志是单写者，
  * 管线并发调用多个工具时不能各自往里写。
  */
+const withoutScope = ({ scope: _scope, ...rest }: Record<string, string | number | boolean>) => rest;
+
 export class ToolPipeline {
   private readonly breaker = new CircuitBreaker();
   /** 没有幂等表时的重复调用缓存（进程内，有上限）。有幂等表时用它，重启后也生效。 */
@@ -292,13 +294,14 @@ export class ToolPipeline {
       at: g.grantedAt,
       actor: { kind: 'user', id: 'user' },
       action: 'policy.change',
-      resource: { kind: 'grant', ref: `${g.toolId} ${g.scope}` },
+      resource: { kind: 'grant', ref: g.toolId },
       outcome: 'allow',
       traceId: task.trace.traceId,
       spanId: task.trace.spanId,
       taskId: task.id,
-      dimensions: { toolId: g.toolId, scope: g.scope, change: 'grant' },
-      basis: { decision: 'always', callId: call.callId },
+      dimensions: { toolId: g.toolId, change: 'grant' },
+      // 范围可读（`scope.ts`：用户要能复核授权过什么），放在依据里 —— 维度有长度上限，多个收件人就超了
+      basis: { decision: 'always', callId: call.callId, scope: g.scope },
     });
     return g;
   }
@@ -319,7 +322,8 @@ export class ToolPipeline {
       traceId: task.trace.traceId,
       spanId: task.trace.spanId,
       taskId: task.id,
-      dimensions: { toolId: call.toolId, ...dimensions },
+      // scope 是收件人这类内容、长度不定：维度有 64 字上限（超了审计抛错，准入跟着失败），只放进依据
+      dimensions: { toolId: call.toolId, ...withoutScope(dimensions) },
       basis: dimensions,
     });
   }

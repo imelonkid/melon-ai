@@ -114,6 +114,7 @@ export async function assemble(opts: AssembleOptions): Promise<AssembledAgent> {
     episodes: stores.episodes,
     pipeline,
     planner: opts.planner,
+    audit,
     ids, tracer, logger,
     now: () => clock.now(),
     transaction: stores.transaction,

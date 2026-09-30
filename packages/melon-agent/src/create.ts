@@ -364,7 +364,20 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     },
     grants: {
       list: (id) => stores.grants.listByAgent(asAgentId(id ?? defaultAgent)),
-      revoke: (toolId, scope, id) => stores.grants.revoke(asAgentId(id ?? defaultAgent), toolId, scope),
+      async revoke(toolId, scope, id) {
+        await stores.grants.revoke(asAgentId(id ?? defaultAgent), toolId, scope);
+        // 授权的增删都要能追溯：授予在管线里记，撤销在这里记
+        await base.audit.record({
+          at: platform.clock.now(),
+          actor: { kind: 'user', id: 'user' },
+          action: 'policy.change',
+          resource: { kind: 'grant', ref: toolId },
+          outcome: 'ok',
+          traceId: platform.tracer.root().traceId,
+          dimensions: { toolId, change: 'revoke', all: scope === undefined },
+          basis: { change: 'revoke', scope: scope ?? '*' },
+        });
+      },
     },
     models: {
       get ready() { return pool.ready; },

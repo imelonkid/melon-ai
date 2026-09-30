@@ -1,5 +1,5 @@
 import type {
-  ContextBundle, Effect, EpisodeStore, IdGen, Logger, ModelTool, Planner, PolicyMode, Task,
+  AuditRecorder, ContextBundle, Effect, EpisodeStore, IdGen, Logger, ModelTool, Planner, PolicyMode, Task,
   TaskEvent, TaskSpec, TaskStore, ToolCall, Tracer,
 } from '@melon-ai/core';
 import type { ToolPipeline } from '@melon-ai/skills';
@@ -29,6 +29,11 @@ export interface EffectDeps {
   /** 创建子任务。由 engine 注入，避免 EffectRunner 反向依赖 engine。 */
   readonly createChild: (parentId: Task['id'], spec: TaskSpec) => Promise<Task>;
   readonly scheduleWake: (taskId: Task['id'], at: number) => void;
+  /**
+   * 审计。记「数据去向」（每次问模型，上下文发给了哪家）与用户的审批决定 ——
+   * 这两样都不经过工具管线，管线的审计管不到。不传就不记（测试）。
+   */
+  readonly audit?: AuditRecorder;
 }
 
 /**
@@ -53,6 +58,24 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
           ctl.signal,
         );
         span.end({ ok: true });
+        // 数据去向：这一轮的上下文（任务目标、对话、工具结果）发给了哪家。守卫直接给出的步骤没问模型，不记
+        if (deps.audit && step.via?.modelId) {
+          await deps.audit.record({
+            at: deps.now(),
+            actor: { kind: 'system', id: 'planner' },
+            action: 'model.route',
+            resource: { kind: 'model-call', ref: task.id },
+            outcome: 'ok',
+            traceId: task.trace.traceId,
+            spanId: task.trace.spanId,
+            taskId: task.id,
+            dimensions: {
+              modelId: step.via.modelId, egress: step.via.egress ?? 'unknown',
+              step: step.kind, inputTokens: context.totalTokens,
+            },
+            basis: { egress: step.via.egress ?? 'unknown' },
+          });
+        }
         return [{
           taskId: task.id,
           events: [{
