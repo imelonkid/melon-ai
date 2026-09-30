@@ -40,7 +40,11 @@ export function basicContext(episodes: EpisodeStore, opts: BasicContextOptions =
     const messages: Message[] = [
       ...(opts.prelude ? await opts.prelude(task) : []),
       { role: 'user', content: opts.goal ? opts.goal(task) : `任务目标：${task.goal}` },
-      ...entries.map((e) => ({ role: roleOf(e.kind), content: render(e) })),
+      // 工具的调用与结果以 user 角色回灌，但不是用户说的 —— 标出来，规划器据此核对「收件人是不是用户给的」
+      ...entries.map((e) => ({
+        role: roleOf(e.kind), content: render(e),
+        ...(e.kind === 'observation' || e.kind === 'tool_call' || e.kind === 'thought' ? { from: 'tool' as const } : {}),
+      })),
     ];
     return {
       messages,

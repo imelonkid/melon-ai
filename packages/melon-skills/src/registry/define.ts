@@ -23,6 +23,8 @@ export interface FieldSpec {
   readonly maximum?: number;
   /** 字符串的正则（JSON Schema 的 pattern）。不合格的调用在**问用户之前**就被退回给模型。 */
   readonly pattern?: string;
+  /** 值必须是用户自己说过的（收件人、金额……）。见 `ToolDescriptor.userSupplied`。 */
+  readonly fromUser?: boolean;
   readonly optional?: boolean;
 }
 export type InputShape = Readonly<Record<string, FieldShorthand | FieldSpec>>;
@@ -91,12 +93,20 @@ export function defineTool<A = Record<string, unknown>>(spec: ToolSpec<A>): Tool
     ...(spec.untrustedOutput ? { untrustedOutput: true } : {}),
     ...(spec.triggers?.length ? { triggers: spec.triggers } : {}),
     ...(spec.outputLimit ? { outputLimit: spec.outputLimit } : {}),
+    ...(userSuppliedOf(spec.input) ? { userSupplied: userSuppliedOf(spec.input)! } : {}),
   };
   const handler: ToolHandler = async (args, ctx) => {
     const out = await spec.run(args as A, ctx);
     return typeof out === 'string' ? { summary: out } : out;
   };
   return spec.when ? { descriptor, handler, when: spec.when } : { descriptor, handler };
+}
+
+/** 简写里标了 fromUser 的参数名。 */
+function userSuppliedOf(input: ToolSpec['input']): readonly string[] | null {
+  if (!input || 'properties' in input) return null;
+  const keys = Object.entries(input as InputShape).filter(([, f]) => typeof f === 'object' && f.fromUser).map(([k]) => k);
+  return keys.length > 0 ? keys : null;
 }
 
 /** 简写 → JSON Schema。已经是 JSON Schema（有 properties）的原样返回。 */

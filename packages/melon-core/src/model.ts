@@ -18,6 +18,12 @@ export interface Message {
    * 适配器把它翻译成各家的缓存机制（不支持就忽略）。
    */
   readonly cacheBoundary?: boolean;
+  /**
+   * 这条消息是谁说的。observation 这类工具结果也以 user 角色回灌（模型把它当「刚发生的事实」），
+   * 但它**不是用户说的** —— 判断「收件人是不是用户给的」时必须分开（见 `ToolDescriptor.userSupplied`）。
+   * 不填按用户说的算。适配器不发这个字段。
+   */
+  readonly from?: 'user' | 'host' | 'tool';
 }
 
 /**
@@ -40,6 +46,7 @@ export interface ModelTool {
    */
   readonly risk?: RiskClass;
   readonly triggers?: readonly string[];
+  readonly userSupplied?: readonly string[];
 }
 
 /** 模型选择的工具调用。 */

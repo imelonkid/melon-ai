@@ -175,6 +175,7 @@ export class ToolRegistry implements ToolResolver {
         input: { additionalProperties: false, ...t.descriptor.input, type: 'object' },
         risk: t.descriptor.risk,
         ...(t.descriptor.triggers?.length ? { triggers: t.descriptor.triggers } : {}),
+        ...(t.descriptor.userSupplied?.length ? { userSupplied: t.descriptor.userSupplied } : {}),
       }));
   }
 

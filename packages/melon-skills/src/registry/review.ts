@@ -111,6 +111,9 @@ export function reviewTool(d: ToolDescriptor): ToolReview {
   for (const k of d.scopeKeys ?? []) {
     if (!(k in props)) err(`授权范围引用的参数 ${k} 不存在`);
   }
+  for (const k of d.userSupplied ?? []) {
+    if (!(k in props)) err(`userSupplied 引用的参数 ${k} 不存在`);
+  }
 
   // ── 净化 ──
   const rawTexts = [d.description, ...Object.values(props).map((p) => String(p['description'] ?? '')), ...(d.triggers ?? [])];

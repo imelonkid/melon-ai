@@ -6,7 +6,7 @@ import { asCallId, asToolId } from '@melon-ai/core';
 import { REACT_PROMPT, REACT_SYSTEM } from './prompt.js';
 import {
   DEFAULT_ACTION_WORDS, asksConfirmation, claimsDone, confirmCorrection, correctionFor, isActionTool,
-  matchActionTools, mentionsAction,
+  matchActionTools, mentionsAction, supplyCorrection, unsuppliedValues,
 } from './action.js';
 
 export * from './prompt.js';
@@ -80,12 +80,37 @@ export class ReActPlanner implements Planner {
       signal,
     });
 
+    // ── 参数来源核对：「必须是用户给的」参数（收件人……），值得在用户说过的话里出现过 ──
+    const userText = [task.goal, ...input.context.messages
+      .filter((m) => m.role === 'user' && (m.from ?? 'user') === 'user').map((m) => m.content)].join('\n');
+    const bad = (c: ModelToolCall) => unsuppliedValues((c.args ?? {}) as Record<string, unknown>, tools.find((t) => t.name === c.name), userText);
+    const accept = async (text: string, c: ModelToolCall, base: readonly Message[]): Promise<PlanStep> => {
+      const miss = bad(c);
+      if (!miss) return this.toToolCall(text, c);
+      // 退回一次：让它去问用户。这一轮不强制调工具 —— 缺的信息只能问用户
+      const retry = await generate(
+        [...base, { role: 'assistant', content: text.trim() || `（准备调用 ${c.name}）` }, { role: 'user', content: supplyCorrection(miss.field, miss.values) }],
+        false,
+      );
+      const again = retry.toolCalls?.[0];
+      if (again && !bad(again)) return this.toToolCall(retry.text, again);
+      const answer = retry.text.trim();
+      if (again || !answer) {
+        return {
+          kind: 'abort',
+          thought: `参数 ${miss.field} 的值不是用户给的：${miss.values.join('、')}`,
+          reason: `这件事没有做成：${miss.field} 需要你提供（Agent 填的「${miss.values.join('、')}」不是你给的），所以没有执行。`,
+        };
+      }
+      return { kind: 'final', thought: '参数不是用户给的，改为向用户询问', answer };
+    };
+
     const res = await generate(messages, mustAct);
     if (res.stopReason === 'filtered') {
       return { kind: 'final', thought: '被安全策略拦截', answer: res.text };
     }
     const call = res.toolCalls?.[0];
-    if (call) return this.toToolCall(res.text, call);
+    if (call) return accept(res.text, call, messages);
 
     // ── 动作守卫③：答复里说做成了，本任务却没有成功执行过任何有副作用的工具 ──
     const answer = res.text.trim() || '（模型没有返回内容）';
@@ -101,7 +126,7 @@ export class ReActPlanner implements Planner {
         tools.some(isActionTool),
       );
       const again = retry.toolCalls?.[0];
-      if (again) return this.toToolCall(retry.text, again);
+      if (again) return accept(retry.text, again, messages);
       const second = retry.text.trim();
       if (!second || claimsDone(second)) {
         return {
@@ -123,7 +148,7 @@ export class ReActPlanner implements Planner {
         true,
       );
       const again = retry.toolCalls?.[0];
-      if (again) return this.toToolCall(retry.text, again);
+      if (again) return accept(retry.text, again, messages);
       const second = retry.text.trim();
       if (!second || asksConfirmation(second) || claimsDone(second)) {
         return {

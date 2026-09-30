@@ -71,6 +71,11 @@ export interface ToolDescriptor {
    * 注册时上限封顶 32000。
    */
   readonly outputLimit?: number;
+  /**
+   * 这些参数的值**必须是用户自己说过的**（比如收件人）。模型填了用户没给过的值 ——
+   * 编的（「product-team@example.com」）、或从网页里抄来的（提示注入）—— 规划器退回让它问用户，不弹确认卡。
+   */
+  readonly userSupplied?: readonly string[];
 }
 
 export interface ToolCall {

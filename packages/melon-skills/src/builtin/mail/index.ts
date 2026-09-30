@@ -97,7 +97,8 @@ export class MailSkillProvider implements SkillProvider {
       triggers: MAIL_TRIGGERS,
       input: {
         to: {
-          type: 'string', pattern: RECIPIENTS_PATTERN,
+          // 收件人必须是用户说过的：不许编（第二轮验收：模型填了 product-team@example.com），也不许从网页里抄
+          type: 'string', pattern: RECIPIENTS_PATTERN, fromUser: true,
           description: '收件人要写成完整的邮箱地址，多个用逗号分隔，如 a@example.com, b@example.com；不知道地址就先问用户，不要猜，也不要填占位符',
         },
         subject: { type: 'string', description: '主题' },
