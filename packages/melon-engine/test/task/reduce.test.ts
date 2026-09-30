@@ -397,7 +397,7 @@ test('空观察也算无进展', () => {
   assert.equal(r.task.guard.stagnantSteps, 1);
 });
 
-test('用户拒绝过的操作：记下来；模型原样再要 → 不进准入、不再问用户；再要一次 → 任务结束（第二轮验收：确认卡反复弹）', () => {
+test('用户拒绝过的操作：记下来；模型原样再要 → 不进准入、不再问用户、直接以「没有执行」收尾（第二轮验收：确认卡反复弹）', () => {
   const call = toolCall();
   const asking = fresh({ state: 'AWAITING_APPROVAL', pendingCall: call });
   const denied = R(asking, { t: 'ApprovalResolved', callId: call.callId, decision: 'deny' });
@@ -409,8 +409,8 @@ test('用户拒绝过的操作：记下来；模型原样再要 → 不进准入
   assert.deepEqual(again.effects, [{ k: 'Emit', taskId: TASK_ID, event: { t: 'RepeatDenied', toolId: call.toolId, times: 1 } }]);
   assert.equal(again.task.pendingCall, undefined, '不进准入');
 
-  const first = R(again.task, { t: 'RepeatDenied', toolId: call.toolId, times: 1 });
-  assert.match((first.effects[0] as { event: { summary: string } }).event.summary, /这次没有再问用户，也没有执行/);
-  const second = R({ ...first.task, state: 'PLANNING' }, { t: 'RepeatDenied', toolId: call.toolId, times: 2 });
-  assert.deepEqual((second.effects[0] as { event: { t: string; outcome: { status: string } } }).event.outcome.status, 'FAILED');
+  const ended = R(again.task, { t: 'RepeatDenied', toolId: call.toolId, times: 1 });
+  assert.deepEqual(ended.effects, [
+    { k: 'Emit', taskId: TASK_ID, event: { t: 'Settled', outcome: { status: 'SUCCEEDED', answer: '你拒绝了这个操作，它没有执行。' } } },
+  ], '直接收尾：不再给模型一轮，也不记失败');
 });

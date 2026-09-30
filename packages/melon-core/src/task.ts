@@ -233,7 +233,7 @@ export type TaskEvent =
   | { readonly t: 'BudgetExhausted'; readonly dimension: BudgetDimension }
   | { readonly t: 'NoProgress'; readonly steps: number }
   | { readonly t: 'LoopDetected'; readonly argsHash: string; readonly times: number }
-  /** 模型又请求了一个用户已经拒绝过的操作。第一次回喂纠偏、不问用户；再有就结束任务。 */
+  /** 模型又请求了一个用户已经拒绝过的操作。不问用户、不执行，任务以「没有执行」收尾。 */
   | { readonly t: 'RepeatDenied'; readonly toolId: string; readonly times: number }
   | { readonly t: 'Cancelled'; readonly reason?: string }
   | { readonly t: 'Settled'; readonly outcome: Outcome };

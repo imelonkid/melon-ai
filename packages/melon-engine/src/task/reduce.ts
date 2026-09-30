@@ -227,18 +227,11 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
     }
 
     case 'RepeatDenied':
-      if (event.times >= 2) {
-        return {
-          task: patch({ deniedRepeats: event.times }, 'OBSERVING'),
-          effects: [settle(task.id, { status: 'FAILED', reason: '你拒绝了这个操作，它没有执行；Agent 仍在反复请求，任务已停止。' })],
-        };
-      }
+      // 模型又要用户已经拒绝过的操作：直接收尾，结果是「按用户的选择没有执行」。
+      // 不再给它一轮 —— 实测回喂纠偏后 DeepSeek 仍会原样再要；也不记失败 —— 用户只是做了选择
       return {
         task: patch({ deniedRepeats: event.times }, 'OBSERVING'),
-        effects: [{
-          k: 'Emit', taskId: task.id,
-          event: { t: 'Observed', summary: `用户已经拒绝过这个操作（${event.toolId}），这次没有再问用户，也没有执行。不要再请求它；直接告诉用户没有执行，或者换一种不需要这个操作的办法。` },
-        }],
+        effects: [settle(task.id, { status: 'SUCCEEDED', answer: '你拒绝了这个操作，它没有执行。' })],
       };
 
     case 'LoopDetected':

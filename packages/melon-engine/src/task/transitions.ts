@@ -48,7 +48,7 @@ export const TRANSITIONS: Readonly<Record<string, Transition>> = {
   'OBSERVING+Observed': D(['PLANNING', 'OBSERVING'], '预算/守卫触发时留在 OBSERVING'),
   'OBSERVING+BudgetExhausted': T('OBSERVING', '记录后由 reducer 发 Settled'),
   'OBSERVING+LoopDetected': T('OBSERVING'),
-  'OBSERVING+RepeatDenied': D(['OBSERVING', 'PLANNING'], '第二次重复请求时直接结束'),
+
   'OBSERVING+NoProgress': T('OBSERVING'),
   'OBSERVING+Settled': D(['SUCCEEDED', 'FAILED', 'CANCELLED']),
 
