@@ -4,7 +4,7 @@ import type {
 import { DEFAULT_GUARDS, IllegalTransitionError, TERMINAL_STATES } from '@melon-ai/core';
 import { lookup } from './transitions.js';
 import { addUsage, exhausted } from './budget.js';
-import { callKey, detectLoop, detectNoProgress, observe, recordCall } from './guards.js';
+import { detectLoop, detectNoProgress, observe, recordCall } from './guards.js';
 
 export interface ReduceOptions {
   readonly now: number;
@@ -87,7 +87,7 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
           };
         case 'tool_call': {
           // 用户拒绝过的同一个操作：不进准入、不再问用户（规则保证，不指望模型自觉）
-          if ((task.denied ?? []).includes(callKey(step.call))) {
+          if ((task.denied ?? []).includes(step.call.toolId)) {
             return {
               task: patch({ usage: withUsage }, 'PLANNING'),
               effects: [{ k: 'Emit', taskId: task.id, event: { t: 'RepeatDenied', toolId: step.call.toolId, times: (task.deniedRepeats ?? 0) + 1 } }],
@@ -169,7 +169,7 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
 
     case 'ApprovalResolved': {
       if (event.decision === 'deny') {
-        const key = task.pendingCall ? callKey(task.pendingCall) : null;
+        const key = task.pendingCall ? task.pendingCall.toolId : null;
         return {
           task: patch(key && !(task.denied ?? []).includes(key) ? { denied: [...(task.denied ?? []), key] } : {}, 'OBSERVING', true),
           effects: [{

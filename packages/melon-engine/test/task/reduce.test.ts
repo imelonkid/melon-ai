@@ -401,11 +401,12 @@ test('用户拒绝过的操作：记下来；模型原样再要 → 不进准入
   const call = toolCall();
   const asking = fresh({ state: 'AWAITING_APPROVAL', pendingCall: call });
   const denied = R(asking, { t: 'ApprovalResolved', callId: call.callId, decision: 'deny' });
-  assert.deepEqual(denied.task.denied, [`${call.toolId}#${call.argsHash}`]);
+  assert.deepEqual(denied.task.denied, [call.toolId], '按工具记：改了措辞再要也算同一个操作');
   const obs = denied.effects[0] as { event: { summary: string } };
   assert.match(obs.event.summary, /没有执行[\s\S]*不要再请求[\s\S]*不要用文字再征求/);
 
-  const again = R({ ...denied.task, state: 'PLANNING' }, { t: 'PlanProduced', step: { kind: 'tool_call', thought: 't', call }, usage: usage() });
+  const reworded = { ...call, callId: 'c-2' as never, argsHash: 'different' };
+  const again = R({ ...denied.task, state: 'PLANNING' }, { t: 'PlanProduced', step: { kind: 'tool_call', thought: 't', call: reworded }, usage: usage() });
   assert.deepEqual(again.effects, [{ k: 'Emit', taskId: TASK_ID, event: { t: 'RepeatDenied', toolId: call.toolId, times: 1 } }]);
   assert.equal(again.task.pendingCall, undefined, '不进准入');
 

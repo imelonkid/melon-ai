@@ -311,13 +311,13 @@ test('收件人是用户写的（目标里、或之前几轮用户说过）→ �
 test('动作守卫⑤（M12 复现）：拒绝之后答复又用文字征求确认 → 按用户的决定收尾，不用模型的话', async () => {
   const m = new StubModel([{ text: '要我发这封邮件的话，需要先确认一下收件人……确认要发送吗？' }]);
   const step = await new ReActPlanner({ router: router(m) }).plan(
-    withTask({ goal: '发邮件给 a@x.com', toolsCalled: ['mail.send'], denied: ['mail.send#h'], usage: { steps: 3, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
+    withTask({ goal: '发邮件给 a@x.com', toolsCalled: ['mail.send'], denied: ['mail.send'], usage: { steps: 3, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
   assert.deepEqual([step.kind, step.kind === 'final' ? step.answer : ''], ['final', '你拒绝了这个操作，它没有执行。']);
 });
 
 test('动作守卫⑤：拒绝之后如实说明没发 → 用模型自己的话', async () => {
   const m = new StubModel([{ text: '好的，这封邮件没有发送。' }]);
   const step = await new ReActPlanner({ router: router(m) }).plan(
-    withTask({ goal: '发邮件给 a@x.com', toolsCalled: ['mail.send'], denied: ['mail.send#h'], usage: { steps: 3, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
+    withTask({ goal: '发邮件给 a@x.com', toolsCalled: ['mail.send'], denied: ['mail.send'], usage: { steps: 3, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
   assert.deepEqual([step.kind, step.kind === 'final' ? step.answer : ''], ['final', '好的，这封邮件没有发送。']);
 });
