@@ -66,7 +66,7 @@ export class ReActPlanner implements Planner {
         return {
           kind: 'abort',
           thought: `动作词「${verb}」没有匹配的工具`,
-          reason: `没有能完成「${verb}」的工具，这件事没有做。可以在「连接」或技能里接入对应的能力后再试。`,
+          reason: `没有能完成「${verb}」的工具，这件事没有做。`,
         };
       }
     }
