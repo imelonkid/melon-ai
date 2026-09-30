@@ -138,6 +138,13 @@ export class ReActPlanner implements Planner {
       return { kind: 'final', thought: '纠正后如实作答', answer: second };
     }
 
+    // ── 动作守卫⑤：用户已经拒绝过某个操作，答复却又在用文字征求确认 ──
+    // 拒绝后的回喂已经写明「别再用文字征求确认」，实测 DeepSeek 照样写「需要先确认一下收件人……」。
+    // 用户已经做了决定，结果由规则给出，不用模型的话
+    if ((task.denied ?? []).length > 0 && asksConfirmation(answer)) {
+      return { kind: 'final', thought: `拒绝后模型又用文字征求确认（「${asksConfirmation(answer)}」），按用户的决定收尾`, answer: '你拒绝了这个操作，它没有执行。' };
+    }
+
     // ── 动作守卫④：用文字征求对外操作的确认，而对应的工具本任务里一次都没调过 ──
     // 只看和这件事相关的工具（话里或答复里命中它的触发词），不去逼模型调不相干的工具
     const ask = asksConfirmation(answer);
