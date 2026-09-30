@@ -146,6 +146,13 @@ export interface Task {
   readonly toolsSucceeded?: readonly string[];
   /** 本任务里**模型发起过调用**的工具（去重）。动作守卫据此判断「该做的动作有没有尝试过」。 */
   readonly toolsCalled?: readonly string[];
+  /**
+   * 用户拒绝过的调用（`toolId#argsHash`）。同一个任务里**不再为同一个操作去问用户** ——
+   * 模型被拒后常常原样再要一次（实测 DeepSeek 连要 5 次，确认卡一直弹，看起来像「拒绝没用」）。
+   */
+  readonly denied?: readonly string[];
+  /** 模型重复请求被拒操作的次数。 */
+  readonly deniedRepeats?: number;
   /** 当前挂起的审批（state=AWAITING_APPROVAL 时非空）。 */
   readonly pendingCall?: ToolCall;
   /** 正在等待的子任务。 */
@@ -226,6 +233,8 @@ export type TaskEvent =
   | { readonly t: 'BudgetExhausted'; readonly dimension: BudgetDimension }
   | { readonly t: 'NoProgress'; readonly steps: number }
   | { readonly t: 'LoopDetected'; readonly argsHash: string; readonly times: number }
+  /** 模型又请求了一个用户已经拒绝过的操作。第一次回喂纠偏、不问用户；再有就结束任务。 */
+  | { readonly t: 'RepeatDenied'; readonly toolId: string; readonly times: number }
   | { readonly t: 'Cancelled'; readonly reason?: string }
   | { readonly t: 'Settled'; readonly outcome: Outcome };
 

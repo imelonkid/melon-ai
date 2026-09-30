@@ -124,7 +124,10 @@ test('onSubmitted：手动提交与定时触发都会通知宿主', async () => 
       rule: { kind: 'once', at: Date.now() + 5 },
     });
     await new Promise((r) => setTimeout(r, 20));
-    assert.equal(await c.agent.schedules.tick(), 1);
+    // 谁触发都行（调度器创建后会给最近的触发点设闹钟，可能比这里的 tick 先到）——
+    // 要验的是「定时触发时宿主收到通知」，不是「tick 恰好数到 1」。原写法偶发失败
+    await c.agent.schedules.tick();
+    for (let i = 0; i < 50 && seen.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
     await c.agent.drain();
     assert.deepEqual(seen, ['manual', 'schedule']);
   } finally { await c.close(); rmSync(c.dir, { recursive: true, force: true }); }

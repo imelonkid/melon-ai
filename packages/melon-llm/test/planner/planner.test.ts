@@ -151,7 +151,7 @@ test('提示词有版本号 —— 它要进事件日志才能重放', () => {
 // ───────────────────── 动作守卫 ─────────────────────
 
 const MAIL: ModelTool = {
-  name: 'mail.send', description: '发邮件', input: { type: 'object' }, risk: 'external', triggers: ['发邮件', '发给'],
+  name: 'mail.send', description: '发邮件', input: { type: 'object' }, risk: 'external', triggers: ['发邮件', '发送邮件', '发给', '发到'],
 };
 const SEARCH: ModelTool = { name: 'web.search', description: '搜索', input: { type: 'object' }, risk: 'read' };
 const withTask = (over: Partial<PlanInput['task']>, tools: ModelTool[] = [MAIL, SEARCH]): PlanInput => {
@@ -227,4 +227,36 @@ test('动作词按整词匹配：notebook 不算 book，display 不算 pay', asy
   const m = new StubModel([{ text: '好的' }]);
   const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: 'summarize my notebook display settings' }), sig);
   assert.equal(step.kind, 'final');
+});
+
+test('动作守卫④（M10 复现）：「发到我的邮箱」读完资料后用文字征求确认 → 纠正一次并要求调工具；调了就走正常确认', async () => {
+  const m = new StubModel([
+    { text: '在发送前，我想先和你确认一下内容——因为「发送邮件」是对外操作。确认要发送吗？' },
+    { stopReason: 'tool', toolCalls: [{ id: 'x', name: 'mail.send', args: { to: 'a@x.com' } }] },
+  ]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(
+    withTask({ goal: '把今天的新闻摘要发到我的邮箱 a@x.com', toolsCalled: ['web.search'], usage: { steps: 3, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
+  assert.equal(step.kind, 'tool_call');
+  assert.equal(m.requests[1]!.toolChoice, 'required');
+  assert.match(m.requests[1]!.messages.at(-1)!.content, /不需要你先用文字确认/);
+});
+
+test('动作守卫④：纠正后仍用文字征求确认 → 以失败收尾，不能显示成「已完成」', async () => {
+  const m = new StubModel([{ text: '这封邮件我准备这样发，你确认一下' }, { text: '还是就这样发出？' }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: '把摘要发邮件给 a@x.com' , toolsCalled: ['mail.send', 'web.search'].slice(1), usage: { steps: 2, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
+  assert.equal(step.kind, 'abort');
+});
+
+test('动作守卫④：发邮件已经尝试过（被拒或被退回）之后，用文字说明不算违规 —— 不再逼它调工具', async () => {
+  const m = new StubModel([{ text: '好的，没有发送。需要的话告诉我，我再发。确认要发送吗？' }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(
+    withTask({ goal: '发邮件给 a@x.com', toolsCalled: ['mail.send'], usage: { steps: 3, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
+  assert.equal(step.kind, 'final');
+  assert.equal(m.requests.length, 1);
+});
+
+test('动作守卫④：纠正后改为问清缺的信息（收件人地址）→ 正常作答', async () => {
+  const m = new StubModel([{ text: '在发送前想先和你确认一下' }, { text: '请告诉我产品组的邮箱地址。' }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(withTask({ goal: '把新闻发邮件给产品组', usage: { steps: 1, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
+  assert.deepEqual([step.kind, step.kind === 'final' ? step.answer : ''], ['final', '请告诉我产品组的邮箱地址。']);
 });

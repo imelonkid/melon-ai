@@ -115,18 +115,20 @@ export function reviewTool(d: ToolDescriptor): ToolReview {
   // ── 净化 ──
   const rawTexts = [d.description, ...Object.values(props).map((p) => String(p['description'] ?? '')), ...(d.triggers ?? [])];
   if (rawTexts.some((t) => hadHidden(String(t ?? '')))) warn('说明里有不可见字符（零宽、文字方向覆盖等），已去掉');
-  const description = sanitizeText(d.description, DESCRIPTION_MAX);
+  // 说明保留原样（NFC）：NFKC 会把中文的全角标点「：，（」改成半角，模型读到半角说明，回答也跟着用半角
+  const description = sanitizeText(d.description, DESCRIPTION_MAX, 'NFC');
   const cleanProps: Record<string, unknown> = {};
   for (const [k, p] of Object.entries(props)) {
     cleanProps[k] = p['description'] !== undefined
-      ? { ...p, description: sanitizeText(String(p['description']), PARAM_DESCRIPTION_MAX) }
+      ? { ...p, description: sanitizeText(String(p['description']), PARAM_DESCRIPTION_MAX, 'NFC') }
       : p;
   }
   const triggers = (d.triggers ?? []).map((t) => sanitizeText(t, 32).toLowerCase()).filter(Boolean);
 
   // ── 审查 ──
   const allText = [description, ...Object.values(cleanProps).map((p) => String((p as Record<string, unknown>)['description'] ?? ''))].join('\n');
-  for (const why of findInjection(allText)) err(`说明里有提示注入的写法：${why}`);
+  // 审查用 NFKC 形式：全角、兼容字符折成标准形，拿形似字符改写的注入也能查出来
+  for (const why of findInjection(allText.normalize('NFKC'))) err(`说明里有提示注入的写法：${why}`);
   const name = String(d.id).split('.')[1] ?? '';
   if (d.risk === 'read' && SIDE_EFFECT_NAME.test(name)) {
     err(`工具名「${name}」像是有副作用的操作，风险却标成了 read —— 这样执行前不会问用户。请如实标注风险`);

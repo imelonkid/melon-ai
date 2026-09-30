@@ -5,6 +5,7 @@ import type { AddressInfo, Server } from 'node:net';
 import type { ToolContext } from '@melon-ai/core';
 import { ToolError } from '@melon-ai/core';
 import { MAIL_SEND, SMTP_PRESETS, mail, parseRecipients, sendMail, smtpPresetFor, testMail } from '../../src/builtin/mail/index.js';
+import { basicValidator } from '../../src/pipeline/validator.js';
 import type { SmtpConfig } from '../../src/builtin/mail/index.js';
 
 /**
@@ -204,4 +205,13 @@ test('SMTP 预设：按域名认出常见邮箱；认不出返回 null', () => {
   assert.equal(smtpPresetFor('me@corp.example'), null);
   assert.deepEqual([SMTP_PRESETS['163']!.port, SMTP_PRESETS['163']!.secure], [465, true]);
   assert.deepEqual([SMTP_PRESETS['outlook']!.port, SMTP_PRESETS['outlook']!.secure], [587, false]);
+});
+
+test('收件人不是邮箱地址的调用在问用户之前就被参数校验退回（第二轮验收：确认卡上出现「收件人：待填写」）', async () => {
+  const [b] = await mail({ smtp: cfg(1) }).list();
+  const schema = b!.skill.tools[0]!.input;
+  const bad = (to: string) => basicValidator.validate(schema, { to, subject: 'x', body: 'y' });
+  for (const to of ['待填写', '产品组', 'a@b', '']) assert.ok(bad(to).length > 0, to);
+  assert.match(bad('待填写')[0]!.message, /邮箱地址/, '退回原因要告诉模型怎么改');
+  for (const to of ['a@b.com', 'a@b.com, c@d.cn；e@f.com']) assert.deepEqual(bad(to), [], to);
 });

@@ -32,6 +32,7 @@ export const TRANSITIONS: Readonly<Record<string, Transition>> = {
   'PLANNING+Settled': D(['SUCCEEDED', 'FAILED', 'CANCELLED']),
   'PLANNING+Suspended': T('SUSPENDED', '等外部事件或定时'),
   'PLANNING+LoopDetected': T('OBSERVING', '循环拦在准入之前，所以从 PLANNING 发生'),
+  'PLANNING+RepeatDenied': T('OBSERVING', '被拒过的操作拦在准入之前，不再问用户'),
 
   'ADMITTING+AdmissionResolved': D(
     ['EXECUTING', 'AWAITING_APPROVAL', 'OBSERVING'],
@@ -47,6 +48,7 @@ export const TRANSITIONS: Readonly<Record<string, Transition>> = {
   'OBSERVING+Observed': D(['PLANNING', 'OBSERVING'], '预算/守卫触发时留在 OBSERVING'),
   'OBSERVING+BudgetExhausted': T('OBSERVING', '记录后由 reducer 发 Settled'),
   'OBSERVING+LoopDetected': T('OBSERVING'),
+  'OBSERVING+RepeatDenied': D(['OBSERVING', 'PLANNING'], '第二次重复请求时直接结束'),
   'OBSERVING+NoProgress': T('OBSERVING'),
   'OBSERVING+Settled': D(['SUCCEEDED', 'FAILED', 'CANCELLED']),
 

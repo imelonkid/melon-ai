@@ -396,3 +396,21 @@ test('空观察也算无进展', () => {
   const r = R(fresh({ state: 'OBSERVING' }), { t: 'Observed', summary: '' });
   assert.equal(r.task.guard.stagnantSteps, 1);
 });
+
+test('用户拒绝过的操作：记下来；模型原样再要 → 不进准入、不再问用户；再要一次 → 任务结束（第二轮验收：确认卡反复弹）', () => {
+  const call = toolCall();
+  const asking = fresh({ state: 'AWAITING_APPROVAL', pendingCall: call });
+  const denied = R(asking, { t: 'ApprovalResolved', callId: call.callId, decision: 'deny' });
+  assert.deepEqual(denied.task.denied, [`${call.toolId}#${call.argsHash}`]);
+  const obs = denied.effects[0] as { event: { summary: string } };
+  assert.match(obs.event.summary, /没有执行[\s\S]*不要再请求[\s\S]*不要用文字再征求/);
+
+  const again = R({ ...denied.task, state: 'PLANNING' }, { t: 'PlanProduced', step: { kind: 'tool_call', thought: 't', call }, usage: usage() });
+  assert.deepEqual(again.effects, [{ k: 'Emit', taskId: TASK_ID, event: { t: 'RepeatDenied', toolId: call.toolId, times: 1 } }]);
+  assert.equal(again.task.pendingCall, undefined, '不进准入');
+
+  const first = R(again.task, { t: 'RepeatDenied', toolId: call.toolId, times: 1 });
+  assert.match((first.effects[0] as { event: { summary: string } }).event.summary, /这次没有再问用户，也没有执行/);
+  const second = R({ ...first.task, state: 'PLANNING' }, { t: 'RepeatDenied', toolId: call.toolId, times: 2 });
+  assert.deepEqual((second.effects[0] as { event: { t: string; outcome: { status: string } } }).event.outcome.status, 'FAILED');
+});

@@ -4,7 +4,7 @@ import type {
 import { DEFAULT_GUARDS, IllegalTransitionError, TERMINAL_STATES } from '@melon-ai/core';
 import { lookup } from './transitions.js';
 import { addUsage, exhausted } from './budget.js';
-import { detectLoop, detectNoProgress, observe, recordCall } from './guards.js';
+import { callKey, detectLoop, detectNoProgress, observe, recordCall } from './guards.js';
 
 export interface ReduceOptions {
   readonly now: number;
@@ -25,6 +25,9 @@ const clearPending = (t: Task): Task => {
   const { pendingCall: _dropped, ...rest } = t;
   return rest;
 };
+
+/** 用户拒绝后回喂给模型的话。 */
+const DENIED_SUMMARY = '用户拒绝了这次操作，它没有执行。不要再请求同样的操作，也不要用文字再征求一次确认；直接告诉用户没有执行，或者换一种不需要这个操作的办法。';
 
 const settle = (taskId: Task['id'], outcome: Outcome): Effect => ({
   k: 'Emit',
@@ -83,6 +86,13 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
             effects: [{ k: 'RecallSkills', taskId: task.id, query: step.query }],
           };
         case 'tool_call': {
+          // 用户拒绝过的同一个操作：不进准入、不再问用户（规则保证，不指望模型自觉）
+          if ((task.denied ?? []).includes(callKey(step.call))) {
+            return {
+              task: patch({ usage: withUsage }, 'PLANNING'),
+              effects: [{ k: 'Emit', taskId: task.id, event: { t: 'RepeatDenied', toolId: step.call.toolId, times: (task.deniedRepeats ?? 0) + 1 } }],
+            };
+          }
           // 先记入守卫窗口，再判循环 —— 循环要拦在执行之前
           const guard = recordCall(task.guard, step.call, g);
           const looping = detectLoop(guard, g);
@@ -159,11 +169,13 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
 
     case 'ApprovalResolved': {
       if (event.decision === 'deny') {
+        const key = task.pendingCall ? callKey(task.pendingCall) : null;
         return {
-          task: patch({}, 'OBSERVING', true),
+          task: patch(key && !(task.denied ?? []).includes(key) ? { denied: [...(task.denied ?? []), key] } : {}, 'OBSERVING', true),
           effects: [{
             k: 'Emit', taskId: task.id,
-            event: { t: 'Observed', callId: event.callId, summary: '用户拒绝了这次操作。' },
+            // 写死给模型的话：没执行、别再要、别用文字再征求一遍（实测被拒后会写「确认要发送吗？」然后结束）
+            event: { t: 'Observed', callId: event.callId, summary: DENIED_SUMMARY },
           }],
         };
       }
@@ -213,6 +225,21 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
         effects: [{ k: 'CallPlanner', taskId: task.id }],
       };
     }
+
+    case 'RepeatDenied':
+      if (event.times >= 2) {
+        return {
+          task: patch({ deniedRepeats: event.times }, 'OBSERVING'),
+          effects: [settle(task.id, { status: 'FAILED', reason: '你拒绝了这个操作，它没有执行；Agent 仍在反复请求，任务已停止。' })],
+        };
+      }
+      return {
+        task: patch({ deniedRepeats: event.times }, 'OBSERVING'),
+        effects: [{
+          k: 'Emit', taskId: task.id,
+          event: { t: 'Observed', summary: `用户已经拒绝过这个操作（${event.toolId}），这次没有再问用户，也没有执行。不要再请求它；直接告诉用户没有执行，或者换一种不需要这个操作的办法。` },
+        }],
+      };
 
     case 'LoopDetected':
       // 注入一条纠偏 observation，不终止任务 —— 给模型一次换路的机会

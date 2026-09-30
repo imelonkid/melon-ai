@@ -21,6 +21,8 @@ export interface FieldSpec {
   readonly enum?: readonly (string | number)[];
   readonly minimum?: number;
   readonly maximum?: number;
+  /** 字符串的正则（JSON Schema 的 pattern）。不合格的调用在**问用户之前**就被退回给模型。 */
+  readonly pattern?: string;
   readonly optional?: boolean;
 }
 export type InputShape = Readonly<Record<string, FieldShorthand | FieldSpec>>;
@@ -113,6 +115,7 @@ export function toSchema(input: InputShape | JSONSchema): JSONSchema {
       ...(f.enum ? { enum: f.enum } : {}),
       ...(f.minimum !== undefined ? { minimum: f.minimum } : {}),
       ...(f.maximum !== undefined ? { maximum: f.maximum } : {}),
+      ...(f.pattern ? { pattern: f.pattern } : {}),
     };
     properties[key] = {
       ...(isArray ? { type: 'array', items: item } : item),

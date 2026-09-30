@@ -62,6 +62,22 @@ export function claimsDone(answer: string): string | null {
   return CLAIM.exec(answer)?.[0] ?? null;
 }
 
+/**
+ * 「用文字征求对外操作的确认」的说法。实测（第二轮人工验收）：模型读完资料写一句「在发送前想先和你确认一下」，
+ * 然后把任务结束了 —— 界面显示「已完成」，邮件没发。对外操作的确认是系统的事（确认卡），不需要模型先用文字问。
+ */
+const CONFIRM_ASK = /(确认|同意).{0,12}(发送|发出|发布|删除|提交|支付|付款|转账|下单)|(发送|发出|发布|删除|提交|支付|付款|转账|下单)(之)?前.{0,15}(确认|同意)|(要|可以|现在)(发送|发出|发布|删除|提交)吗|这样发(出)?(吗|？|\?)|就这样发|(准备|打算)(这样|这么)?(发|发送|发出).{0,20}确认|(发|发送|发出).{0,20}(你|您)?确认一下|\bcheck (this|it) with you\b.{0,40}\b(send|email|mail|post)|\bbefore (i )?(send|sending|post|posting|publish)\b|\b(confirm|shall i|should i|do you want me to)\b.{0,40}\b(send|post|delete|publish|submit|pay)\b/i;
+
+/** 答复里「用文字征求确认」的说法（原文片段），没有则 null。 */
+export function asksConfirmation(answer: string): string | null {
+  return CONFIRM_ASK.exec(answer)?.[0] ?? null;
+}
+
+export const confirmCorrection =
+  '（系统检查：你在用文字征求用户确认，但还没有调用任何工具。对外操作不需要你先用文字确认 ——'
+  + '直接调用对应的工具，系统会在执行前弹出确认卡，用户在卡上决定。'
+  + '如果是信息不全（比如不知道收件人的邮箱地址），就向用户问清楚缺的那一项，而不是征求确认。）';
+
 /** 给模型的纠正。以 user 角色追加 —— 规划器会丢弃上下文里的 system 消息。 */
 export const correctionFor = (claim: string): string =>
   `（系统检查：你的回答里说「${claim}」，但这个任务里没有成功执行过任何对应的工具，所以这件事实际上没有做。`

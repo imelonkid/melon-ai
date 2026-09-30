@@ -161,10 +161,10 @@ export function reviewSkillDir(dirPath: string, limits: ScanLimits = {}): AgentS
   if (name !== dirName) warnings.push(`名字「${name}」与目录名「${dirName}」不一致`);
   if (/anthropic|claude/.test(name)) warnings.push('名字里含有保留词 anthropic / claude');
   const rawDesc = asString(parsed.fields['description']) ?? '';
-  const description = sanitizeText(rawDesc, 1024);
+  const description = sanitizeText(rawDesc, 1024, 'NFC');
   if (!description) reasons.push('缺少 description —— 没有它 Agent 无从判断什么时候用这个技能');
   if (rawDesc.length > 1024) warnings.push('description 超过 1024 字，已截断');
-  if (/<[a-z/][^>]*>/i.test(description)) reasons.push('description 里不能有 XML 标签');
+  if (/<[a-z/][^>]*>/i.test(description.normalize('NFKC'))) reasons.push('description 里不能有 XML 标签');
   if (parsed.fields['allowed-tools'] !== undefined) {
     warnings.push('allowed-tools 不生效：技能不能给自己预先授权，执行脚本仍要逐次确认');
   }
@@ -178,7 +178,7 @@ export function reviewSkillDir(dirPath: string, limits: ScanLimits = {}): AgentS
   // ── 净化 + 审查说明文字 ──
   const body = sanitizeText(parsed.body, BODY_MAX, 'NFC').replace(/\$\{CLAUDE_SKILL_DIR\}/g, dir);
   if (parsed.body.length > BODY_MAX) warnings.push('SKILL.md 正文过长，已截断');
-  for (const why of findInjection(description)) reasons.push(`description 里有提示注入的写法：${why}`);
+  for (const why of findInjection(description.normalize('NFKC'))) reasons.push(`description 里有提示注入的写法：${why}`);
   for (const why of findInjection(body.normalize('NFKC'))) {
     if (HARD_INJECTION.has(why)) reasons.push(`SKILL.md 正文里有提示注入的写法：${why}`);
     else warnings.push(`SKILL.md 正文里出现「${why}」，如果只是示例可以忽略`);

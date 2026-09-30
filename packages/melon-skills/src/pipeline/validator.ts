@@ -17,13 +17,15 @@ type Spec = {
   items?: Spec;
   minimum?: number;
   maximum?: number;
+  pattern?: string;
+  description?: string;
   properties?: Record<string, Spec>;
   required?: readonly string[];
 };
 
 /**
  * 默认参数校验器：JSON Schema 里工具参数最常用的那一小部分 ——
- * `required` / `type`（含 array、integer）/ `enum` / `items` / `minimum` / `maximum`，
+ * `required` / `type`（含 array、integer）/ `enum` / `items` / `minimum` / `maximum` / `pattern`，
  * 嵌套对象递归。
  *
  * 引擎不内置 ajv（体积，§ports/tools 的说明），但宿主也不该为了跑起来先写一个校验器。
@@ -44,6 +46,11 @@ function check(spec: Spec, v: unknown, path: string, out: ValidationIssue[]): vo
   }
   if (spec.enum && !spec.enum.includes(v)) {
     out.push({ path: path || '/', message: `应为 ${spec.enum.join(' / ')} 之一` });
+    return;
+  }
+  // pattern 不合格时把字段说明带上 —— 这条会回喂给模型，它得知道该怎么改（比如「收件人要写成邮箱地址」）
+  if (typeof v === 'string' && spec.pattern && !new RegExp(spec.pattern, 'u').test(v)) {
+    out.push({ path: path || '/', message: `格式不对${spec.description ? `（${spec.description}）` : ''}` });
     return;
   }
   if (typeof v === 'number') {

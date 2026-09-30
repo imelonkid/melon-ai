@@ -5,7 +5,8 @@ import type {
 import { asCallId, asToolId } from '@melon-ai/core';
 import { REACT_PROMPT, REACT_SYSTEM } from './prompt.js';
 import {
-  DEFAULT_ACTION_WORDS, claimsDone, correctionFor, isActionTool, matchActionTools, mentionsAction,
+  DEFAULT_ACTION_WORDS, asksConfirmation, claimsDone, confirmCorrection, correctionFor, isActionTool,
+  matchActionTools, mentionsAction,
 } from './action.js';
 
 export * from './prompt.js';
@@ -110,6 +111,28 @@ export class ReActPlanner implements Planner {
         };
       }
       return { kind: 'final', thought: '纠正后如实作答', answer: second };
+    }
+
+    // ── 动作守卫④：用文字征求对外操作的确认，而对应的工具本任务里一次都没调过 ──
+    // 只看和这件事相关的工具（话里或答复里命中它的触发词），不去逼模型调不相干的工具
+    const ask = asksConfirmation(answer);
+    const untried = matchActionTools(`${task.goal}\n${answer}`, tools).filter((t) => !called.includes(t.name));
+    if (ask && untried.length > 0) {
+      const retry = await generate(
+        [...messages, { role: 'assistant', content: answer }, { role: 'user', content: confirmCorrection }],
+        true,
+      );
+      const again = retry.toolCalls?.[0];
+      if (again) return this.toToolCall(retry.text, again);
+      const second = retry.text.trim();
+      if (!second || asksConfirmation(second) || claimsDone(second)) {
+        return {
+          kind: 'abort',
+          thought: `模型用文字征求确认（「${ask}」），纠正后仍没有调用 ${untried.map((t) => t.name).join('、')}`,
+          reason: '这件事没有做成：Agent 用文字征求确认，却没有发起操作，所以什么都没有执行。',
+        };
+      }
+      return { kind: 'final', thought: '纠正后向用户问清缺的信息', answer: second };
     }
 
     // 没选工具 = 模型认为可以收敛了（包括向用户追问缺的信息）

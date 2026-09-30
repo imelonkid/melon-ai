@@ -266,3 +266,11 @@ test('技能开关：关掉的不进清单、不能激活；报告里标为已�
     assert.deepEqual(await p.list(), []);
   } finally { r.done(); }
 });
+
+test('技能描述保留中文全角标点', () => {
+  const r = root();
+  try {
+    r.skill('cn-punct', { 'SKILL.md': md('cn-punct', '写周报时用：按「进展，风险」写（每段 5 条）') });
+    assert.equal(scanSkillDirs([r.dir]).skills[0]!.description, '写周报时用：按「进展，风险」写（每段 5 条）');
+  } finally { r.done(); }
+});

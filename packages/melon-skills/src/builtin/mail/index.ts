@@ -47,8 +47,14 @@ export function smtpPresetFor(address: string): string | null {
 /** 发邮件的触发词。用户的话里出现这些，模型就必须真的调用发邮件工具。 */
 export const MAIL_TRIGGERS: readonly string[] = [
   '发邮件', '发送邮件', '发封邮件', '发一封', '邮件发给', '邮件给', '邮件通知', '发信', '发给', '发送给',
-  'send email', 'send an email', 'email to',
+  // 「发到我的邮箱」「寄给」「发至」—— 第二轮人工验收里「发到我的邮箱」没被认出来，模型用文字征求确认就结束了
+  '发到', '发至', '寄给',
+  'send email', 'send an email', 'email to', 'mail to',
 ];
+
+/** 一个或多个邮箱地址（逗号、分号分隔）。收件人不合格的调用在问用户之前就被退回。 */
+const ONE = '[^\\s@,;，；<>]+@[^\\s@,;，；<>]+\\.[^\\s@,;，；<>]+';
+export const RECIPIENTS_PATTERN = `^\\s*${ONE}(\\s*[,;，；]\\s*${ONE})*\\s*$`;
 
 /** 「a@x.com, b@y.com」「a@x.com；b@y.com」→ 地址数组。 */
 export function parseRecipients(to: string): string[] {
@@ -90,7 +96,10 @@ export class MailSkillProvider implements SkillProvider {
       scope: ['to'],
       triggers: MAIL_TRIGGERS,
       input: {
-        to: { type: 'string', description: '收件人邮箱地址，多个用逗号分隔，如 a@example.com, b@example.com' },
+        to: {
+          type: 'string', pattern: RECIPIENTS_PATTERN,
+          description: '收件人要写成完整的邮箱地址，多个用逗号分隔，如 a@example.com, b@example.com；不知道地址就先问用户，不要猜，也不要填占位符',
+        },
         subject: { type: 'string', description: '主题' },
         body: { type: 'string', description: '正文（纯文本）' },
       },
