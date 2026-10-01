@@ -35,7 +35,7 @@ export function parseDeepseekPricing(html: string): PriceSheet {
   if (!vals.input?.idle || !vals.output?.idle) throw new Error('价格表里读不到输入或输出价');
 
   const plain = text(html);
-  const peak = peakOf(plain, vals.input.idle[0]!, vals.input.peak?.[0]);
+  const peak = peakOf(plain, multiplierOf(vals));
   const prices: Record<string, ModelPrice> = {};
   models.forEach((m, i) => {
     prices[m] = {
@@ -52,16 +52,31 @@ export function parseDeepseekPricing(html: string): PriceSheet {
   return { prices, ...(peak ? {} : { notes: ['没读到高峰时段的说明，按全天同价计'] }) };
 }
 
+/**
+ * 高峰是空闲的几倍：每一格「高峰价 / 空闲价」都算一遍，取出现最多的那个。
+ * 只看一格的话，那一格读错（或单独调了价）整个倍数就错了 —— 冒烟测试里改了一格，倍数一度算成 ×0.17。
+ */
+function multiplierOf(vals: Record<string, { idle?: number[]; peak?: number[] }>): number | undefined {
+  const ratios: number[] = [];
+  for (const v of Object.values(vals)) {
+    v.idle?.forEach((idle, i) => { const p = v.peak?.[i]; if (idle > 0 && p !== undefined && p > 0) ratios.push(Math.round((p / idle) * 100) / 100); });
+  }
+  if (ratios.length === 0) return undefined;
+  const count = new Map<number, number>();
+  for (const r of ratios) count.set(r, (count.get(r) ?? 0) + 1);
+  return [...count.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+}
+
 /** 「北京时间周一至周五（不含中国法定节假日）9:00 - 12:00、14:00 - 18:00 为高峰时段」 */
-function peakOf(plain: string, idle: number, peak?: number): PeakPricing | undefined {
+function peakOf(plain: string, multiplier: number | undefined): PeakPricing | undefined {
   const s = /北京时间(周[一二三四五六日]至周[一二三四五六日])[^。；]*?((?:\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}[、，, ]*)+)\s*为高峰时段/.exec(plain);
-  if (!s || !peak || !idle) return undefined;
+  if (!s || !multiplier || multiplier === 1) return undefined;
   const D: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7 };
   const [a, b] = [...s[1]!.matchAll(/周([一二三四五六日])/g)].map((m) => D[m[1]!]!);
   const days = Array.from({ length: b! - a! + 1 }, (_, k) => a! + k);
   const pad = (t: string): string => t.padStart(5, '0');
   const windows = [...s[2]!.matchAll(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g)].map((m) => ({ days, from: pad(m[1]!), to: pad(m[2]!) }));
-  return windows.length ? { multiplier: Math.round((peak / idle) * 100) / 100, timeZone: 'Asia/Shanghai', windows } : undefined;
+  return windows.length ? { multiplier, timeZone: 'Asia/Shanghai', windows } : undefined;
 }
 
 export function deepseekPrices(opts: { fetchImpl?: typeof fetch; url?: string } = {}): PriceSource {

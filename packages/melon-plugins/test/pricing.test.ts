@@ -63,3 +63,12 @@ test('通义：模型 ID 表取第一次出现的（中国内地）、第一档�
   assert.deepEqual([s.prices['qwen3.8-max']!.input, s.prices['qwen3.8-max']!.output], [12, 36], '不是国际站的 14.988');
   assert.equal(s.prices['qwen-max']!.cachedInput, undefined);
 });
+
+test('DeepSeek：高峰倍数取各格里出现最多的 —— 一格读错（或单独调价）不会把倍数带偏', () => {
+  const html = fx('deepseek-pricing.html');
+  const t = html.indexOf('缓存未命中');
+  const j = html.indexOf('>1元<', t);
+  const s = parseDeepseekPricing(html.slice(0, j) + '>12元<' + html.slice(j + '>1元<'.length));
+  assert.equal(s.prices['deepseek-flash']!.input, 12);
+  assert.equal(s.prices['deepseek-flash']!.peak!.multiplier, 2);
+});
