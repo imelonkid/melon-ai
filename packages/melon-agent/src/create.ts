@@ -8,7 +8,7 @@ import type {
 import { TERMINAL_STATES, asAgentId, asScheduleId, asToolId } from '@melon-ai/core';
 import { describeRule, whenToRule } from '@melon-ai/engine';
 import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
-import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelCatalog, ModelPool, PriceBook, ReActPlanner, summarizeUsage, testModel } from '@melon-ai/llm';
+import { DEFAULT_ACTION_WORDS, HeuristicTokenizer, KeywordIntentClassifier, ModelCatalog, ModelPool, PriceBook, ReActPlanner, summarizeUsage, testModel } from '@melon-ai/llm';
 import type {
   FxRates, ModelTestResult, RouteExplanation, RouteStrategy, RoutingRule, RoutingRules, SummaryOptions, UsageSummary,
 } from '@melon-ai/llm';
@@ -18,6 +18,7 @@ import { memoryStorage } from '@melon-ai/store';
 import { assemble } from './assemble.js';
 import type { AssembledAgent } from './assemble.js';
 import { basicContext } from './context.js';
+import { SUMMARY_PROMPT, fitContext } from './budget.js';
 import { withMemory } from './memory.js';
 import { defaultPlatform } from './platform.js';
 
@@ -75,6 +76,11 @@ export interface AgentOptions {
    * `{ enabled }` 让宿主随时开关（设置页的开关），关着时工具不给模型、也不带记忆。
    */
   readonly memory?: boolean | { readonly enabled?: () => boolean };
+  /**
+   * 上下文预算（token，不含系统提示与工具定义）。超出时按段压缩：旧的工具结果截短 → 之前的对话摘要 → 较早的步骤摘要。
+   * 摘要用路由的 `compact`（宿主可以把它路由到便宜的模型），照常记账。默认 24000；`false` 不压缩。
+   */
+  readonly contextBudget?: number | false;
   /**
    * 动作词：话里有这些词、却没有任何工具能做时，引擎直接回答「没有合适的工具」，不让模型编。
    * 在默认词表（`DEFAULT_ACTION_WORDS`）基础上**追加**。
@@ -405,6 +411,42 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     staleVendors = [];
   };
 
+  // ── 上下文预算：任何宿主的上下文装配之后都过一遍（宿主不用自己算长度）──
+  const rawContext = opts.memory
+    ? withMemory(opts.buildContext ?? opts.context ?? basicContext(stores.episodes), stores.memories, memoryOn)
+    : opts.buildContext ?? opts.context ?? basicContext(stores.episodes);
+  const budget = opts.contextBudget === false ? null : (opts.contextBudget ?? 24_000);
+  const tokenizer = new HeuristicTokenizer();
+  // 同一段旧内容每一步都在：摘要按输入缓存，不每步重摘
+  const summaries = new Map<string, Promise<string>>();
+  const summarizeFor = (task: Task) => (text: string, kind: 'history' | 'steps'): Promise<string> => {
+    const key = `${kind}\u0000${text}`;
+    const hit = summaries.get(key);
+    if (hit) return hit;
+    const p = (async () => {
+      const meta = { taskId: task.id, agentId: task.agentId, taskKind: task.kind, trigger: task.trigger.type, purpose: 'compact' };
+      const d = await pool.select('compact', undefined, { needsTools: false, meta });
+      const r = await d.primary.generate({
+        messages: [
+          { role: 'system', content: SUMMARY_PROMPT },
+          { role: 'user', content: `${kind === 'history' ? '之前的对话' : '之前的步骤'}：\n${text}` },
+        ],
+        maxOutputTokens: 800, meta,
+      });
+      return r.text;
+    })();
+    p.catch(() => summaries.delete(key));
+    summaries.set(key, p);
+    if (summaries.size > 200) summaries.delete(summaries.keys().next().value as string);
+    return p;
+  };
+  const buildContext = budget === null ? rawContext : async (task: Task): Promise<ContextBundle> => {
+    const ctx = await rawContext(task);
+    const { bundle, report } = await fitContext(ctx, { budget, tokenizer, summarize: summarizeFor(task) });
+    if (report.actions.length) logger.log('info', '上下文超出预算，已压缩', { taskId: task.id, before: report.before, after: report.after, actions: report.actions.join(',') });
+    return bundle;
+  };
+
   const base = await assemble({
     stores,
     planner,
@@ -412,9 +454,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     validator: opts.validator ?? basicValidator,
     platform,
     policy: policyMode,
-    buildContext: opts.memory
-      ? withMemory(opts.buildContext ?? opts.context ?? basicContext(stores.episodes), stores.memories, memoryOn)
-      : opts.buildContext ?? opts.context ?? basicContext(stores.episodes),
+    buildContext,
     availableTools: opts.availableTools ?? (async (task) => registry.modelTools(task)),
     toolset: opts.toolset ?? (() => registry.toolset()),
     ...(opts.retention ? { retention: opts.retention } : {}),

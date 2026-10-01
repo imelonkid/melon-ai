@@ -33,8 +33,13 @@ export function nowLine(at: number, tz: string = hostTimeZone()): string {
 }
 
 export interface BasicContextOptions {
-  /** 放在任务目标之前的消息，例如宿主的对话历史。 */
+  /** 放在任务目标之前、不压缩的消息，例如宿主的说明。 */
   readonly prelude?: (task: Task) => Promise<readonly Message[]> | readonly Message[];
+  /**
+   * 之前的对话（用户问、助手答），放在 prelude 之后、目标之前。超出上下文预算时引擎先把旧的摘要掉（最后两轮原样保留）——
+   * 宿主可以多给几轮，不用自己算长度。
+   */
+  readonly history?: (task: Task) => Promise<readonly Message[]> | readonly Message[];
   /** 任务目标的写法。默认「任务目标：…」。 */
   readonly goal?: (task: Task) => string;
   readonly window?: number;
@@ -58,6 +63,7 @@ export function basicContext(episodes: EpisodeStore, opts: BasicContextOptions =
     const entries = (await episodes.readEntries(task.episodeId)).slice(-MAX_ENTRIES);
     const messages: Message[] = [
       ...(opts.prelude ? await opts.prelude(task) : []),
+      ...(opts.history ? (await opts.history(task)).map((m) => ({ ...m, part: 'history' as const })) : []),
       { role: 'user', content: opts.goal ? opts.goal(task) : `任务目标：${task.goal}` },
       // 放在目标之后：前面的对话历史每轮不变，能吃到 prompt cache；时间每轮都变
       ...(opts.now === false ? [] : [{
@@ -68,6 +74,8 @@ export function basicContext(episodes: EpisodeStore, opts: BasicContextOptions =
       ...entries.map((e) => ({
         role: roleOf(e.kind), content: render(e),
         ...(e.kind === 'observation' || e.kind === 'tool_call' || e.kind === 'thought' ? { from: 'tool' as const } : {}),
+        // 超出预算时：旧的工具结果先截短，较早的步骤再摘要
+        part: e.kind === 'observation' ? 'result' as const : 'step' as const,
       })),
     ];
     return {

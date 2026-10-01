@@ -29,6 +29,14 @@ export interface Message {
    * `memory` 是之前对话里用户让记住的事 —— 来自用户、写入时过了审查，参数来源核对时算用户说过。
    */
   readonly from?: 'user' | 'host' | 'tool' | 'memory';
+  /**
+   * 这条在上下文里属于哪一段 —— 超出预算时按段压缩（见 agent 的 `fitContext`）：
+   * - `history`：之前的对话（宿主给的问答），旧的先摘要
+   * - `step`：本任务的步骤（调用了什么、模型的想法）
+   * - `result`：本任务的工具结果，旧的先截短
+   * 不标的（宿主的说明、任务目标、当前时间、记忆）不压缩。适配器不发这个字段。
+   */
+  readonly part?: 'history' | 'step' | 'result';
 }
 
 /**
