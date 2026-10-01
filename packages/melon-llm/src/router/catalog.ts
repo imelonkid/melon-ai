@@ -14,7 +14,8 @@ import type { PriceBook } from './prices.js';
  *
  * 防错：
  * - 拉列表失败：用上次成功的，不清空；
- * - 从没拉成功过（离线首次启动）：用有官方价格的 + 这家的默认模型，不至于一个模型都没有；
+ * - 从没拉成功过（首次启动还没拉到、离线）：只用这家的默认模型和用户手动加的，不至于一个模型都没有；
+ *   不从价格文档里猜 —— 文档里常有已弃用的旧别名（DeepSeek 的 deepseek-v4-flash），账号未必能用；
  * - 用户加的模型不在列表里了：标「已下架」，不参与路由（调了也是报错）。
  */
 export class ModelCatalog {
@@ -105,9 +106,9 @@ function expandOne(p: ModelProvider, listing: ModelListing | undefined, book: Pr
   let fallbackId: string | undefined;
   try { fallbackId = p.make().model.id; } catch { /* 默认模型也造不出来：只剩用户加的 */ }
 
-  // 候选：拉到的列表；没拉成功过时用有官方价格的 + 默认模型。再加上用户改过的
+  // 候选：拉到的列表；没拉成功过时只用默认模型（不从价格文档里猜：文档里有已弃用的旧别名，账号未必能用）。再加上用户改过的
   const candidates = new Set<string>([
-    ...(ids ?? [...Object.keys(synced), ...(fallbackId ? [fallbackId] : [])]),
+    ...(ids ?? (fallbackId ? [fallbackId] : [])),
     ...Object.keys(overrides),
   ]);
   const built: Built[] = [];

@@ -92,17 +92,22 @@ test('模型目录：用户的改动优先 —— 关掉、改档次、手填价
   assert.equal(cat.expand().entries.length, 0);
 });
 
-test('模型目录：拉列表失败用上次的；从没拉成功过时用有官方价格的 + 默认模型；换了 key 立即重拉、旧列表作废', async () => {
+test('模型目录：拉列表失败用上次的；从没拉成功过时只用默认模型和手动加的；换了 key 立即重拉、旧列表作废', async () => {
   const st = catalogStore();
   let fail = false;
   const mk = (fingerprint: string) => vendor({ fingerprint, listed: () => { if (fail) throw new Error('HTTP 401'); return ['flash', 'pro']; }, builtin: { flash: { tier: 'standard' }, pro: { tier: 'strong' } } });
 
-  // 离线首次：没列表，用默认模型 + 有官方价格的
+  // 离线首次：没列表，只用默认模型和用户手动加的 —— 不从价格文档里猜：文档里有已弃用的旧别名（DeepSeek 的 deepseek-v4-flash），
+  // 混进来会让首次启动的列表里出现账号其实用不了的模型
   const offline = new ModelCatalog({ store: catalogStore(), now: () => 1 });
-  offline.setProviders([vendor({ listed: () => { throw new Error('offline'); }, builtin: { flash: { tier: 'standard' } } })]);
+  offline.setProviders([vendor({
+    listed: () => { throw new Error('offline'); },
+    builtin: { flash: { tier: 'standard' }, 'flash-old': { tier: 'standard' } },
+    overrides: { mine: { added: true, tier: 'basic' } },
+  })]);
   await offline.refresh();
-  const book = await bookWith({ pro: CNY(4.5, 13.5) });
-  assert.deepEqual(offline.expand(book).entries.map((x) => x.model.id).sort(), ['flash', 'pro']);
+  const book = await bookWith({ pro: CNY(4.5, 13.5), 'flash-old': CNY(1, 4) });
+  assert.deepEqual(offline.expand(book).entries.map((x) => x.model.id).sort(), ['flash', 'mine']);
   assert.equal(offline.expand(book).catalogs[0]!.models[0]!.available, null);
 
   const cat = new ModelCatalog({ store: st, now: () => 1000 });
