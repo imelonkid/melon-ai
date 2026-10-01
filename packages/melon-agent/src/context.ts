@@ -77,9 +77,10 @@ export function basicContext(episodes: EpisodeStore, opts: BasicContextOptions =
     const messages: Message[] = [
       ...(opts.prelude ? await opts.prelude(task) : []),
       ...(opts.history ? (await opts.history(task)).map((m) => ({ ...m, part: 'history' as const })) : []),
-      { role: 'user', content: opts.goal ? opts.goal(task) : `任务目标：${task.goal}` },
-      // 附件：用户给的文件，但内容不是用户说的话（里面的邮箱、「指令」不算用户给的）—— 标成工具数据
+      // 附件：用户给的文件，但内容不是用户说的话（里面的邮箱、「指令」不算用户给的）—— 标成工具数据。
+      // 放在用户这句话之前：问题留在最后、离回答最近（附件常常很长）
       ...(task.attachments?.length ? [{ role: 'user' as const, from: 'tool' as const, part: 'result' as const, content: renderAttachments(task.attachments) }] : []),
+      { role: 'user', content: opts.goal ? opts.goal(task) : `任务目标：${task.goal}` },
       // 放在目标之后：前面的对话历史每轮不变，能吃到 prompt cache；时间每轮都变
       ...(opts.now === false ? [] : [{
         role: 'user' as const, from: 'host' as const,
