@@ -87,6 +87,8 @@ export interface MeterOptions {
   readonly maxAttempts: number;
   /** 账本写失败只记一下，不影响这次调用。 */
   readonly onLedgerError?: (e: unknown) => void;
+  /** 每记一笔回调一次（路由的用量统计据此更新）。没有账本也会回调。 */
+  readonly onRecord?: (r: UsageRecord) => void;
 }
 
 const errCode = (e: unknown): string => (e as { code?: string })?.code ?? 'ERROR';
@@ -149,7 +151,7 @@ export class FailoverModel implements ChatModel {
     },
   ): Promise<void> {
     // 没说为谁问的调用（连接测试等）不进账本
-    if (!meta || !this.opts.ledger) return;
+    if (!meta) return;
     const rec: UsageRecord = {
       at: r.at, calls: 1, purpose: meta.purpose, egress: entry.egress, model: r.usage?.modelId ?? entry.model.id,
       ok: r.ok, attempt, ms: r.ms,
@@ -165,6 +167,8 @@ export class FailoverModel implements ChatModel {
       currency: entry.price?.currency ?? 'USD',
       priced: !!entry.price,
     };
+    this.opts.onRecord?.(rec);
+    if (!this.opts.ledger) return;
     try { await this.opts.ledger.record(rec); } catch (e) { this.opts.onLedgerError?.(e); }
   }
 }

@@ -169,6 +169,8 @@ export interface ModelEntry {
   readonly costUSD: number;
   /** 价格（输入 / 缓存 / 输出，按厂商币种）。不填 = 不知道价格：照常记用量，费用记为「未计价」，不瞎估。 */
   readonly price?: ModelPrice;
+  /** 档次。不填 = 未定档：不参与自动路由，只能被固定使用。 */
+  readonly tier?: ModelTier;
   /** 数据发往的供应商标识。进审计，支撑「数据不出境」这类合规要求。 */
   readonly egress: string;
   readonly enabled?: boolean;
@@ -176,8 +178,21 @@ export interface ModelEntry {
   readonly label?: string;
 }
 
+/**
+ * 模型的档次：基础（分类、摘要这类辅助调用够用）/ 标准（日常对话与任务）/ 强（难题）。
+ * 自动路由按「这类任务最低要什么档」筛模型。没定档的模型不参与自动路由（可以被固定使用）。
+ */
+export type ModelTier = 'basic' | 'standard' | 'strong';
+export const TIER_RANK: Readonly<Record<ModelTier, number>> = { basic: 1, standard: 2, strong: 3 };
+
+/** 这次要模型做什么：路由据此筛选（要工具的只给支持工具的模型）、按任务类别套规则。 */
+export interface RouteContext {
+  readonly needsTools?: boolean;
+  readonly meta?: CallMeta;
+}
+
 export interface ModelRouter {
-  select(intent: RouteIntent, signal?: AbortSignal): Promise<RouteDecision>;
+  select(intent: RouteIntent, signal?: AbortSignal, ctx?: RouteContext): Promise<RouteDecision>;
   tokenizerFor(model: ChatModel): Tokenizer;
 }
 

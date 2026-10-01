@@ -109,7 +109,13 @@ export class ReActPlanner implements Planner {
       }
     }
 
-    const decision = await this.opts.router.select(intent === 'task' ? 'plan' : 'answer', signal);
+    // 为谁问、问来做什么：路由按它套规则（任务类别、最低档、固定模型），记账也按它
+    const meta = {
+      taskId: task.id, agentId: task.agentId, taskKind: task.kind, trigger: task.trigger.type,
+      purpose: intent === 'task' ? 'plan' as const : 'answer' as const,
+    };
+    // 带工具的一轮只给支持工具的模型
+    const decision = await this.opts.router.select(meta.purpose, signal, { needsTools: tools.length > 0, meta });
     const messages = this.assemble(input.context, tools.length > 0);
     const acted = succeeded.some((id) => {
       const t = input.availableTools.find((x) => x.name === id);
@@ -154,11 +160,7 @@ export class ReActPlanner implements Planner {
         ...(onText ? { onText } : {}),
         // 思考不是回答：不过守卫、不留尾巴，原样交出去当过程显示
         ...(draft ? { onReasoning: (text: string) => { if (text.trim()) draft({ kind: 'thinking', text }); } } : {}),
-        // 为谁问、问来做什么：路由层据此记账
-        meta: {
-          taskId: task.id, agentId: task.agentId, taskKind: task.kind, trigger: task.trigger.type,
-          purpose: intent === 'task' ? 'plan' : 'answer',
-        },
+        meta,
         // 上一个模型说到一半出错、换了一个从头来：已显示的半截收起，守卫状态也重来
         onRetry: () => { held = false; retract('retry'); },
       });

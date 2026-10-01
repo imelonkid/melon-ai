@@ -26,20 +26,20 @@ export type {
   Tool, ToolSpec, SkillSpec, InputShape, FieldSpec, RegistrationReport, RejectedTool, ProposeArgs, ProposedWhen,
 } from '@melon-ai/skills';
 export {
-  deepseek, qwen, openai, kimi, compatible, DEFAULT_MODELS, ModelPool, testModel, DEFAULT_ACTION_WORDS, PRICES, costOf,
+  deepseek, qwen, openai, kimi, compatible, DEFAULT_MODELS, ModelPool, testModel, DEFAULT_ACTION_WORDS, PRICES, TIERS, costOf, modelKey,
 } from '@melon-ai/llm';
 export type {
   ProviderOptions, CompatibleOptions, RouteStrategy, ModelTestResult, FxRates, UsageSummary, UsageBucket, UsageGroup, UsageTotals,
-  SummaryOptions,
+  SummaryOptions, RoutingRule, RoutingRules, RouteExplanation, RouteCandidate,
 } from '@melon-ai/llm';
 export { whenToRule, describeRule, hostTimeZone } from '@melon-ai/engine';
 export type { When } from '@melon-ai/engine';
 export { memoryStorage } from '@melon-ai/store';
-export { ToolError, BUILTIN_TOOLS } from '@melon-ai/core';
+export { ToolError, BUILTIN_TOOLS, TIER_RANK } from '@melon-ai/core';
 export type {
   Task, TaskState, TaskEvent, Sequenced, Schedule, ScheduleStatus, ModelEntry, PolicyMode,
   ApprovalDecision, ApprovalRequest, Grant, Memory, SkillProvider, ToolContext, ToolOutput, Message, AnswerDraft,
-  ModelPrice, Currency, UsageRecord, UsageQuery,
+  ModelPrice, Currency, UsageRecord, UsageQuery, ModelTier, RouteContext,
 } from '@melon-ai/core';
 
 /** 兼容旧名。 */

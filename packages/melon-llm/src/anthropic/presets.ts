@@ -1,4 +1,4 @@
-import type { ModelEntry } from '@melon-ai/core';
+import type { ModelEntry, ModelPrice, ModelTier } from '@melon-ai/core';
 import { ANTHROPIC_MODELS, AnthropicChatModel } from './adapter.js';
 import type { AnthropicModelId } from './adapter.js';
 
@@ -12,7 +12,15 @@ export interface ClaudeOptions {
   readonly model?: AnthropicModelId;
   readonly baseURL?: string;
   readonly quality?: number;
+  /** 不传按模型定：Opus 强、Sonnet 标准、Haiku 基础。 */
+  readonly tier?: ModelTier;
+  /** 不传用内置价格表。 */
+  readonly price?: ModelPrice;
 }
+
+const CLAUDE_TIERS: Readonly<Record<AnthropicModelId, ModelTier>> = {
+  'claude-opus-5': 'strong', 'claude-sonnet-5': 'standard', 'claude-haiku-4-5': 'basic',
+};
 
 /**
  * Claude。放在 `@melon-ai/llm/anthropic` 子路径 —— 依赖 `@anthropic-ai/sdk`，
@@ -30,8 +38,9 @@ export function claude(o: ClaudeOptions = {}): ModelEntry {
     quality: o.quality ?? 10,
     costUSD: ANTHROPIC_MODELS[model].inUSD,
     egress: 'anthropic',
+    tier: o.tier ?? CLAUDE_TIERS[model],
     // 读缓存按输入价的十分之一（写缓存的 1.25 倍没单独算，按普通输入计，略微低估）
-    price: {
+    price: o.price ?? {
       input: ANTHROPIC_MODELS[model].inUSD, cachedInput: ANTHROPIC_MODELS[model].inUSD * 0.1,
       output: ANTHROPIC_MODELS[model].outUSD, currency: 'USD',
     },

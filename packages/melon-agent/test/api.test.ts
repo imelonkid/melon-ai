@@ -312,3 +312,29 @@ test('计量：任务的用量是真实的（含输出与费用），费用预�
     assert.ok(Math.abs(s.cost - 1.5 * rows.length) < 1e-9);
   } finally { await agent.stop(); }
 });
+
+test('路由：auto 策略按宿主规则挑模型（任务类别、最低档、固定），explain 说明为什么', async () => {
+  const cheap = entry(['便宜模型答的']);
+  const strong = entry(['强模型答的']);
+  const models = [
+    { ...cheap.entry, model: Object.assign(cheap.model, { id: 'cheap' }), egress: 'a', tier: 'standard' as const, price: { input: 1, output: 1, currency: 'CNY' as const } },
+    { ...strong.entry, model: Object.assign(strong.model, { id: 'strong' }), egress: 'b', tier: 'strong' as const, price: { input: 9, output: 9, currency: 'CNY' as const } },
+  ];
+  const agent = await createAgent({
+    models, strategy: 'auto', platform: quiet,
+    // 定时任务要强档；其余标准档就行
+    routing: (meta) => (meta?.trigger === 'schedule' ? { taskClass: 'schedule', minTier: 'strong' } : { taskClass: 'chat', minTier: 'standard' }),
+  });
+  try {
+    const done = until(agent, (t) => t.state === 'SUCCEEDED');
+    await agent.run('随便问问');
+    assert.equal((await done).outcome?.answer, '便宜模型答的');
+    assert.equal(agent.models.explain({ taskClass: 'chat', minTier: 'standard' }).ranked[0]!.key, 'a/cheap');
+    assert.equal(agent.models.explain({ taskClass: 'schedule', minTier: 'strong' }).ranked[0]!.key, 'b/strong');
+    // 换规则：固定用强模型
+    await agent.configure({ routing: () => ({ taskClass: 'chat', minTier: 'standard', pin: 'b/strong' }) });
+    const done2 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === '强模型答的');
+    await agent.run('再问一次');
+    assert.ok(await done2);
+  } finally { await agent.stop(); }
+});

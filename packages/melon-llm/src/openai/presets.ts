@@ -1,4 +1,4 @@
-import type { ModelEntry, ModelPrice } from '@melon-ai/core';
+import type { ModelEntry, ModelPrice, ModelTier } from '@melon-ai/core';
 import { OpenAICompatibleChatModel } from './adapter.js';
 import { convert } from '../shared/money.js';
 import type { OpenAICompatiblePreset } from './adapter.js';
@@ -15,6 +15,8 @@ export interface ProviderOptions {
   readonly costUSD?: number;
   /** 价格。不传用内置价格表（有的话）；内置表里也没有就是「未计价」。 */
   readonly price?: ModelPrice;
+  /** 档次。不传用内置档次表（有的话）；都没有就是「未定档」，不参与自动路由。 */
+  readonly tier?: ModelTier;
 }
 
 interface Preset {
@@ -56,6 +58,16 @@ export const PRICES: Readonly<Record<string, ModelPrice>> = {
   'deepseek-v4-pro': { input: 4.5, cachedInput: 0.15, output: 13.5, currency: 'CNY', peak: DEEPSEEK_PEAK, source: DEEPSEEK_SOURCE },
 };
 
+/**
+ * 内置档次：按厂商对自家模型的定位（官方文档里的「旗舰 / 标准 / 轻量」）。只收有把握的，其余由用户定。
+ */
+export const TIERS: Readonly<Record<string, ModelTier>> = {
+  'deepseek-flash': 'standard',
+  'deepseek-v4-flash': 'standard',
+  'deepseek-v4-flash-vision-exp': 'standard',
+  'deepseek-v4-pro': 'strong',
+};
+
 const PRESETS = {
   deepseek: { preset: 'deepseek', label: 'DeepSeek', model: 'deepseek-flash', quality: 6, costUSD: 0.3, egress: 'deepseek', contextWindow: 64_000 },
   qwen: { preset: 'qwen', label: '通义千问', model: 'qwen-max', quality: 6, costUSD: 0.4, egress: 'aliyun', contextWindow: 32_000 },
@@ -70,6 +82,7 @@ const sortCost = (price: ModelPrice | undefined, fallback: number): number =>
 function entry(p: Preset, o: ProviderOptions): ModelEntry {
   const model = o.model ?? p.model;
   const price = o.price ?? PRICES[model];
+  const tier = o.tier ?? TIERS[model];
   return {
     label: p.label,
     model: new OpenAICompatibleChatModel({
@@ -83,6 +96,7 @@ function entry(p: Preset, o: ProviderOptions): ModelEntry {
     costUSD: o.costUSD ?? sortCost(price, p.costUSD),
     egress: p.egress,
     ...(price ? { price } : {}),
+    ...(tier ? { tier } : {}),
   };
 }
 
@@ -112,6 +126,8 @@ export interface CompatibleOptions {
   readonly costUSD?: number;
   /** 价格。不填就是「未计价」。 */
   readonly price?: ModelPrice;
+  /** 档次。不填就是「未定档」。 */
+  readonly tier?: ModelTier;
   readonly contextWindow?: number;
 }
 
@@ -132,6 +148,7 @@ export function compatible(o: CompatibleOptions): ModelEntry {
     costUSD: o.costUSD ?? sortCost(o.price, 1),
     egress: o.egress,
     ...(o.price ? { price: o.price } : {}),
+    ...(o.tier ? { tier: o.tier } : {}),
   };
 }
 

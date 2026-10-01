@@ -4,8 +4,12 @@ import type {
 
 export type { ModelEntry };
 
-/** 路由策略。对应产品里「质量优先 / 均衡 / 成本优先」三档。 */
-export type RouteStrategy = 'quality' | 'balanced' | 'cost';
+/**
+ * 路由策略。
+ * - `auto`：按任务类别的最低档筛、在够档的里挑预估最便宜的（见 auto.ts）。需要宿主给路由规则，没给时所有调用同一类、不限档。
+ * - `quality` / `balanced` / `cost`：早先的三档，只看质量分与输入价排序。
+ */
+export type RouteStrategy = 'auto' | 'quality' | 'balanced' | 'cost';
 
 
 /** 粗略分词：CJK 按 1 字符≈1 token，其余按 4 字符≈1 token。 */
@@ -88,6 +92,8 @@ function effectiveStrategy(base: RouteStrategy, intent: RouteIntent): RouteStrat
 }
 
 function byStrategy(s: RouteStrategy): (a: ModelEntry, b: ModelEntry) => number {
+  // auto 由模型池按规则排；直接用 PolicyRouter 时按均衡处理
+  if (s === 'auto') return byStrategy('balanced');
   if (s === 'quality') return (a, b) => b.quality - a.quality;
   if (s === 'cost') return (a, b) => a.costUSD - b.costUSD;
   // balanced：质量每高 1 分，愿意多付 1 美元/百万 token

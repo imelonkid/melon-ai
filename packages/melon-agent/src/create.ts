@@ -2,13 +2,15 @@ import type {
   AgentId, AnswerDraft, ApprovalDecision, AuditSink, Grant, Memory, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
   ScheduleStatus, SchemaValidator, Sequenced, SkillProvider, StoreBundle, Task, TaskEvent, TaskId,
-  TaskKind, TaskState, ToolResolver, ToolsetSnapshot, UsageQuery, UsageRecord,
+  TaskKind, TaskState, ToolResolver, ToolsetSnapshot, UsageQuery, UsageRecord, RouteContext,
 } from '@melon-ai/core';
 import { TERMINAL_STATES, asAgentId, asScheduleId } from '@melon-ai/core';
 import { describeRule, whenToRule } from '@melon-ai/engine';
 import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
 import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelPool, ReActPlanner, summarizeUsage, testModel } from '@melon-ai/llm';
-import type { FxRates, ModelTestResult, RouteStrategy, SummaryOptions, UsageSummary } from '@melon-ai/llm';
+import type {
+  FxRates, ModelTestResult, RouteExplanation, RouteStrategy, RoutingRule, RoutingRules, SummaryOptions, UsageSummary,
+} from '@melon-ai/llm';
 import { ToolRegistry, activeMemories, artifact, basicValidator, memory, schedule } from '@melon-ai/skills';
 import type { Tool } from '@melon-ai/skills';
 import { memoryStorage } from '@melon-ai/store';
@@ -33,6 +35,11 @@ export interface AgentOptions {
    * - `retentionDays`：明细保留多少天，超过的按天汇总。默认 90。
    */
   readonly metering?: { readonly fx?: FxRates; readonly maxAttempts?: number; readonly retentionDays?: number };
+  /**
+   * 路由规则（策略为 `auto` 时生效）：这次调用属于哪类任务、最低要什么档、有没有固定的模型。
+   * 不给时所有调用同一类、不限档。
+   */
+  readonly routing?: RoutingRules;
   /** 存储。不传 = 内存（进程退出即丢失）；要持久化用 `@melon-ai/agent/sqlite`。 */
   readonly storage?: Storage;
   /** 宿主自己的工具，用 `defineTool` 定义。 */
@@ -172,6 +179,8 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     readonly entries: readonly ModelEntry[];
     /** 用一次最便宜的调用验证模型可用（key、网络、模型名）。 */
     test(entry: ModelEntry): Promise<ModelTestResult>;
+    /** 某类任务现在会选哪个模型、为什么、预估每次多少钱。不发请求。 */
+    explain(rule: RoutingRule, ctx?: RouteContext): RouteExplanation;
   };
   readonly tools: ToolRegistry;
   /**
@@ -209,6 +218,7 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     policy?: PolicyMode | ((task: Task) => PolicyMode);
     /** 汇率、最多试几个模型。保留期只在创建时给。 */
     metering?: { fx?: FxRates; maxAttempts?: number };
+    routing?: RoutingRules;
   }): Promise<void>;
   /** 底层调度器。一般用 `schedules` 就够了。 */
   readonly scheduler: Scheduler;
@@ -243,8 +253,13 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     now: () => platform.clock.now(),
     onLedgerError: (e) => logger.log('warn', `用量记账失败：${e instanceof Error ? e.message : String(e)}`),
   });
-  // 重启后接着认得出近一小时总出错的模型
-  pool.health.seed(await stores.usage.list({ from: platform.clock.now() - 3_600_000, to: platform.clock.now() + 1 }));
+  if (opts.routing) pool.route(opts.routing);
+  // 用账本预热：近一小时总出错的模型、近 7 天各类任务的典型用量（自动路由预估花费用）
+  const seedPool = async (): Promise<void> => {
+    pool.stats.clear();
+    pool.seed(await stores.usage.list({ from: platform.clock.now() - 7 * 86_400_000, to: platform.clock.now() + 1 }));
+  };
+  await seedPool();
   // 超过保留期的明细按天汇总：启动时一次，之后每天一次
   const retentionMs = (metering.retentionDays ?? 90) * 86_400_000;
   const rollup = async (): Promise<void> => {
@@ -481,6 +496,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       get ready() { return pool.ready; },
       get entries() { return pool.current.entries; },
       test: (entry) => testModel(entry),
+      explain: (rule, ctx) => pool.explain(rule, ctx),
     },
     async configure(patch) {
       if (patch.models !== undefined || patch.strategy !== undefined) {
@@ -490,6 +506,11 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       // 换技能来源时内置的保留 —— 宿主只管自己那一份
       if (patch.skills !== undefined) await registry.setProviders([...builtins, ...patch.skills]);
       if (patch.policy !== undefined) policy = patch.policy;
+      if (patch.routing) {
+        pool.route(patch.routing);
+        // 任务类别的分法可能变了：统计按新规则重新归类
+        await seedPool();
+      }
       if (patch.metering) {
         metering = { ...metering, ...patch.metering };
         pool.meter({
