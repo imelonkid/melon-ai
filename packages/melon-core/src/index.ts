@@ -16,4 +16,5 @@ export * from './prompt.js';
 export * from './trigger.js';
 export * from './schedule.js';
 export * from './context.js';
+export * from './sandbox.js';
 export * from './ports/index.js';

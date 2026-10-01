@@ -274,3 +274,54 @@ test('技能描述保留中文全角标点', () => {
     assert.equal(scanSkillDirs([r.dir]).skills[0]!.description, '写周报时用：按「进展，风险」写（每段 5 条）');
   } finally { r.done(); }
 });
+
+test('沙箱（macOS Seatbelt）：只能写工作目录；受保护的位置不能读；联网默认关、按技能放行；被拦下时报出拦了什么', { skip: process.platform !== 'darwin' }, async () => {
+  const r = root();
+  // 宿主存 key 的目录；工作目录放在它里面（Jolly 就是这样摆的）—— 工作目录照样能读写
+  const secret = mkdtempSync(join(tmpdir(), 'secret-'));
+  const outside = mkdtempSync(join(tmpdir(), 'outside-'));
+  const work = join(secret, 'skill-work');
+  writeFileSync(join(secret, 'models.json'), '{"apiKey":"sk-leak"}');
+  const server = (await import('node:net')).createServer((s) => s.end('pong')).listen(0, '127.0.0.1');
+  await new Promise((ok) => server.once('listening', ok));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const scripts = {
+      'scripts/read.js': `const fs=require('fs');console.log(fs.readFileSync(${JSON.stringify(join(secret, 'models.json'))},'utf8'))\n`,
+      'scripts/write.js': `require('fs').writeFileSync(${JSON.stringify(join(outside, 'x.txt'))},'x')\n`,
+      'scripts/local.js': `require('fs').writeFileSync('out.txt','ok');console.log(require('fs').readFileSync('out.txt','utf8'))\n`,
+      'scripts/net.js': `const s=require('net').connect(${port},'127.0.0.1');s.on('data',d=>{console.log(String(d));s.end()});s.on('error',e=>{console.error(e.message);process.exit(2)})\n`,
+    };
+    r.skill('boxed', { 'SKILL.md': md('boxed', '受限'), ...scripts });
+    r.skill('netok', { 'SKILL.md': md('netok', '能联网'), ...scripts });
+    const provider = agentSkills({ dirs: [r.dir], workDir: work, sandbox: { denyRead: [secret], network: (s) => s === 'netok' } });
+    assert.deepEqual(provider.report().sandbox, { kind: 'seatbelt' });
+    const [b] = await provider.list();
+    const run = (name: string, script: string) => b!.handlers.get('skill.run')!({ name, script }, cx()).then((x) => x.summary, (e) => e);
+
+    const read = await run('boxed', 'scripts/read.js');
+    assert.equal(read.code, 'DENIED');
+    assert.equal(read.sandbox.kind, 'read');
+    assert.match(read.sandbox.path, /models\.json$/);
+    assert.doesNotMatch(read.message, /sk-leak/);
+
+    const write = await run('boxed', 'scripts/write.js');
+    assert.deepEqual([write.code, write.sandbox.kind], ['DENIED', 'write']);
+
+    assert.match(await run('boxed', 'scripts/local.js'), /ok/, '工作目录（在受保护的目录里）照样能读写');
+
+    const net = await run('boxed', 'scripts/net.js');
+    assert.deepEqual([net.code, net.sandbox], ['DENIED', { kind: 'network' }]);
+    assert.match(net.hint, /允许它联网/);
+    assert.match(await run('netok', 'scripts/net.js'), /pong/, '放行了联网的技能能连');
+
+    // 不用沙箱：照旧什么都能读（宿主明确关掉时）
+    const [open] = await agentSkills({ dirs: [r.dir], workDir: work, sandbox: false }).list();
+    assert.equal(agentSkills({ dirs: [r.dir], sandbox: false }).report().sandbox, null);
+    assert.match((await open!.handlers.get('skill.run')!({ name: 'boxed', script: 'scripts/read.js' }, cx())).summary, /sk-leak/);
+  } finally {
+    server.close();
+    r.done();
+    for (const d of [secret, outside]) rmSync(d, { recursive: true, force: true });
+  }
+});

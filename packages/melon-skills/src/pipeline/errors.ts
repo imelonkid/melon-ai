@@ -34,9 +34,11 @@ export class CircuitOpenError extends Error {
  */
 export function toToolError(e: unknown): ToolErrorShape {
   if (e instanceof ToolError) {
-    return e.hint === undefined
-      ? { code: e.code, message: e.message, retriable: e.retriable }
-      : { code: e.code, message: e.message, retriable: e.retriable, hint: e.hint };
+    return {
+      code: e.code, message: e.message, retriable: e.retriable,
+      ...(e.hint !== undefined ? { hint: e.hint } : {}),
+      ...(e.sandbox !== undefined ? { sandbox: e.sandbox } : {}),
+    };
   }
   if (e instanceof TimeoutError) {
     return { code: 'UPSTREAM', message: e.message, retriable: true, hint: '可以重试，或缩小请求范围' };

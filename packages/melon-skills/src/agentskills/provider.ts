@@ -3,12 +3,13 @@ import type { ExecFileException } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, extname, join, resolve, sep } from 'node:path';
-import type { Health, SkillBundle, SkillProvider } from '@melon-ai/core';
+import type { Health, Sandbox, SandboxPolicy, SkillBundle, SkillProvider } from '@melon-ai/core';
 import { ToolError, asSkillId } from '@melon-ai/core';
 import { defineTool } from '../registry/define.js';
 import type { Tool } from '../registry/define.js';
 import { scanSkillDirs, unchangedSince } from './scan.js';
 import type { AgentSkill, RejectedSkill, ScanLimits } from './scan.js';
+import { detectSandbox, sensitivePaths } from './sandbox.js';
 
 /**
  * Agent Skills 的接入（agentskills.io 规范的三级加载）：
@@ -38,6 +39,17 @@ export interface AgentSkillsOptions {
   readonly limits?: ScanLimits;
   /** 用户关掉的技能（按名字）。关掉的不进清单、不能激活；报告里标为已停用。 */
   readonly disabled?: readonly string[];
+  /**
+   * 沙箱。不给：自动用当前平台的（macOS 是 Seatbelt；没有时脚本照常跑，`report().sandbox` 为 null）。`false`：不用。
+   * - 读：默认放行，`sensitivePaths()` 与 `denyRead`（宿主存 key 的目录）拦截；
+   * - 写：只能写这次任务的工作目录；
+   * - 联网：默认关，`network(技能名)` 为 true 的放行。
+   */
+  readonly sandbox?: false | {
+    readonly runner?: Sandbox | null;
+    readonly denyRead?: readonly string[];
+    readonly network?: (skill: string) => boolean;
+  };
 }
 
 export interface AgentSkillsReport {
@@ -46,6 +58,8 @@ export interface AgentSkillsReport {
     readonly files: readonly string[]; readonly warnings: readonly string[]; readonly enabled: boolean;
   }[];
   readonly rejected: readonly RejectedSkill[];
+  /** 脚本跑在什么沙箱里；null = 没有沙箱保护。 */
+  readonly sandbox: { readonly kind: string } | null;
 }
 
 const EXT: Record<string, 'py' | 'js' | 'sh' | 'zsh'> = {
@@ -69,9 +83,23 @@ export class AgentSkillsProvider implements SkillProvider {
   /** 同一任务里已激活过的技能，不重复注入。 */
   private readonly activated = new Map<string, Set<string>>();
 
+  /** 跑脚本用的沙箱；null = 没有。 */
+  private readonly sandbox: Sandbox | null;
+
   constructor(private readonly opts: AgentSkillsOptions) {
     this.disabled = new Set(opts.disabled ?? []);
+    this.sandbox = opts.sandbox === false ? null : opts.sandbox?.runner !== undefined ? opts.sandbox.runner : detectSandbox();
     this.reload();
+  }
+
+  /** 这次执行的沙箱规则：只写工作目录，敏感位置不许读，联网按技能。 */
+  private policyFor(skill: string, work: string): SandboxPolicy {
+    const o = this.opts.sandbox || undefined;
+    return {
+      writable: [work],
+      denyRead: [...sensitivePaths(), ...(o?.denyRead ?? [])],
+      network: o?.network?.(skill) ?? false,
+    };
   }
 
   /** 用户在界面上开关某个技能。 */
@@ -101,6 +129,7 @@ export class AgentSkillsProvider implements SkillProvider {
         enabled: !this.disabled.has(s.name),
       })),
       rejected: this.refused,
+      sandbox: this.sandbox ? { kind: this.sandbox.kind } : null,
     };
   }
 
@@ -226,7 +255,8 @@ export class AgentSkillsProvider implements SkillProvider {
       id: 'skill.run',
       description:
         '执行某个技能自带的脚本（.py / .js / .sh 等），返回脚本的输出。只能执行技能目录里的脚本；'
-        + '参数按顺序放进 args。每次执行都会先征得用户同意。脚本在一个临时工作目录里运行，产生的文件会列在结果里。',
+        + '参数按顺序放进 args。每次执行都会先征得用户同意。脚本在一个临时工作目录里运行，产生的文件会列在结果里。'
+        + '脚本跑在沙箱里：只能写工作目录（输出文件用相对路径），受保护的位置不能读，联网要用户给这个技能打开。',
       input: {
         name: { type: 'string', enum: this.names(), description: '技能名' },
         script: { type: 'string', description: '相对技能目录的脚本路径，如 scripts/extract.py' },
@@ -259,8 +289,13 @@ export class AgentSkillsProvider implements SkillProvider {
         const before = new Set(readdirSync(work));
         const argv = (args ?? []).map(String);
 
+        // 沙箱：解释器连同脚本一起包进去
+        const policy = this.policyFor(s.name, work);
+        const cmd = this.sandbox
+          ? this.sandbox.wrap(interp ?? full, interp ? [full, ...argv] : argv, policy)
+          : { file: interp ?? full, args: interp ? [full, ...argv] : argv };
         const out = await new Promise<{ code: number | null; stdout: string; stderr: string; err?: ExecFileException }>((done) => {
-          const child = execFile(interp ?? full, interp ? [full, ...argv] : argv, {
+          const child = execFile(cmd.file, [...cmd.args], {
             cwd: work,
             timeout: this.opts.timeoutMs ?? 120_000,
             maxBuffer: 4 * 1024 * 1024,
@@ -294,6 +329,17 @@ export class AgentSkillsProvider implements SkillProvider {
           made.length > 0 ? `生成的文件（在 ${work}）：${made.join('、')}` : '',
         ].filter(Boolean).join('\n');
         if (out.code !== 0) {
+          // 被沙箱拦下：说清楚拦了什么，带上结构化的信息让宿主给用户放行的入口；不让模型换办法绕过
+          const denied = this.sandbox?.denial(out, policy);
+          if (denied) {
+            const what = denied.kind === 'network' ? `想联网，被沙箱拦下了（技能 ${s.name} 没有联网权限）`
+              : denied.kind === 'read' ? `想读 ${denied.path}，这是受保护的位置，被沙箱拦下了`
+              : `想写 ${denied.path}，沙箱只允许写这次任务的工作目录`;
+            const hint = denied.kind === 'network' ? '告诉用户：这个技能的脚本需要联网，可以在技能设置里允许它联网后再试。不要换别的办法绕过'
+              : denied.kind === 'read' ? '告诉用户这个位置受保护、脚本不能读；需要的话请用户把文件复制到别的位置。不要换别的办法绕过'
+              : '让脚本把文件写到当前工作目录（用相对路径）再试；脚本不支持就告诉用户';
+            throw new ToolError('DENIED', `脚本 ${rel} ${what}\n${report}`, { retriable: false, hint, sandbox: denied });
+          }
           throw new ToolError('UPSTREAM', `脚本 ${rel} 执行失败（退出码 ${out.code ?? '无'}）\n${report}`, { retriable: false });
         }
         return report;

@@ -16,3 +16,4 @@
 export * from './frontmatter.js';
 export * from './scan.js';
 export * from './provider.js';
+export * from './sandbox.js';

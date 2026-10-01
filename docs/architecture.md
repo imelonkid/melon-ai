@@ -1263,6 +1263,15 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     - **推荐理由**：`RouteExplanation.why`（`cheapest` 带省了多少、`plan` / `tier` / `latency` / `only` / `unpriced` / `fallback`，第二名、够档几个、被挪后的），
       说的总是「自动会推荐谁」；指定了模型另给 `pin.status`（`used` / `missing` / `unusable`）和 `recommended`。措辞归宿主。候选带近 7 天成败。
     - **按定时任务绑定**：`CallMeta.triggerRef`（= `Task.trigger.ref`，定时任务的 id），宿主的路由规则据此给单个定时任务 `pin`。不进账本。
+84. **确认之后，脚本能做什么没有边界。** `skill.run` 用用户的系统权限跑用户装的脚本：每次确认、只跑技能目录里的、审查后改过的拒绝、不传宿主的环境变量 ——
+    但一旦跑起来就能读宿主存 key 的文件（Jolly 的 `models.json` 是明文）、`~/.ssh`、浏览器资料，能随意联网、到处写文件。
+    - **沙箱端口**（core `Sandbox`：`wrap` 把命令包进沙箱，`denial` 从输出认出被拦下了什么），macOS 实现 `seatbelt()`（系统自带的 `sandbox-exec`），
+      `detectSandbox()` 选当前平台的；没有时脚本照常跑，`report().sandbox` 为 null，宿主提示「无沙箱保护」。
+    - **规则**：读默认放行、敏感位置拦截（`sensitivePaths()` + 宿主给的 `denyRead`）—— 默认拦截会让依赖家目录里第三方包的脚本跑不起来；
+      写只能写这次任务的工作目录（工作目录在拦截的目录里也能写：SBPL 后写的规则优先）；联网默认关，`network(技能名)` 放行。
+      拦联网用 `(deny network-outbound (remote ip))`：本机的 unix socket（域名解析）照常，连本机端口也拦。
+    - **被拦下时**：`ToolError` 带结构化的 `sandbox: { kind: 'network' | 'read' | 'write', path? }`（管线原样保留进工具结果），
+      宿主据此给用户放行的入口；给模型的提示是「告诉用户、不要换办法绕过」。Python / Node / shell 的「Operation not permitted」都认得。
 
 #### 包结构合并（14 → 8）
 

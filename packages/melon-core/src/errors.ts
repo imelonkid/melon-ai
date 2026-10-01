@@ -1,3 +1,5 @@
+import type { SandboxDenial } from './sandbox.js';
+
 /**
  * 工具错误码。这组码是**给模型看的**：模型必须能据此决定下一步动作，
  * 所以每个码的语义要互斥且可操作。笼统的错误会让模型反复重试必然失败的调用。
@@ -22,19 +24,23 @@ export interface ToolErrorShape {
   readonly retriable: boolean;
   /** 给模型的修复建议，会原样进上下文。 */
   readonly hint?: string;
+  /** 被沙箱拦下了什么（联网、读某个文件……）。宿主据此给用户放行的入口。 */
+  readonly sandbox?: SandboxDenial;
 }
 
 export class ToolError extends Error implements ToolErrorShape {
   readonly code: ToolErrorCode;
   readonly retriable: boolean;
   readonly hint?: string;
+  readonly sandbox?: SandboxDenial;
 
-  constructor(code: ToolErrorCode, message: string, opts?: { retriable?: boolean; hint?: string }) {
+  constructor(code: ToolErrorCode, message: string, opts?: { retriable?: boolean; hint?: string; sandbox?: SandboxDenial }) {
     super(message);
     this.name = 'ToolError';
     this.code = code;
     this.retriable = opts?.retriable ?? (code === 'UPSTREAM' || code === 'RATE_LIMITED');
     if (opts?.hint !== undefined) this.hint = opts.hint;
+    if (opts?.sandbox !== undefined) this.sandbox = opts.sandbox;
   }
 }
 
