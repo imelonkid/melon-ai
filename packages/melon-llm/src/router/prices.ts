@@ -38,6 +38,11 @@ export class PriceBook {
     return this.current.get(vendor)?.prices[model];
   }
 
+  /** 一家同步来的、生效中的全部价格（模型 id → 价格）。模型目录据此判断哪些是官方在售的。 */
+  pricesOf(vendor: string): Readonly<Record<string, ModelPrice>> {
+    return this.current.get(vendor)?.prices ?? {};
+  }
+
   /** 模型条目套上同步来的价格（手填的不动）。 */
   effective(e: ModelEntry): ModelEntry {
     if (e.priceSource === 'manual') return e;

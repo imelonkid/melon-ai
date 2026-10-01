@@ -54,6 +54,15 @@ for (const impl of IMPLS) {
     assert.equal(await b.prices.get('nope'), null);
   });
 
+  test(`[${impl.name}] 模型目录：每家一条最新的模型列表，覆盖写，能列出`, async () => {
+    const b = impl.make(() => 0);
+    await b.catalog.put({ vendor: 'deepseek', at: 1, ok: true, ids: ['a'], lastSuccessAt: 1, fingerprint: 'f' });
+    await b.catalog.put({ vendor: 'deepseek', at: 2, ok: false, error: 'HTTP 401', ids: ['a'], lastSuccessAt: 1, fingerprint: 'f' });
+    await b.catalog.put({ vendor: 'zhipu', at: 3, ok: true, ids: [] });
+    const all = await b.catalog.list();
+    assert.deepEqual(all.map((l) => [l.vendor, l.at, l.error ?? null]), [['deepseek', 2, 'HTTP 401'], ['zhipu', 3, null]]);
+  });
+
   test(`[${impl.name}] 用量账本：按时间范围列出；过保留期的明细按天汇总（维度保留、任务 id 丢掉），只汇总一次`, async () => {
     const b = impl.make(() => 0);
     const DAY = 86_400_000;

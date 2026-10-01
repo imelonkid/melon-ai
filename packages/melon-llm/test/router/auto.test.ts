@@ -121,3 +121,52 @@ test('套餐：按次不另计（费用 0、标记走套餐），够档时优先
   const q = ex.ranked.find((c) => c.key === 'aliyun-coding/qwen3.7-plus')!;
   assert.deepEqual([q.plan?.nearQuota, q.plan?.windows[0]], [true, { hours: 5, used: 19, limit: 20 }]);
 });
+
+test('推荐理由：第一名为什么是它（最便宜省多少、第二名是谁、够档的几个）；指定的模型另外说，并给出不指定时推荐谁', () => {
+  const entries = [
+    e('flash', 'ds', 'standard', CNY(1, 4)),
+    e('pro', 'ds', 'strong', CNY(4.5, 13.5)),
+    e('opus', 'an', 'strong', USD(5, 25)),
+    e('notools', 'x', 'strong', CNY(0.1, 0.1), { tools: false }),
+  ];
+  const p = pool(entries, FRI_13);
+  const ex = p.explain({ taskClass: 'chat', minTier: 'standard' }, { needsTools: true });
+  assert.equal(ex.ranked[0]!.key, 'ds/flash');
+  assert.equal(ex.why!.by, 'cheapest');
+  assert.equal(ex.why!.eligible, 3);
+  assert.equal(ex.why!.runnerUp, 'ds/pro');
+  assert.ok(ex.why!.saving! > 0.6 && ex.why!.saving! < 0.8, `省 ${ex.why!.saving}`);
+  assert.equal(ex.pin, undefined);
+
+  // 指定了 Claude：用它；理由仍说「不指定会推荐 flash」
+  const pinned = p.explain({ taskClass: 'chat', minTier: 'standard', pin: 'an/opus' }, { needsTools: true });
+  assert.equal(pinned.ranked[0]!.key, 'an/opus');
+  assert.deepEqual(pinned.pin, { key: 'an/opus', status: 'used' });
+  assert.equal(pinned.recommended, 'ds/flash');
+  assert.equal(pinned.why!.by, 'cheapest');
+
+  // 指定的模型不在了（下架、关掉）：按推荐选，标出来
+  const gone = p.explain({ taskClass: 'chat', minTier: 'standard', pin: 'ds/reasoner' }, { needsTools: true });
+  assert.equal(gone.ranked[0]!.key, 'ds/flash');
+  assert.equal(gone.pin!.status, 'missing');
+  // 指定的这次用不了（要工具它不支持）
+  const unusable = p.explain({ taskClass: 'chat', minTier: 'standard', pin: 'x/notools' }, { needsTools: true });
+  assert.equal(unusable.ranked[0]!.key, 'ds/flash');
+  assert.deepEqual(unusable.pin, { key: 'x/notools', status: 'unusable', reason: '不支持工具' });
+
+  // 强档只有两个：pro 更便宜；只剩一个时说「只有它」
+  assert.equal(p.explain({ taskClass: 's', minTier: 'strong' }, { needsTools: true }).why!.by, 'cheapest');
+  const only = pool([entries[1]!], FRI_13).explain({ taskClass: 's', minTier: 'strong' });
+  assert.equal(only.why!.by, 'only');
+  const none = pool([entries[0]!], FRI_13).explain({ taskClass: 's', minTier: 'strong' });
+  assert.equal(none.why!.by, 'fallback');
+});
+
+test('推荐理由：都没有价格时按档次挑，标出来；候选带近 7 天成败', async () => {
+  const p = pool([e('a', 'x', 'standard', undefined), e('b', 'x', 'strong', undefined)], FRI_13);
+  await (await p.select('plan', undefined, { meta })).primary.generate({ messages: [], meta });
+  const ex = p.explain({ taskClass: 'chat', minTier: 'standard' });
+  assert.equal(ex.why!.by, 'unpriced');
+  assert.equal(ex.ranked[0]!.key, 'x/b');
+  assert.deepEqual(ex.ranked[0]!.week, { calls: 1, failed: 0 });
+});

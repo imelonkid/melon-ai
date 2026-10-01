@@ -78,6 +78,13 @@ export class UsageStats {
     return input > 0 ? xs.reduce((a, x) => a + x.cached, 0) / input : 0;
   }
 
+  /** 近 7 天的成败（含失败的调用）。 */
+  outcomes(model: string): { calls: number; failed: number } {
+    const since = this.now() - WEEK;
+    const xs = this.rows.filter((x) => x.at >= since && x.model === model);
+    return { calls: xs.length, failed: xs.filter((x) => !x.ok).length };
+  }
+
   avgMs(model: string): number | null {
     const xs = this.recent().filter((x) => x.model === model);
     return xs.length ? xs.reduce((a, x) => a + x.ms, 0) / xs.length : null;
@@ -128,6 +135,42 @@ export interface RouteCandidate {
   readonly peak: boolean;
   /** 走套餐：各窗口的用量；`nearQuota` 表示有一个窗口快满了（排到后面）。 */
   readonly plan?: { readonly name?: string; readonly windows: readonly { hours: number; used: number; limit: number }[]; readonly nearQuota: boolean };
+  /** 近 7 天的调用与失败次数。 */
+  readonly week: { readonly calls: number; readonly failed: number };
+  readonly tools: boolean;
+}
+
+/**
+ * 自动推荐的第一名为什么是它：给宿主写推荐理由的依据（宿主负责措辞）。指定了模型时，这里说的仍是「不指定会推荐谁」。
+ * - `plan`：走套餐，按次不另计
+ * - `cheapest`：够档的里预估最便宜（`saving` 是比第二便宜的省多少，0–1）
+ * - `tier`：价格一样（或都没价格），档次更高
+ * - `latency`：价格、档次都一样，平均更快
+ * - `only`：够档的只有它
+ * - `unpriced`：够档的都没有价格，按档次与速度挑的
+ * - `fallback`：没有够档的，退回到能用的里挑
+ */
+export interface RouteWhy {
+  readonly by: 'plan' | 'cheapest' | 'tier' | 'latency' | 'only' | 'unpriced' | 'fallback';
+  /** 够档、能用的模型有几个。 */
+  readonly eligible: number;
+  readonly saving?: number;
+  /** 被挪到后面的：近一小时失败率超标、套餐额度快满。 */
+  readonly demoted: readonly string[];
+  /** 和第一名比的那个（第二名）。 */
+  readonly runnerUp?: string;
+}
+
+/**
+ * 指定的模型（`pin`）现在的情况：
+ * - `used`：用的就是它
+ * - `missing`：模型已关掉或不在列表里了（官方下架、厂商停用）—— 按自动推荐选
+ * - `unusable`：这次用不了（如要工具它不支持）—— 按自动推荐选
+ */
+export interface PinStatus {
+  readonly key: string;
+  readonly status: 'used' | 'missing' | 'unusable';
+  readonly reason?: string;
 }
 
 export interface RouteExplanation {
@@ -138,6 +181,12 @@ export interface RouteExplanation {
   readonly ranked: readonly RouteCandidate[];
   /** 没有一个够档的模型时为 true：退回到全部可用的模型里挑（不让任务直接失败）。 */
   readonly fellBack: boolean;
+  /** 没有一个能用的模型时没有。 */
+  readonly why?: RouteWhy;
+  /** 规则里指定了模型时：它的情况。 */
+  readonly pin?: PinStatus;
+  /** 自动推荐的（不看指定）。指定的模型在用时，宿主可以对比着说。 */
+  readonly recommended?: string;
 }
 
 export interface AutoRankInput {
@@ -179,6 +228,7 @@ export function rankAuto(i: AutoRankInput): { readonly ranked: readonly ModelEnt
       ...(amount !== null && cur ? { estimate: { amount, currency: cur } } : {}),
       peak: !e.plan && !!e.price && isPeak(e.price, i.now),
       ...(e.plan ? { plan: { ...(e.plan.name ? { name: e.plan.name } : {}), windows, nearQuota } } : {}),
+      week: i.stats.outcomes(key), tools: e.model.capabilities.tools,
       usd: amount !== null && cur ? convert(amount, cur, 'USD', i.fx) : null,
       ms: i.stats.avgMs(key) ?? Number.POSITIVE_INFINITY,
     };
@@ -204,12 +254,43 @@ export function rankAuto(i: AutoRankInput): { readonly ranked: readonly ModelEnt
   pool.sort(order);
   const rest = all.filter((c) => !pool.includes(c));
   const strip = ({ entry: _e, usd: _u, ms: _m, ...c }: (typeof all)[number]): RouteCandidate => c;
+
+  // 推荐理由：第一名为什么排在第二名前面（指定的不算 —— 指定的另外说）
+  const auto = pool.filter((c) => !c.pinned);
+  const why = (): RouteWhy | undefined => {
+    if (auto.length === 0) return undefined;
+    const demoted = auto.filter((c) => c.demoted).map((c) => c.key);
+    const eligible = fellBack ? 0 : auto.filter((c) => c.eligible).length;
+    if (fellBack) return { by: 'fallback', eligible, demoted };
+    const [a, b] = auto;
+    if (!a || !b) return { by: 'only', eligible, demoted };
+    const base = { eligible, demoted, runnerUp: b.key };
+    if (a.entry.plan && !a.demoted) return { by: 'plan', ...base };
+    if (a.usd === null) return { by: 'unpriced', ...base };
+    if (b.usd === null || a.usd < b.usd - 1e-12) {
+      return { by: 'cheapest', ...base, ...(b.usd !== null && b.usd > 0 ? { saving: 1 - a.usd / b.usd } : {}) };
+    }
+    const ta = a.entry.tier ? TIER_RANK[a.entry.tier] : 0;
+    const tb = b.entry.tier ? TIER_RANK[b.entry.tier] : 0;
+    return { by: ta !== tb ? 'tier' : 'latency', ...base };
+  };
+  let pin: PinStatus | undefined;
+  if (rule.pin) {
+    const c = all.find((x) => x.key === rule.pin);
+    pin = !c || c.entry.enabled === false ? { key: rule.pin, status: 'missing' }
+      : pool[0] === c ? { key: rule.pin, status: 'used' }
+      : { key: rule.pin, status: 'unusable', ...(c.reason ? { reason: c.reason } : {}) };
+  }
+  const w = why();
   return {
     ranked: pool.map((c) => c.entry),
     explanation: {
       taskClass: rule.taskClass, ...(rule.minTier ? { minTier: rule.minTier } : {}), typical,
       ranked: [...pool.map(strip), ...rest.map(strip)],
       fellBack,
+      ...(w ? { why: w } : {}),
+      ...(pin ? { pin } : {}),
+      ...(auto[0] ? { recommended: auto[0].key } : {}),
     },
   };
 }

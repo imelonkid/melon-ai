@@ -213,3 +213,79 @@ export interface Embedder {
   readonly dims: number;
   embed(texts: readonly string[]): Promise<readonly Float32Array[]>;
 }
+
+// ── 模型目录：跟随厂商最新可用的模型 ──
+
+/**
+ * 一家厂商。模型目录用它把这家最新可用的模型接进来：
+ * 拉这个账号能用的模型（`/models`），和官方价格文档里有价格的取交集，自动定档，加入路由。
+ *
+ * 宿主只给「怎么造一个模型条目」和用户的改动；列表、定档、刷新都是引擎的。
+ */
+export interface ModelProvider {
+  /** 厂商标识，与 `ModelEntry.egress` 一致。 */
+  readonly vendor: string;
+  readonly label?: string;
+  /** 造一个模型条目（带引擎内置的档次、价格）。不给 id 时用这家的默认模型。认不出的 id 可以抛错。 */
+  make(modelId?: string): ModelEntry;
+  /** 用户的改动，按模型 id。没有改动的模型完全跟随官方。 */
+  readonly overrides?: Readonly<Record<string, ModelOverride>>;
+  /**
+   * 连接配置的指纹（key、地址变了它就变）。变了立即重新拉模型列表。
+   * 宿主给摘要即可，别给明文 key。
+   */
+  readonly fingerprint?: string;
+}
+
+export interface ModelOverride {
+  /** `false`：用户关掉了这个模型。 */
+  readonly enabled?: boolean;
+  /** 用户定的档次；`null` 是明确不定档（不参与自动路由）。 */
+  readonly tier?: ModelTier | null;
+  /** 用户手填的价格，优先于同步来的。 */
+  readonly price?: ModelPrice;
+  /** 用户手动加的：没有官方价格、不在目录里也要用。 */
+  readonly added?: boolean;
+}
+
+/** 一家厂商上次拉到的模型列表（存档：离线启动时用它）。 */
+export interface ModelListing {
+  readonly vendor: string;
+  readonly at: number;
+  readonly ok: boolean;
+  readonly error?: string;
+  /** 上次成功拉到的模型 id。从没成功过时没有。 */
+  readonly ids?: readonly string[];
+  readonly lastSuccessAt?: number;
+  readonly fingerprint?: string;
+}
+
+/** 目录里的一个模型：在不在官方列表、档次怎么定的、价格从哪来、参不参与路由。 */
+export interface CatalogModel {
+  readonly id: string;
+  /** 这个账号现在能不能用（在 `/models` 里）。没拉成功过时为 null。 */
+  readonly available: boolean | null;
+  /** 有官方价格或内置档次 —— 跟随官方时自动加入的就是这些。 */
+  readonly official: boolean;
+  readonly tier?: ModelTier;
+  /** 档次怎么来的：用户定的 / 引擎内置 / 按这家的价格高低自动定 / 没定。 */
+  readonly tierBy: 'user' | 'builtin' | 'price' | 'none';
+  readonly price?: ModelPrice;
+  readonly priceSource?: 'manual' | 'builtin' | 'synced';
+  readonly tools: boolean;
+  readonly added: boolean;
+  /** 参与路由：没被关、没下架。 */
+  readonly active: boolean;
+  /** 不参与的原因：`off`（用户关了）、`gone`（官方列表里已没有）。 */
+  readonly inactive?: 'off' | 'gone';
+}
+
+export interface VendorCatalog {
+  readonly vendor: string;
+  readonly label?: string;
+  readonly listing?: ModelListing;
+  /** 目录里的模型（官方的 + 用户加的），按档次从强到弱。 */
+  readonly models: readonly CatalogModel[];
+  /** 这个账号能用、但没有官方价格的其余模型：给「添加模型」的下拉框。 */
+  readonly others: readonly string[];
+}

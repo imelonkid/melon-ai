@@ -2,6 +2,7 @@ import type {
   AgentId, Entry, Episode, EpisodeId, EpisodeStore, EpisodeSummary, EventLog, Grant, GrantStore,
   IdempotencyStore, Schedule, ScheduleId, ScheduleStatus, ScheduleStore, Sequenced, Task, TaskEvent,
   TaskId, TaskState, TaskStore, ToolResult, UsageLedger, UsageQuery, UsageRecord, PriceStore, PriceSync,
+  CatalogStore, ModelListing,
 } from '@melon-ai/core';
 import { ConflictError, asEpisodeId } from '@melon-ai/core';
 import { rollupRecords } from '../usage.js';
@@ -227,4 +228,10 @@ export class InMemoryPriceStore implements PriceStore {
   async put(sync: PriceSync): Promise<void> { this.byVendor.set(sync.vendor, sync); }
   async get(vendor: string): Promise<PriceSync | null> { return this.byVendor.get(vendor) ?? null; }
   async list(): Promise<readonly PriceSync[]> { return [...this.byVendor.values()]; }
+}
+
+export class InMemoryCatalogStore implements CatalogStore {
+  private readonly byVendor = new Map<string, ModelListing>();
+  async put(l: ModelListing): Promise<void> { this.byVendor.set(l.vendor, l); }
+  async list(): Promise<readonly ModelListing[]> { return [...this.byVendor.values()]; }
 }

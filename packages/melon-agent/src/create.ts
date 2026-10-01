@@ -3,11 +3,12 @@ import type {
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
   ScheduleStatus, SchemaValidator, Sequenced, SkillProvider, StoreBundle, Task, TaskEvent, TaskId,
   TaskKind, TaskState, ToolResolver, ToolsetSnapshot, UsageQuery, UsageRecord, RouteContext, PriceSource, PriceSync,
+  ModelProvider, VendorCatalog, ModelListing,
 } from '@melon-ai/core';
 import { TERMINAL_STATES, asAgentId, asScheduleId } from '@melon-ai/core';
 import { describeRule, whenToRule } from '@melon-ai/engine';
 import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
-import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelPool, PriceBook, ReActPlanner, summarizeUsage, testModel } from '@melon-ai/llm';
+import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelCatalog, ModelPool, PriceBook, ReActPlanner, summarizeUsage, testModel } from '@melon-ai/llm';
 import type {
   FxRates, ModelTestResult, RouteExplanation, RouteStrategy, RoutingRule, RoutingRules, SummaryOptions, UsageSummary,
 } from '@melon-ai/llm';
@@ -45,6 +46,13 @@ export interface AgentOptions {
    * 默认每 24 小时一次；失败保留上次的价格；变化超过 5 倍的等确认。
    */
   readonly pricing?: { readonly sources?: readonly PriceSource[]; readonly intervalHours?: number };
+  /**
+   * 跟随厂商最新可用的模型：每家拉一次这个账号能用的模型（`/models`），和官方价格取交集、自动定档，加入路由。
+   * 与 `models`（固定的条目）并存。用户的改动（关掉、改档次、手填价格、手动加）在 `ModelProvider.overrides` 里。
+   */
+  readonly providers?: readonly ModelProvider[];
+  /** 模型列表多久重新拉一次。默认 24 小时；连接配置（指纹）变了立即拉。 */
+  readonly catalog?: { readonly intervalHours?: number };
   /** 存储。不传 = 内存（进程退出即丢失）；要持久化用 `@melon-ai/agent/sqlite`。 */
   readonly storage?: Storage;
   /** 宿主自己的工具，用 `defineTool` 定义。 */
@@ -159,6 +167,8 @@ export interface AgentEvents {
    * 草稿不落库，错过了也没关系 —— 任务结束时 `task` 事件里有最终回答，以它为准。
    */
   draft: (draft: TaskDraft) => void;
+  /** 模型目录变了（拉到了新的模型列表）。生效中的模型已经换好，宿主刷新界面即可。 */
+  models: (catalogs: readonly VendorCatalog[]) => void;
 }
 
 /** 某个任务正在生成的回答。 */
@@ -188,6 +198,10 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     explain(rule: RoutingRule, ctx?: RouteContext): RouteExplanation;
     /** 这个账号在这家能用哪些模型（`/models`）。宿主做「新发现的模型」。适配器不支持时返回 null。 */
     discover(entry: ModelEntry, signal?: AbortSignal): Promise<readonly string[] | null>;
+    /** 模型目录：每家（`providers`）最新可用的模型、档次怎么定的、价格从哪来、参不参与路由。 */
+    catalog(): readonly VendorCatalog[];
+    /** 立即重新拉一家或全部的模型列表。生效中的模型随之更新。 */
+    refresh(vendor?: string): Promise<readonly ModelListing[]>;
   };
   readonly tools: ToolRegistry;
   /**
@@ -235,6 +249,8 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     routing?: RoutingRules;
     /** 换价格来源（宿主按用户启用了哪几家决定）。 */
     pricing?: { sources: readonly PriceSource[] };
+    /** 换跟随官方的厂商（及用户的改动）。连接配置变了的会在后台重新拉模型列表，拉完发 `models` 事件。 */
+    providers?: readonly ModelProvider[];
   }): Promise<void>;
   /** 底层调度器。一般用 `schedules` 就够了。 */
   readonly scheduler: Scheduler;
@@ -278,13 +294,29 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   await book.load();
   book.setSources(opts.pricing?.sources ?? []);
   pool.pricing(book);
+  // 模型目录：固定的条目（models）+ 跟随官方展开的（providers）一起交给路由
+  let fixedModels: readonly ModelEntry[] = opts.models ?? [];
+  const catalog = new ModelCatalog({ store: stores.catalog, now: () => platform.clock.now() });
+  await catalog.load();
+  let staleVendors = catalog.setProviders(opts.providers ?? []);
+  const rebuild = (): void => {
+    if (fixedModels.length === 0 && catalog.vendors.length === 0) { pool.set([]); return; }
+    pool.set([...fixedModels, ...catalog.expand(book).entries]);
+  };
+  rebuild();
+  const catalogEvery = (opts.catalog?.intervalHours ?? 24) * 3_600_000;
   const syncEvery = (opts.pricing?.intervalHours ?? 24) * 3_600_000;
+  // 事件在下面才接上；价格同步完成时目录要通知宿主
+  let emitModels = (): void => {};
+  let started = false;
   // 到期的才同步；在后台跑，不拖慢启动，失败只记日志（价格照旧用上次的）
   const syncDue = (): void => {
     for (const s of book.status()) {
       if (book.age(s.vendor) < syncEvery) continue;
       book.sync(s.vendor).then(([r]) => {
         if (r && !r.ok) logger.log('warn', `价格同步失败（${r.vendor}）：${r.error}`);
+        // 新上架的模型有了价格就进目录
+        else if (catalog.vendors.includes(s.vendor)) { rebuild(); emitModels(); }
       }).catch((e) => logger.log('warn', `价格同步出错：${e instanceof Error ? e.message : String(e)}`));
     }
   };
@@ -338,6 +370,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   // ── 事件：宿主不必自己给每个任务挂 watch ──
   const listeners = {
     task: new Set<AgentEvents['task']>(), schedule: new Set<AgentEvents['schedule']>(), draft: new Set<AgentEvents['draft']>(),
+    models: new Set<AgentEvents['models']>(),
   };
   const emit = <E extends keyof AgentEvents>(event: E, value: Parameters<AgentEvents[E]>[0]): void => {
     for (const cb of listeners[event]) {
@@ -348,6 +381,24 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   };
   const following = new Set<string>();
   let stopping = false;
+  emitModels = () => { if (listeners.models.size > 0) emit('models', catalog.expand(book).catalogs); };
+  // 拉模型列表：在后台跑，失败只记日志（用上次的列表）
+  const refreshCatalog = async (vendor?: string): Promise<readonly ModelListing[]> => {
+    const out = await catalog.refresh(vendor);
+    for (const r of out) if (!r.ok) logger.log('warn', `模型列表获取失败（${r.vendor}）：${r.error}`);
+    rebuild();
+    emitModels();
+    return out;
+  };
+  const refreshInBackground = (vendors: readonly string[]): void => {
+    for (const v of vendors) {
+      refreshCatalog(v).catch((e) => logger.log('warn', `模型列表获取出错：${e instanceof Error ? e.message : String(e)}`));
+    }
+  };
+  const catalogDue = (): void => {
+    refreshInBackground(catalog.vendors.filter((v) => staleVendors.includes(v) || catalog.age(v) >= catalogEvery));
+    staleVendors = [];
+  };
 
   const base = await assemble({
     stores,
@@ -503,11 +554,12 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       forget: async (id) => (await forgetMemories([id])) > 0,
       clear: async () => forgetMemories((await activeMemories(stores.memories, 10_000)).map((m) => m.id)),
     },
+    // 价格变了，目录（哪些模型有官方价格、按价格定的档次）跟着变
     prices: {
       status: () => book.status(),
-      sync: (vendor) => book.sync(vendor),
-      confirm: (vendor, model) => book.confirm(vendor, model),
-      dismiss: (vendor, model) => book.dismiss(vendor, model),
+      sync: async (vendor) => { const r = await book.sync(vendor); rebuild(); return r; },
+      confirm: async (vendor, model) => { const r = await book.confirm(vendor, model); rebuild(); return r; },
+      dismiss: async (vendor, model) => { const r = await book.dismiss(vendor, model); rebuild(); return r; },
     },
     usage: {
       summary: async (o) => summarizeUsage(
@@ -539,11 +591,16 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       test: (entry) => testModel(entry),
       explain: (rule, ctx) => pool.explain(rule, ctx),
       discover: async (entry, signal) => (entry.model.listModels ? entry.model.listModels(signal) : null),
+      catalog: () => catalog.expand(book).catalogs,
+      refresh: (vendor) => refreshCatalog(vendor),
     },
     async configure(patch) {
-      if (patch.models !== undefined || patch.strategy !== undefined) {
-        pool.set(patch.models ?? pool.current.entries, patch.strategy ?? pool.current.strategy);
-      }
+      if (patch.strategy !== undefined) pool.set(pool.current.entries, patch.strategy);
+      if (patch.models !== undefined) fixedModels = patch.models;
+      if (patch.providers !== undefined) staleVendors = [...new Set([...staleVendors, ...catalog.setProviders(patch.providers)])];
+      if (patch.models !== undefined || patch.providers !== undefined) rebuild();
+      // 换了 key、新启用的厂商：后台去拉它的模型列表（启动前配置的，等 start 时再拉）
+      if (patch.providers !== undefined && started) catalogDue();
       if (patch.tools !== undefined) registry.setTools(patch.tools);
       // 换技能来源时内置的保留 —— 宿主只管自己那一份
       if (patch.skills !== undefined) await registry.setProviders([...builtins, ...patch.skills]);
@@ -572,15 +629,18 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       rollupTimer ??= setInterval(() => void rollup(), 86_400_000);
       // 不拖住进程退出（CLI 宿主跑完就该退）
       (rollupTimer as { unref?: () => void }).unref?.();
-      // 价格：启动时把到期的同步了，之后每小时看一次有没有到期的
+      // 价格、模型列表：启动时把到期的拉了，之后每小时看一次有没有到期的
+      started = true;
       syncDue();
-      priceTimer ??= setInterval(syncDue, 3_600_000);
+      catalogDue();
+      priceTimer ??= setInterval(() => { syncDue(); catalogDue(); }, 3_600_000);
       (priceTimer as { unref?: () => void }).unref?.();
       // 重启后接着跟住没结束的任务 —— 宿主的界面要继续动
       for (const t of await stores.tasks.listByState(ALL_STATES.filter((s) => !TERMINAL.has(s)), 1000)) follow(t.id);
     },
     async stop() {
       stopping = true;
+      started = false;
       if (rollupTimer) { clearInterval(rollupTimer); rollupTimer = undefined; }
       if (priceTimer) { clearInterval(priceTimer); priceTimer = undefined; }
       await base.stop();

@@ -30,7 +30,7 @@ export {
 } from '@melon-ai/llm';
 export type {
   ProviderOptions, CompatibleOptions, RouteStrategy, ModelTestResult, FxRates, UsageSummary, UsageBucket, UsageGroup, UsageTotals,
-  SummaryOptions, RoutingRule, RoutingRules, RouteExplanation, RouteCandidate,
+  SummaryOptions, RoutingRule, RoutingRules, RouteExplanation, RouteCandidate, RouteWhy, PinStatus,
 } from '@melon-ai/llm';
 export { whenToRule, describeRule, hostTimeZone } from '@melon-ai/engine';
 export type { When } from '@melon-ai/engine';
@@ -40,6 +40,7 @@ export type {
   Task, TaskState, TaskEvent, Sequenced, Schedule, ScheduleStatus, ModelEntry, PolicyMode,
   ApprovalDecision, ApprovalRequest, Grant, Memory, SkillProvider, ToolContext, ToolOutput, Message, AnswerDraft,
   ModelPrice, Currency, UsageRecord, UsageQuery, ModelTier, RouteContext, PlanPricing, PriceSource, PriceSheet, PriceSync, PriceChange,
+  ModelProvider, ModelOverride, ModelListing, CatalogModel, VendorCatalog,
 } from '@melon-ai/core';
 
 /** 兼容旧名。 */

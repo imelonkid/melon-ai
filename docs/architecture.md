@@ -1252,6 +1252,17 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     - **套餐**（阿里 Coding Plan / Token Plan：固定月费 + 请求额度）：`ModelEntry.plan`，按次不另计、账本标 `billing: plan`；路由预估 0 优先用，
       任一额度窗口（按厂商数成功请求、滚动时长估算）到 95% 让位。Token Plan 的 Credits 各模型消耗不同、官方没给按次算法，只数请求。
     - **按次收费的工具**：`ToolDescriptor.billing`，管线每次真的执行记一笔（`purpose: 'tool'`），命中重复调用缓存的不算；汇总里单独成组。搜索的单价宿主给（博查没有可读的价格页）。
+83. **模型列表要用户自己维护，路由也说不清为什么选它。** 宿主配置里写死模型 id：官方上新了用户不知道，下架了的（`deepseek-reasoner`）还挂在列表里「未计价」。
+    路由页只给排序，宿主得自己猜「为什么是它」；单个定时任务也没法单独绑定模型 —— 调用信息里没有定时任务的 id。
+    - **模型目录**（`ModelCatalog`，llm/router）：宿主给 `ModelProvider { vendor, make(id), overrides, fingerprint }`，引擎拉 `/models`，
+      和「有官方价格（同步来的或内置）或内置档次」的取交集自动加入路由；其余可用的列给宿主做下拉框。列表存档（`CatalogStore`，sqlite `model_catalog`），
+      每 24 小时、指纹（key / 地址的摘要）变了立即重拉；失败用上次的，换了 key 后失败不沿用旧账号的；从没拉成功过用有官方价格的 + 默认模型。
+      价格同步完成、确认价格后目录重算，发 `models` 事件。
+    - **自动定档**：用户 > 内置 > 按这家各模型的综合价（输入 3 : 输出 1）高低（一个是标准；两个时贵的是强；三个以上按三分位），
+      名字表明轻量款 / 旗舰款的不越过定位。用户的改动只存差异（关掉、档次、手填价格、手动加），其余跟随官方；手动加的下架了标 `gone`、不参与路由。
+    - **推荐理由**：`RouteExplanation.why`（`cheapest` 带省了多少、`plan` / `tier` / `latency` / `only` / `unpriced` / `fallback`，第二名、够档几个、被挪后的），
+      说的总是「自动会推荐谁」；指定了模型另给 `pin.status`（`used` / `missing` / `unusable`）和 `recommended`。措辞归宿主。候选带近 7 天成败。
+    - **按定时任务绑定**：`CallMeta.triggerRef`（= `Task.trigger.ref`，定时任务的 id），宿主的路由规则据此给单个定时任务 `pin`。不进账本。
 
 #### 包结构合并（14 → 8）
 

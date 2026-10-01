@@ -1,4 +1,4 @@
-import type { Currency, PriceStore, PriceSync, TaskId, UsageLedger, UsageQuery, UsageRecord } from '@melon-ai/core';
+import type { CatalogStore, Currency, ModelListing, PriceStore, PriceSync, TaskId, UsageLedger, UsageQuery, UsageRecord } from '@melon-ai/core';
 import type { SqliteContext } from './db.js';
 import { rollupRecords } from '../usage.js';
 
@@ -74,5 +74,18 @@ export class SqlitePriceStore implements PriceStore {
 
   async list(): Promise<readonly PriceSync[]> {
     return (this.cx.db.prepare('SELECT payload FROM price_sync ORDER BY vendor').all() as { payload: string }[]).map((r) => JSON.parse(r.payload) as PriceSync);
+  }
+}
+
+export class SqliteCatalogStore implements CatalogStore {
+  constructor(private readonly cx: SqliteContext) {}
+
+  async put(l: ModelListing): Promise<void> {
+    this.cx.db.prepare('INSERT INTO model_catalog (vendor, at, payload) VALUES (?,?,?) ON CONFLICT(vendor) DO UPDATE SET at=excluded.at, payload=excluded.payload')
+      .run(l.vendor, l.at, JSON.stringify(l));
+  }
+
+  async list(): Promise<readonly ModelListing[]> {
+    return (this.cx.db.prepare('SELECT payload FROM model_catalog ORDER BY vendor').all() as { payload: string }[]).map((r) => JSON.parse(r.payload) as ModelListing);
   }
 }

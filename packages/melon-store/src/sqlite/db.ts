@@ -216,6 +216,13 @@ CREATE TABLE IF NOT EXISTS price_sync (
   at      INTEGER NOT NULL,
   payload TEXT NOT NULL
 );
+
+-- 模型目录：每家厂商上次拉到的模型列表（JSON）
+CREATE TABLE IF NOT EXISTS model_catalog (
+  vendor  TEXT PRIMARY KEY,
+  at      INTEGER NOT NULL,
+  payload TEXT NOT NULL
+);
 `;
 
 /**

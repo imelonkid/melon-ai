@@ -7,6 +7,7 @@ import type { Grant } from '../policy.js';
 import type { Schedule, ScheduleId, ScheduleStatus } from '../schedule.js';
 import type { Archive, Purger } from '../deletion.js';
 import type { PriceSync, UsageQuery, UsageRecord } from '../usage.js';
+import type { ModelListing } from '../model.js';
 
 /**
  * ─── 依赖倒置的核心 ───
@@ -134,6 +135,12 @@ export interface PriceStore {
   list(): Promise<readonly PriceSync[]>;
 }
 
+/** 模型目录：每家厂商上次拉到的模型列表，只留最新的一条。 */
+export interface CatalogStore {
+  put(listing: ModelListing): Promise<void>;
+  list(): Promise<readonly ModelListing[]>;
+}
+
 export interface StoreBundle {
   readonly tasks: TaskStore;
   readonly events: EventLog;
@@ -147,6 +154,7 @@ export interface StoreBundle {
   readonly archive: Archive;
   readonly usage: UsageLedger;
   readonly prices: PriceStore;
+  readonly catalog: CatalogStore;
   /** 跨多个 store 的原子写。单机 SQLite 下就是一个事务。 */
   transaction<T>(fn: () => Promise<T>): Promise<T>;
   close(): Promise<void>;

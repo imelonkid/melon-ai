@@ -112,6 +112,7 @@ export class ReActPlanner implements Planner {
     // 为谁问、问来做什么：路由按它套规则（任务类别、最低档、固定模型），记账也按它
     const meta = {
       taskId: task.id, agentId: task.agentId, taskKind: task.kind, trigger: task.trigger.type,
+      ...(task.trigger.ref !== undefined ? { triggerRef: task.trigger.ref } : {}),
       purpose: intent === 'task' ? 'plan' as const : 'answer' as const,
     };
     // 带工具的一轮只给支持工具的模型

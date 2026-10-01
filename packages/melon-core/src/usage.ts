@@ -61,6 +61,8 @@ export interface CallMeta {
   readonly taskKind?: string;
   /** 任务怎么来的（`Task.trigger.type`：manual / schedule …）。 */
   readonly trigger?: string;
+  /** 触发来源（`Task.trigger.ref`：定时任务是它的 id）。宿主的路由规则据此给单个定时任务绑定模型。不进账本。 */
+  readonly triggerRef?: string;
   /** 用途：`RouteIntent`（plan / answer / classify …）。写成 string 是为了不让本文件反过来依赖 model.ts。 */
   readonly purpose: string;
 }

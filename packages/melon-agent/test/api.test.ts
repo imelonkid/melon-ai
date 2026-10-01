@@ -338,3 +338,49 @@ test('路由：auto 策略按宿主规则挑模型（任务类别、最低档、
     assert.ok(await done2);
   } finally { await agent.stop(); }
 });
+
+test('模型目录：providers 跟随厂商最新可用的模型（/models ∩ 有价格或内置档次），拉完发 models 事件；定时任务按 triggerRef 单独绑定模型', async () => {
+  const replies: Record<string, string> = {};
+  const mk = (id?: string): ModelEntry => {
+    const mid = id ?? 'flash';
+    const model = new ScriptedModel(Array.from({ length: 5 }, () => `${mid} 答的`));
+    Object.assign(model, { id: mid, listModels: async () => ['flash', 'pro', 'embed'] });
+    replies[mid] = `${mid} 答的`;
+    const builtin: Record<string, ModelEntry['tier']> = { flash: 'standard', pro: 'strong' };
+    return {
+      model, quality: 1, costUSD: 1, egress: 'ds', label: 'DeepSeek',
+      ...(builtin[mid] ? { tier: builtin[mid] } : {}),
+      ...(mid === 'pro' ? { price: { input: 9, output: 9, currency: 'CNY' as const } } : mid === 'flash' ? { price: { input: 1, output: 1, currency: 'CNY' as const } } : {}),
+    };
+  };
+  let bound: string | undefined;
+  const agent = await createAgent({
+    strategy: 'auto', platform: quiet, start: false,
+    providers: [{ vendor: 'ds', label: 'DeepSeek', make: mk, fingerprint: 'k1' }],
+    // 单个定时任务绑定了模型就用它，其余按类别
+    routing: (meta) => (meta?.trigger === 'schedule'
+      ? { taskClass: 'schedule', minTier: 'standard', ...(bound && meta.triggerRef === bound ? { pin: 'ds/pro' } : {}) }
+      : { taskClass: 'chat', minTier: 'standard' }),
+  });
+  try {
+    // 启动前：还没拉过列表，先用默认模型
+    assert.deepEqual(agent.models.entries.map((e) => e.model.id), ['flash']);
+    const changed = new Promise((r) => { const off = agent.on('models', (c) => { off(); r(c); }); });
+    await agent.start();
+    await changed;
+    assert.deepEqual(agent.models.entries.map((e) => e.model.id).sort(), ['flash', 'pro']);
+    const cat = agent.models.catalog()[0]!;
+    assert.deepEqual(cat.others, ['embed']);
+
+    const s = await agent.schedules.create({ title: '周报', template: { agentId: 'default' as never, kind: 'automation', goal: '写周报' }, rule: { kind: 'once', at: Date.now() + 5 } });
+    bound = s.id;
+    const done = until(agent, (t) => t.state === 'SUCCEEDED' && t.trigger.type === 'schedule');
+    await new Promise((r) => setTimeout(r, 20));
+    await agent.schedules.tick();
+    const dt = await done;
+    assert.equal(dt.outcome?.answer, 'pro 答的', '这个定时任务绑定了 pro');
+    const chat = until(agent, (t) => t.state === 'SUCCEEDED' && t.trigger.type === 'manual');
+    await agent.run('随便问问');
+    assert.equal((await chat).outcome?.answer, 'flash 答的', '对话按推荐用便宜的');
+  } finally { await agent.stop(); }
+});

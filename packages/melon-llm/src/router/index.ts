@@ -4,3 +4,4 @@ export * from './meter.js';
 export * from './summary.js';
 export * from './auto.js';
 export * from './prices.js';
+export * from './catalog.js';
