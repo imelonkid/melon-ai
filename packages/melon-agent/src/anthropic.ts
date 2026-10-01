@@ -6,5 +6,5 @@
  * const agent = await createAgent({ models: [claude({ apiKey })] });
  * ```
  */
-export { claude, AnthropicChatModel, ANTHROPIC_MODELS, CLAUDE_DEFAULT_MODEL } from '@melon-ai/llm/anthropic';
+export { claude, AnthropicChatModel, ANTHROPIC_MODELS, CLAUDE_DEFAULT_MODEL, CLAUDE_TIERS } from '@melon-ai/llm/anthropic';
 export type { ClaudeOptions, AnthropicModelId } from '@melon-ai/llm/anthropic';

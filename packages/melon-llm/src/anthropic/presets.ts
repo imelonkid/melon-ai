@@ -18,7 +18,7 @@ export interface ClaudeOptions {
   readonly price?: ModelPrice;
 }
 
-const CLAUDE_TIERS: Readonly<Record<AnthropicModelId, ModelTier>> = {
+export const CLAUDE_TIERS: Readonly<Record<AnthropicModelId, ModelTier>> = {
   'claude-opus-5': 'strong', 'claude-sonnet-5': 'standard', 'claude-haiku-4-5': 'basic',
 };
 
