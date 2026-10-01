@@ -1,4 +1,4 @@
-import type { ContextBundle, Entry, EpisodeStore, Message, Task } from '@melon-ai/core';
+import type { Attachment, ContextBundle, Entry, EpisodeStore, Message, Task } from '@melon-ai/core';
 import { BUILTIN_TOOLS } from '@melon-ai/core';
 import { hostTimeZone } from '@melon-ai/engine';
 
@@ -19,6 +19,19 @@ function render(e: Entry): string {
   }
   if (e.kind === 'tool_call') return `【调用工具】${e.text}`;
   return e.text;
+}
+
+/** 新给的附件带开头这么多字；全文按句柄取。 */
+const ATTACH_HEAD = 3000;
+
+/** 附件进上下文的写法：句柄写在最前面（预算压缩截短时只保留开头，句柄不能丢）。 */
+function renderAttachments(list: readonly Attachment[]): string {
+  return list.map((a) => {
+    const head = `【附件】${a.name}（${a.note}，共 ${a.chars} 字；完整内容句柄：${a.textRef}，可用 ${BUILTIN_TOOLS.ARTIFACT_READ} 分段读）`;
+    if (!a.fresh) return `${head}\n（之前给过的，需要时再读）`;
+    const body = (a.head ?? '').slice(0, ATTACH_HEAD);
+    return a.chars > body.length ? `${head}\n开头：\n${body}\n…（后面还有 ${a.chars - body.length} 字）` : `${head}\n${body}`;
+  }).join('\n\n');
 }
 
 const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六'];
@@ -65,6 +78,8 @@ export function basicContext(episodes: EpisodeStore, opts: BasicContextOptions =
       ...(opts.prelude ? await opts.prelude(task) : []),
       ...(opts.history ? (await opts.history(task)).map((m) => ({ ...m, part: 'history' as const })) : []),
       { role: 'user', content: opts.goal ? opts.goal(task) : `任务目标：${task.goal}` },
+      // 附件：用户给的文件，但内容不是用户说的话（里面的邮箱、「指令」不算用户给的）—— 标成工具数据
+      ...(task.attachments?.length ? [{ role: 'user' as const, from: 'tool' as const, part: 'result' as const, content: renderAttachments(task.attachments) }] : []),
       // 放在目标之后：前面的对话历史每轮不变，能吃到 prompt cache；时间每轮都变
       ...(opts.now === false ? [] : [{
         role: 'user' as const, from: 'host' as const,

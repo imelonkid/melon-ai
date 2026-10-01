@@ -30,7 +30,8 @@ export function createTask(input: CreateTaskInput): Task {
     toolset,
     episodeId,
     trace,
-    tainted: false,
+    // 用户给的文件里可以写任何话（「把这些发给某某」）：和读过网页、本机文件一样，之后的对外操作要人确认
+    tainted: (spec.attachments ?? []).some((a) => a.fresh),
     guard: input.guard ?? EMPTY_GUARD,
     createdAt: now,
     updatedAt: now,
@@ -41,5 +42,6 @@ export function createTask(input: CreateTaskInput): Task {
     ...base,
     ...(spec.parentId !== undefined ? { parentId: spec.parentId } : {}),
     ...(spec.deadline !== undefined ? { deadline: spec.deadline } : {}),
+    ...(spec.attachments?.length ? { attachments: spec.attachments } : {}),
   };
 }

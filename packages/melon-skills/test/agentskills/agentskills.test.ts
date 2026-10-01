@@ -209,6 +209,8 @@ test('skill.run：执行技能自带的脚本，参数原样传入，在任务�
     assert.match(out, /dir:set/);
     assert.match(out, /key:none/, '宿主进程里的 key 不能带给脚本');
     assert.match(out, /生成的文件[\s\S]*out\.txt/);
+    const res = await b!.handlers.get('skill.run')!({ name: 'echoer', script: 'scripts/echo.js', args: [] }, cx('task-2'));
+    assert.deepEqual(res.files?.map((f) => f.name), ['out.txt'], '生成的文件随结果给宿主（文件卡片）');
   } finally { delete process.env['OPENAI_API_KEY']; r.done(); rmSync(work, { recursive: true, force: true }); }
 });
 

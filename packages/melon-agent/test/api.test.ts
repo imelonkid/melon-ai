@@ -488,3 +488,50 @@ test('没执行的调用也要回喂给模型：参数不合法、问之前的�
     assert.match(seen(3), /用户拒绝了这次操作/, '用户拒绝：看得到');
   } finally { await agent.stop(); }
 });
+
+test('附件：这一轮的上下文里有附件的开头和句柄，能读全文；任务算读过不可信内容；追问时沿用的附件还读得到。生成的文件随事件落盘', async () => {
+  const { outputs } = await import('../src/files.js');
+  const out = mkdtempSync(join(tmpdir(), 'jolly-out-'));
+  const long = `部门,费用\n${'产品部,1280\n'.repeat(400)}最后一行,9999`;
+  const { entry: e, model } = entry([
+    call('builtin.artifact_read', { ref: 'REF', offset: 3000 }), '最后一行是 9999',
+    call('builtin.artifact_read', { ref: 'REF' }), '第一行是表头',
+    call('output.write', { name: '汇总.csv', content: '部门,费用' }), '生成好了',
+  ]);
+  // 句柄要等附件存进去才知道：调用时把 REF 换成真的
+  const gen = model.generate.bind(model);
+  let ref = '';
+  model.generate = async (req) => {
+    const r = await gen(req);
+    return r.toolCalls ? { ...r, toolCalls: r.toolCalls.map((c) => (c.args && (c.args as { ref?: string }).ref === 'REF' ? { ...c, args: { ...(c.args as object), ref } } : c)) } : r;
+  };
+  const agent = await createAgent({ models: [e], skills: [outputs({ dir: out })], platform: quiet });
+  try {
+    const done1 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === '最后一行是 9999');
+    const t1 = await agent.run('看下这个表最后一行', { attachments: [{ name: '费用.csv', size: long.length, note: '文本', text: long }] });
+    ref = t1.attachments![0]!.textRef;
+    await done1;
+    const first = model.calls[0]!.messages.map((m) => m.content).join('\n');
+    assert.match(first, /【附件】费用\.csv（文本，共 \d+ 字；完整内容句柄：art-/);
+    assert.match(first, /后面还有 \d+ 字/);
+    assert.ok((await agent.tasks.get(t1.id))!.tainted, '附件里可能藏指令：读过的任务之后对外操作要确认');
+    const read1 = (await agent.tasks.history(t1.id)).map((r) => r.value).find((v) => v.t === 'Observed');
+    assert.match(JSON.stringify(read1), /9999/, '能读到附件的全文');
+
+    // 追问：沿用上一轮的附件，句柄还读得到
+    const done2 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === '第一行是表头');
+    const t2 = await agent.run('那第一行呢', { attachments: t1.attachments ?? [] });
+    await done2;
+    const seen = model.calls[2]!.messages.map((m) => m.content).join('\n');
+    assert.match(seen, /之前给过的，需要时再读/);
+    assert.match(JSON.stringify((await agent.tasks.history(t2.id)).map((r) => r.value).find((v) => v.t === 'Observed')), /部门,费用/);
+    assert.equal((await agent.tasks.get(t2.id))!.tainted, false, '只是沿用、这一轮没给新文件：不算');
+
+    // 生成文件：事件里带上文件，宿主据此显示文件卡片
+    const done3 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === '生成好了');
+    const t3 = await agent.run('生成文件：把汇总存成表格');
+    await done3;
+    const fin = (await agent.tasks.history(t3.id)).map((r) => r.value).find((v) => v.t === 'ToolCallFinished') as unknown as { meta: { files?: { name: string }[] } };
+    assert.deepEqual(fin.meta.files?.map((f) => f.name), ['汇总.csv']);
+  } finally { await agent.stop(); rmSync(out, { recursive: true, force: true }); }
+});

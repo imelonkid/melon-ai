@@ -3,7 +3,7 @@ import type {
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
   ScheduleStatus, SchemaValidator, Sequenced, SkillProvider, StoreBundle, Task, TaskEvent, TaskId,
   TaskKind, TaskState, ToolResolver, ToolsetSnapshot, UsageQuery, UsageRecord, RouteContext, PriceSource, PriceSync,
-  ModelProvider, VendorCatalog, ModelListing,
+  ModelProvider, VendorCatalog, ModelListing, Attachment,
 } from '@melon-ai/core';
 import { TERMINAL_STATES, asAgentId, asScheduleId, asToolId } from '@melon-ai/core';
 import { describeRule, whenToRule } from '@melon-ai/engine';
@@ -133,6 +133,19 @@ export interface RunOptions {
    */
   readonly ref?: string;
   readonly budget?: Partial<Budget>;
+  /**
+   * 用户随这一轮给的文件。新的：文字已抽好（Node 宿主用 `@melon-ai/agent/files` 的 `prepareAttachment(path)`）；
+   * 沿用之前轮次的：直接传那一轮 `task.attachments` 里的项（追问「这个表第三行是什么」时模型还读得到）。
+   */
+  readonly attachments?: readonly (NewAttachment | Attachment)[];
+}
+
+/** 一个新附件：名字、大小、说明、抽出的文字。 */
+export interface NewAttachment {
+  readonly name: string;
+  readonly size: number;
+  readonly note: string;
+  readonly text: string;
 }
 
 /** `schedules.create` 的友好写法：写目标和「什么时候」，其余有默认值。 */
@@ -266,6 +279,9 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
   /** 底层调度器。一般用 `schedules` 就够了。 */
   readonly scheduler: Scheduler;
 }
+
+/** 附件文字的 artifact 记在这个名下（任务还没创建；读的权限由 task.attachments 给）。 */
+const ATTACHMENT_OWNER = 'attachments' as TaskId;
 
 const ALL_STATES: readonly TaskState[] = [
   'PENDING', 'PLANNING', 'ADMITTING', 'EXECUTING', 'OBSERVING',
@@ -567,13 +583,21 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     scheduler: base.schedules,
     schedules,
     tools: registry,
-    run(goal, o = {}) {
+    async run(goal, o = {}) {
+      // 新附件的文字存成 artifact（任务通过 task.attachments 读，不受「只能读本任务的」限制）；沿用的原样带上
+      const attachments: Attachment[] = [];
+      for (const a of o.attachments ?? []) {
+        if ('textRef' in a) { attachments.push({ ...a, fresh: false }); continue; }
+        const textRef = await stores.artifacts.put(ATTACHMENT_OWNER, a.text, { mime: 'text/plain', summary: `附件：${a.name}` });
+        attachments.push({ name: a.name, size: a.size, note: a.note, textRef, chars: a.text.length, fresh: true, head: a.text.slice(0, 3000) });
+      }
       return base.submit({
         agentId: asAgentId(o.agentId ?? defaultAgent),
         kind: o.kind ?? 'conversation',
         goal,
         trigger: o.ref !== undefined ? { type: 'manual', ref: o.ref } : { type: 'manual' },
         ...(o.budget ? { budget: o.budget } : {}),
+        ...(attachments.length ? { attachments } : {}),
       });
     },
     async approve(taskId, decision) {

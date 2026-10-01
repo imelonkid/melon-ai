@@ -8,6 +8,11 @@
  * ```
  *
  * 读到的内容会发给模型厂商：每次先问用户，「始终允许」按文件夹（含子文件夹）。受保护的位置（密钥、钥匙串、浏览器资料、宿主数据）不读。
+ *
+ * 附件：`prepareAttachment(path)` 抽出文字，交给 `agent.run(goal, { attachments })`。
+ * 生成文件：`outputs({ dir })` —— Agent 把内容写成文件放在输出目录里，用户自己另存。
  */
-export { files, FilesSkillProvider, FILES_GRANT_KEY, folderScope, folderCovers, canonicalPath } from '@melon-ai/skills/files';
+export {
+  files, FilesSkillProvider, FILES_GRANT_KEY, folderScope, folderCovers, canonicalPath, prepareAttachment, outputs,
+} from '@melon-ai/skills/files';
 export type { FilesSkillOptions } from '@melon-ai/skills/files';

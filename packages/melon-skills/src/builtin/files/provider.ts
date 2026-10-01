@@ -93,6 +93,7 @@ export class FilesSkillProvider implements SkillProvider {
     const list = defineTool<{ folder: string; sort?: 'time' | 'size' | 'name'; limit?: number }>({
       ...common,
       id: 'files.list',
+      outputLimit: 8000,
       description: '列出本机某个文件夹里的文件和子文件夹（名字、大小、修改时间）。用户问「某个目录下有什么」「最近下载了什么」时用。',
       input: {
         folder: folderField,
@@ -118,6 +119,7 @@ export class FilesSkillProvider implements SkillProvider {
     const find = defineTool<{ folder: string; name?: string; ext?: string; days?: number; limit?: number }>({
       ...common,
       id: 'files.find',
+      outputLimit: 6000,
       description: '在本机某个文件夹（含子文件夹）里按名字、类型、修改时间找文件。用户要找「上周下载的 PDF」「名字里有合同的文件」时用。',
       input: {
         folder: folderField,
@@ -161,6 +163,8 @@ export class FilesSkillProvider implements SkillProvider {
     const read = defineTool<{ folder: string; file: string; offset?: number }>({
       ...common,
       id: 'files.read',
+      // 一段就是 chunk 字，再加文件头和「还有多少字」的说明
+      outputLimit: this.chunk + 400,
       description: '读取本机文件的内容：文本、Markdown、CSV、代码直接读；PDF、Word（.docx）、Excel（.xlsx）抽出文字。长文件分段读，用 offset 接着读。',
       input: {
         folder: folderField,

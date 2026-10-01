@@ -134,3 +134,38 @@ test('本地文件：数据出境 —— 三个工具都是对外操作、输出
   assert.equal(folderCovers(s, 'folder=/Users/me/Downloads2'), false, '名字前缀相同的别的文件夹不算');
   assert.equal(folderCovers(s, 'folder=/Users/me'), false);
 });
+
+test('附件：抽出文字和说明；图片、文件夹、受保护的位置给出原因', async () => {
+  const { prepareAttachment } = await import('../../src/builtin/files/index.js');
+  const dir = mkdtempSync(join(tmpdir(), 'attach-'));
+  try {
+    writeFileSync(join(dir, '费用.xlsx'), await xlsx());
+    writeFileSync(join(dir, 'a.png'), Buffer.from([0x89, 0x50]));
+    mkdirSync(join(dir, 'secret'));
+    writeFileSync(join(dir, 'secret', 'k.txt'), 'sk-1');
+    const a = await prepareAttachment(join(dir, '费用.xlsx'));
+    assert.equal(a.name, '费用.xlsx');
+    assert.match(a.note, /Excel，1 张表/);
+    assert.match(a.text, /产品部\t\t1280\.5/);
+    await assert.rejects(prepareAttachment(join(dir, 'a.png')), /当前模型看不了图片/);
+    await assert.rejects(prepareAttachment(dir), /是文件夹/);
+    await assert.rejects(prepareAttachment(join(dir, 'secret', 'k.txt'), { denyRead: [join(dir, 'secret')] }), /受保护的位置/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('生成文件：写到输出目录（每个任务一个子目录），结果带上文件；CSV 加 BOM；文件名不能带路径、扩展名有限制', async () => {
+  const { outputs } = await import('../../src/builtin/files/index.js');
+  const { readFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'out-'));
+  try {
+    const [b] = await outputs({ dir }).list();
+    const d = b!.skill.tools.find((t) => t.id === 'output.write')!;
+    assert.equal(d.risk, 'write', '只写输出区：本地写入，不用每次问');
+    const run = b!.handlers.get('output.write')!;
+    const r = await run({ name: '../../九月汇总.csv', content: '部门,费用\n产品部,1280' }, cx());
+    assert.equal(r.files![0]!.name, '九月汇总.csv');
+    assert.equal(r.files![0]!.path, join(dir, 't', '九月汇总.csv'));
+    assert.ok(readFileSync(r.files![0]!.path, 'utf8').startsWith('﻿部门,费用'));
+    await assert.rejects(run({ name: 'x.exe', content: 'x' }, cx()), /文件名不行/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

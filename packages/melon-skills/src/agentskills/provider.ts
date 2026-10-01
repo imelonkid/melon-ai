@@ -342,7 +342,11 @@ export class AgentSkillsProvider implements SkillProvider {
           }
           throw new ToolError('UPSTREAM', `脚本 ${rel} 执行失败（退出码 ${out.code ?? '无'}）\n${report}`, { retriable: false });
         }
-        return report;
+        // 生成的文件：宿主在对话里显示文件卡片（打开 / 另存为）
+        const files = made.flatMap((name) => {
+          try { const st = statSync(join(work, name)); return st.isFile() ? [{ name, path: join(work, name), size: st.size }] : []; } catch { return []; }
+        });
+        return files.length ? { summary: report, files } : report;
       },
     });
   }

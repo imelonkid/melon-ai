@@ -99,11 +99,28 @@ export const DEFAULT_GUARDS: GuardThresholds = {
   windowSize: 8,
 };
 
+/**
+ * 用户随这一轮给的文件（附件）。原文件的文字已经抽出来存成 artifact；任务能读它（不受「只能读本任务的 artifact」限制）。
+ * `fresh`：这一轮新给的 —— 上下文里带开头；沿用之前轮次的只列出来、给句柄。
+ */
+export interface Attachment {
+  readonly name: string;
+  readonly size: number;
+  /** 给人看的说明：「PDF，12 页」「Excel，3 张表」。 */
+  readonly note: string;
+  readonly textRef: ArtifactRef;
+  readonly chars: number;
+  readonly fresh: boolean;
+  /** 开头一段文字（新给的才有）：直接进上下文，不用先读一次句柄。 */
+  readonly head?: string;
+}
+
 export interface TaskSpec {
   readonly agentId: AgentId;
   readonly kind: TaskKind;
   readonly goal: string;
   readonly trigger: Trigger;
+  readonly attachments?: readonly Attachment[];
   readonly parentId?: TaskId;
   readonly budget?: Partial<Budget>;
   readonly deadline?: number;
@@ -117,6 +134,7 @@ export interface Task {
   readonly agentId: AgentId;
   readonly kind: TaskKind;
   readonly goal: string;
+  readonly attachments?: readonly Attachment[];
   readonly state: TaskState;
   readonly trigger: Trigger;
   readonly budget: Budget;

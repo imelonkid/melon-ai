@@ -1294,6 +1294,15 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
       `basicContext` 多了 `history` 选项，宿主的对话历史放这里就会被预算管起来。
     - **摘要**走路由的 `compact`（宿主可以路由到便宜模型），照常记账；按输入缓存，同一段旧内容不会每步都摘一次；失败退回到丢弃最旧的并标出来。
       工具结果的摘要仍是 `from: 'tool'`（网页、文件里的「指令」不会因为摘要过就变可信），提示词也要求不照做、不写成结论。
+88. **文件进不了对话，也出不来。** 用户手里的 PDF 只能先说在哪个文件夹再走授权；技能脚本生成的文件只在结果文字里列个名字，用户拿不到。
+    - **附件**：`agent.run(goal, { attachments })`。新附件由宿主用 `prepareAttachment(path)`（files 子路径，与本地文件同一套解析）抽出文字，
+      引擎存成 artifact、记在 `task.attachments`（开头 3000 字一并存，上下文直接带上；句柄写在最前，预算截短时不丢）。
+      「只能读本任务的 artifact」放宽到 `task.attachments` 里列的 —— 追问时宿主把上一轮的附件原样传回（`fresh: false`，只列出、给句柄）。
+      附件内容是数据不是用户的话（`from: 'tool'`），新给附件的任务直接带污点。图片：现在的适配器都不能看图，`prepareAttachment` 明确报错。
+    - **生成的文件**：`ToolOutput.files` → `ToolResult.files` → `ToolCallFinished.meta.files`，宿主事后显示文件卡片。`skill.run` 填工作目录里新生成的。
+    - **生成文件**（`outputs({ dir })`，工具 `output.write`）：写到宿主给的输出目录（每任务一个子目录），只认 md / csv / txt / json / html，
+      文件名去掉路径。不写用户的文件夹，按本地写入处理（不用每次问）；CSV 加 BOM，Excel 打开中文不乱码。
+    - 顺带：本地文件的工具没设摘要上限，`files.read` 一段 8000 字其实被截到 2048（原文转成句柄）—— 设了 `outputLimit`。
 
 #### 包结构合并（14 → 8）
 

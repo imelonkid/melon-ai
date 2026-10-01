@@ -44,6 +44,7 @@ export async function normalizeOk(input: NormalizeInput): Promise<ToolResult> {
     ...base,
     ...(output.data !== undefined ? { data: output.data } : {}),
     ...(artifactRef !== undefined ? { artifactRef } : {}),
+    ...(output.files?.length ? { files: output.files } : {}),
   };
 }
 

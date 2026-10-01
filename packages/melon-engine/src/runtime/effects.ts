@@ -162,6 +162,7 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
             ok: result.ok, metrics: result.metrics,
             ...(result.error ? { errorCode: result.error.code } : {}),
             ...(result.error?.sandbox ? { sandbox: result.error.sandbox } : {}),
+            ...(result.files?.length ? { files: result.files } : {}),
             ...(result.artifactRef ? { artifactRef: result.artifactRef } : {}),
             ...(result.untrusted ? { untrusted: true } : {}),
           } },

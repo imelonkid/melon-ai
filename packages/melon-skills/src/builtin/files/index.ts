@@ -5,4 +5,6 @@
  * 读到的内容会发给模型厂商：按对外操作处理，先问用户；「始终允许」按文件夹。受保护的位置不读，内容不可信。
  */
 export * from './provider.js';
+export * from './attach.js';
+export * from './outputs.js';
 export { FILES_GRANT_KEY, folderScope, folderCovers, canonical as canonicalPath } from './paths.js';

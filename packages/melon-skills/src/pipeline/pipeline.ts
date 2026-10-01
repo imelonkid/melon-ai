@@ -232,7 +232,9 @@ export class ToolPipeline {
       readArtifact: async (ref, range) => {
         // 跨任务读取直接拒 —— 句柄是可猜的，不校验等于开了一个横向读取的口子
         const meta = await this.deps.artifacts.stat(ref);
-        if (!meta || meta.taskId !== task.id) {
+        // 附件（用户随这一轮给的文件，含沿用之前轮次的）也能读
+        const attached = (task.attachments ?? []).some((a) => a.textRef === ref);
+        if (!meta || (meta.taskId !== task.id && !attached)) {
           throw new ToolError('NOT_FOUND', `句柄 ${ref} 不存在或不属于本任务`, {
             hint: '只能读取本次任务中产生的 artifact',
           });

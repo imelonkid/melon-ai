@@ -145,6 +145,15 @@ export interface ToolOutput {
   /** 小的结构化结果才放这里；大结果走 putArtifact。 */
   readonly data?: unknown;
   readonly artifactRef?: ArtifactRef;
+  /** 这次生成了哪些文件（技能脚本的输出、「生成文件」）。宿主据此给用户「打开 / 另存为」。 */
+  readonly files?: readonly OutputFile[];
+}
+
+/** 工具生成的一个文件。路径是宿主的本机路径（工作目录、输出目录里）。 */
+export interface OutputFile {
+  readonly name: string;
+  readonly path: string;
+  readonly size: number;
 }
 
 /**
@@ -158,6 +167,7 @@ export interface ToolResult {
   readonly artifactRef?: ArtifactRef;
   readonly error?: ToolErrorShape;
   readonly metrics: ToolMetrics;
+  readonly files?: readonly OutputFile[];
   /** 由管线按 `ToolDescriptor.untrustedOutput` 填，工具自己不用管。 */
   readonly untrusted?: boolean;
 }
@@ -177,6 +187,8 @@ export interface ToolResultMeta {
   readonly sandbox?: ToolErrorShape['sandbox'];
   readonly artifactRef?: ArtifactRef;
   readonly metrics: ToolMetrics;
+  /** 生成的文件，随事件落盘：宿主事后在对话里显示文件卡片。 */
+  readonly files?: readonly OutputFile[];
   /**
    * 这次输出不可信。随事件落盘，reducer 据此置 `Task.tainted` ——
    * 放在事件里而不是让 reducer 去查工具描述，重放时才得出同样的结果。
