@@ -230,6 +230,13 @@ export class Runtime implements AgentEngine {
    */
   private async advance(id: TaskId, input: TaskEvent | readonly TaskEvent[]): Promise<void> {
     const r = await this.mutex.run(id, () => apply(this.deps, id, input));
+    // 没执行的调用（参数不合法、检查没过、准入拒绝、用户拒绝）由状态机直接推出 Observed，不经过工具执行 ——
+    // 执行过的那条路径会把结果写进 episode，这里得补上，否则下一次问模型时它看不到原因，只会原样重试
+    const ran = new Set(r.committed.filter((e) => e.t === 'ToolCallFinished').map((e) => (e as { callId: string }).callId));
+    for (const e of r.committed) {
+      if (e.t !== 'Observed' || (e.callId && ran.has(e.callId))) continue;
+      await this.deps.episodes.append(r.task.episodeId, { kind: 'observation', text: e.summary, at: this.deps.now() });
+    }
     await this.drive(id, r.deferred);
   }
 

@@ -463,3 +463,28 @@ test('本地文件：第一次先问；「始终允许」按文件夹 —— 子
     assert.ok(!(await states(t5.id)).includes('ApprovalRequested'));
   } finally { await agent.stop(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test('没执行的调用也要回喂给模型：参数不合法、问之前的检查没过、用户拒绝 —— 下一次问模型时看得到原因', async () => {
+  const tool = defineTool({
+    id: 'crm.note', description: '记客户跟进', risk: 'external', triggers: [],
+    input: { customer: 'string' },
+    precheck: async (a: { customer: string }) => (a.customer === '不存在的客户' ? { message: '没有这个客户', hint: '可能是 张三：用它再试一次' } : null),
+    run: () => '记好了',
+  });
+  const { entry: e, model } = entry([
+    call('crm.note', { customer: 1 }), call('crm.note', { customer: '不存在的客户' }), call('crm.note', { customer: '张三' }), '没记',
+  ]);
+  const agent = await createAgent({ models: [e], tools: [tool], platform: quiet });
+  try {
+    const ask = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const t = await agent.run('给客户记一笔跟进');
+    await ask;
+    const done = until(agent, (x) => x.id === t.id && x.state === 'SUCCEEDED');
+    await agent.approve(t.id, 'deny');
+    await done;
+    const seen = (i: number) => model.calls[i]!.messages.map((m) => m.content).join('\n');
+    assert.match(seen(1), /参数不合法/, '参数不合法：第二次问模型时看得到');
+    assert.match(seen(2), /没有这个客户。可能是 张三/, '检查没过：原因和提示都看得到');
+    assert.match(seen(3), /用户拒绝了这次操作/, '用户拒绝：看得到');
+  } finally { await agent.stop(); }
+});
