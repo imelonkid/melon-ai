@@ -1,7 +1,7 @@
 {
   "name": "@melon-ai/skills",
   "version": "0.0.1",
-  "description": "技能：工具调用管线、准入策略、工具注册与审查（defineTool / defineSkill）；内置技能；Agent Skills 加载（./agentskills）。联网（./web）、发邮件（./mail）需要 Node。",
+  "description": "技能：工具调用管线、准入策略、工具注册与审查（defineTool / defineSkill）；内置技能；Agent Skills 加载（./agentskills）。联网（./web）、发邮件（./mail）、本地文件（./files）需要 Node。",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -26,21 +26,29 @@
       "types": "./dist/agentskills.d.ts",
       "import": "./dist/agentskills.js",
       "require": "./dist/agentskills.cjs"
+    },
+    "./files": {
+      "types": "./dist/files.d.ts",
+      "import": "./dist/files.js",
+      "require": "./dist/files.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup --entry.index src/index.ts --entry.web src/builtin/web/index.ts --entry.mail src/builtin/mail/index.ts --entry.agentskills src/agentskills/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.index src/index.ts --entry.web src/builtin/web/index.ts --entry.mail src/builtin/mail/index.ts --entry.agentskills src/agentskills/index.ts --entry.files src/builtin/files/index.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*/*.test.ts"
   },
   "dependencies": {
-    "@melon-ai/core": "workspace:*"
+    "@melon-ai/core": "workspace:*",
+    "jszip": "^3.10.2",
+    "mammoth": "1.13.0",
+    "unpdf": "1.8.1"
   },
   "devDependencies": {
-    "@melon-ai/testkit": "workspace:*",
-    "@melon-ai/audit": "workspace:*"
+    "@melon-ai/audit": "workspace:*",
+    "@melon-ai/testkit": "workspace:*"
   },
   "publishConfig": {
     "access": "public"

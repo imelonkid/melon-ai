@@ -5,7 +5,7 @@ import type {
   TaskKind, TaskState, ToolResolver, ToolsetSnapshot, UsageQuery, UsageRecord, RouteContext, PriceSource, PriceSync,
   ModelProvider, VendorCatalog, ModelListing,
 } from '@melon-ai/core';
-import { TERMINAL_STATES, asAgentId, asScheduleId } from '@melon-ai/core';
+import { TERMINAL_STATES, asAgentId, asScheduleId, asToolId } from '@melon-ai/core';
 import { describeRule, whenToRule } from '@melon-ai/engine';
 import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
 import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelCatalog, ModelPool, PriceBook, ReActPlanner, summarizeUsage, testModel } from '@melon-ai/llm';
@@ -236,6 +236,11 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     list(agentId?: string): Promise<readonly Grant[]>;
     /** 不传 scope 撤销这个工具的全部授权。 */
     revoke(toolId: string, scope?: string, agentId?: string): Promise<void>;
+    /**
+     * 用户在宿主的界面上直接给的「始终允许」（如「本地文件」里添加一个文件夹）。和确认卡上点「始终允许」一样记审计。
+     * `toolId` 可以是工具 id，也可以是按单位授权的名下（`FILES_GRANT_KEY`）。
+     */
+    add(toolId: string, scope: string, agentId?: string): Promise<void>;
   };
   /** 运行中替换模型、工具、技能来源、执行权限 —— 不重启，在跑的任务不受影响。 */
   configure(patch: {
@@ -570,6 +575,20 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     },
     grants: {
       list: (id) => stores.grants.listByAgent(asAgentId(id ?? defaultAgent)),
+      async add(toolId, scope, id) {
+        const at = platform.clock.now();
+        await stores.grants.put({ agentId: asAgentId(id ?? defaultAgent), toolId: asToolId(toolId), scope, grantedAt: at });
+        await base.audit.record({
+          at,
+          actor: { kind: 'user', id: 'user' },
+          action: 'policy.change',
+          resource: { kind: 'grant', ref: toolId },
+          outcome: 'ok',
+          traceId: platform.tracer.root().traceId,
+          dimensions: { toolId, change: 'grant' },
+          basis: { change: 'grant', scope },
+        });
+      },
       async revoke(toolId, scope, id) {
         await stores.grants.revoke(asAgentId(id ?? defaultAgent), toolId, scope);
         // 授权的增删都要能追溯：授予在管线里记，撤销在这里记

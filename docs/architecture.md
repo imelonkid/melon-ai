@@ -1272,6 +1272,16 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
       拦联网用 `(deny network-outbound (remote ip))`：本机的 unix socket（域名解析）照常，连本机端口也拦。
     - **被拦下时**：`ToolError` 带结构化的 `sandbox: { kind: 'network' | 'read' | 'write', path? }`（管线保留进工具结果，`ToolCallFinished.meta.sandbox` 随事件落盘），
       宿主据此给用户放行的入口；给模型的提示是「告诉用户、不要换办法绕过」。Python / Node / shell 的「Operation not permitted」都认得。
+85. **Agent 看不了本机文件。** 用户问「~/Downloads 下有什么」，只能回答没有工具。
+    - **内置技能 `files`**（skills 的 `builtin/files`，Node 专属走子路径 `@melon-ai/agent/files`）：`files.list` / `files.find` / `files.read`，只读。
+      读文本；PDF（unpdf）、Word .docx（mammoth）、Excel .xlsx（jszip 读 XML，没引 exceljs —— 21MB）抽文字；长的按字数分段、`offset` 接着读；
+      图片、旧版 Office 等明确说读不了。
+    - **数据出境**：读到的内容会发给模型厂商 → 三个工具都是 `external`（先问用户）、`untrustedOutput`（文件里能藏指令，读过的任务之后对外操作要确认）。
+    - **按文件夹授权**（`ToolDescriptor.grantBy`，通用机制）：「始终允许」不按工具 id + 参数精确匹配，而是记在 `files` 名下、范围是文件夹，
+      覆盖子文件夹、三个工具共用。管线按 `covers` 找授权；`agent.grants.add` 让宿主替用户预先允许（界面上添加文件夹），记审计。
+    - **问之前先查**（`ToolDescriptor.precheck`，通用机制）：文件夹不存在、受保护（`SENSITIVE_HOME_PATHS` + 宿主的数据目录）、文件读不了 ——
+      在问用户之前退回给模型，带上近似的名字（`~/Download` → `~/Downloads`）。用户不用批准一个注定失败的调用。
+    - 顺带修了：校验失败时给模型的提示（hint）原来没进观察结果（只有错误本身），模型不知道往哪改。
 
 #### 包结构合并（14 → 8）
 

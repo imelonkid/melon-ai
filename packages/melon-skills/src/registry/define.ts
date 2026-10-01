@@ -39,6 +39,10 @@ export interface ToolSpec<A = Record<string, unknown>> {
   readonly input?: InputShape | JSONSchema;
   /** 「始终允许」的授权范围看哪些参数。例：`mail.send` 写 `['to']`。 */
   readonly scope?: readonly string[];
+  /** 按宿主能理解的单位授权（本地文件按文件夹），见 core 的 `ToolDescriptor.grantBy`。 */
+  readonly grantBy?: ToolDescriptor['grantBy'];
+  /** 问用户之前先查参数，见 core 的 `ToolDescriptor.precheck`。 */
+  readonly precheck?: (args: A) => Promise<{ readonly message: string; readonly hint?: string } | null>;
   /** 默认：read 类幂等，其余不幂等（重放时由幂等层兜住）。 */
   readonly idempotent?: boolean;
   /** 输出来自外部、不可信（网页、第三方返回）。见 core 的 `ToolDescriptor.untrustedOutput`。 */
@@ -91,6 +95,8 @@ export function defineTool<A = Record<string, unknown>>(spec: ToolSpec<A>): Tool
     risk,
     idempotent: spec.idempotent ?? risk === 'read',
     ...(spec.scope ? { scopeKeys: spec.scope } : {}),
+    ...(spec.grantBy ? { grantBy: spec.grantBy } : {}),
+    ...(spec.precheck ? { precheck: spec.precheck as (args: unknown) => Promise<{ readonly message: string; readonly hint?: string } | null> } : {}),
     ...(spec.untrustedOutput ? { untrustedOutput: true } : {}),
     ...(spec.triggers !== undefined ? { triggers: spec.triggers } : {}),
     ...(spec.outputLimit ? { outputLimit: spec.outputLimit } : {}),

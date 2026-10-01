@@ -33,6 +33,9 @@
       "@melon-ai/skills/mail": [
         "packages/melon-skills/src/builtin/mail/index.ts"
       ],
+      "@melon-ai/skills/files": [
+        "packages/melon-skills/src/builtin/files/index.ts"
+      ],
       "@melon-ai/skills/web": [
         "packages/melon-skills/src/builtin/web/index.ts"
       ],

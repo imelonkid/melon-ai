@@ -10,7 +10,7 @@ import type { ExecuteConfig } from './execute.js';
 import { idempotencyKey, repeatKey } from './argshash.js';
 import { emptyMetrics, normalizeErr, normalizeOk } from './normalize.js';
 import { toToolError } from './errors.js';
-import { GRANTABLE_RISKS, ToolError } from '@melon-ai/core';
+import { GRANTABLE_RISKS, ToolError, asToolId } from '@melon-ai/core';
 import type { Grant } from '@melon-ai/core';
 
 export interface PipelineDeps {
@@ -103,12 +103,24 @@ export class ToolPipeline {
           hint: '按 schema 修正参数后重试',
         }, t0);
       }
+      // 工具自己的检查（路径不存在、受保护的位置……）：问用户之前就退回给模型
+      const pre = descriptor.precheck ? await descriptor.precheck(call.args) : null;
+      if (pre) {
+        return this.fail(call, {
+          code: 'INVALID_ARGS', message: pre.message, retriable: false,
+          ...(pre.hint ? { hint: pre.hint } : {}),
+        }, t0);
+      }
 
       // ── ③ 准入（四道闸）──
-      const scope = computeScope(descriptor, call.args);
+      const gb = descriptor.grantBy;
+      const scope = gb ? gb.scope(call.args) : computeScope(descriptor, call.args);
       const [skillEnabled, grant, quota] = await Promise.all([
         this.deps.resolver.isEnabledFor(call.toolId, task.agentId),
-        this.deps.grants.find(task.agentId, call.toolId, scope),
+        // 按文件夹这类授权：找一条覆盖这次范围的（不是精确相等）
+        gb
+          ? this.deps.grants.listByAgent(task.agentId).then((all) => all.find((g) => g.toolId === gb.key && gb.covers(g.scope, scope)) ?? null)
+          : this.deps.grants.find(task.agentId, call.toolId, scope),
         this.deps.quotaOf ? this.deps.quotaOf(task.agentId) : Promise.resolve(null),
       ]);
       const admission = decide({
@@ -122,6 +134,7 @@ export class ToolPipeline {
         grant,
         quota,
         now: this.deps.clock.now(),
+        ...(gb ? { grantBy: gb } : {}),
       });
       span.setAttr('admission', admission.decision);
 
@@ -281,7 +294,8 @@ export class ToolPipeline {
       kind: 'reject',
       result,
       risk: 'read',
-      admission: { decision: 'deny', reason: error.message, basis: { gate: 'validate' } },
+      // 提示要进观察结果：模型靠它改参数（「可能是 ~/Downloads」「按 schema 修正」），只给错误它不知道往哪改
+      admission: { decision: 'deny', reason: error.hint ? `${error.message}。${error.hint}` : error.message, basis: { gate: 'validate' } },
     };
   }
 
@@ -296,10 +310,11 @@ export class ToolPipeline {
   async grant(task: Task, call: ToolCall): Promise<Grant | null> {
     const resolved = await this.deps.resolver.resolve(call.toolId, task.toolset);
     if (!resolved || !GRANTABLE_RISKS.includes(resolved.descriptor.risk)) return null;
+    const gb = resolved.descriptor.grantBy;
     const g: Grant = {
       agentId: task.agentId,
-      toolId: call.toolId,
-      scope: computeScope(resolved.descriptor, call.args),
+      toolId: gb ? asToolId(gb.key) : call.toolId,
+      scope: gb ? gb.scope(call.args) : computeScope(resolved.descriptor, call.args),
       grantedAt: this.deps.clock.now(),
     };
     await this.deps.grants.put(g);

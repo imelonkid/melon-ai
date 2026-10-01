@@ -48,6 +48,23 @@ export interface ToolDescriptor {
    * 只适用于本身无范围概念的工具（如 `artifact_read`）。
    */
   readonly scopeKeys?: readonly string[];
+  /**
+   * 「始终允许」不按工具 id + 参数精确匹配，而按宿主能理解的单位：本地文件按文件夹 ——
+   * 允许了 ~/Downloads，列目录、找文件、读文件都放行，子文件夹也算。
+   * - `key`：授权记在这个名下（几个工具共用一份）
+   * - `scope(args)`：这次调用的范围（如 `folder=/Users/me/Downloads/报表`）
+   * - `covers(已授权, 这次)`：已有的授权是否覆盖这次（如文件夹包含）
+   */
+  readonly grantBy?: {
+    readonly key: string;
+    scope(args: unknown): string;
+    covers(granted: string, requested: string): boolean;
+  };
+  /**
+   * 问用户之前，工具自己先查一遍参数（路径存不存在、是不是受保护的位置……）。有问题直接退回给模型改，
+   * 不让用户去批准一个注定失败的调用（「允许查看 ~/Download？」—— 那个文件夹根本不存在）。返回 null 表示没问题。
+   */
+  precheck?(args: unknown): Promise<{ readonly message: string; readonly hint?: string } | null>;
   readonly costHint?: { readonly latencyMs: number; readonly bytesOut: number };
   /**
    * 按次收费的外部服务（搜索等）：每次真的执行都记进用量账本（`purpose: 'tool'`），宿主的用量页能看到「搜索 N 次 · ¥x」。

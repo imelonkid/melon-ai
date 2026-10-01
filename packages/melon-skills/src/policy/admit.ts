@@ -24,6 +24,8 @@ export interface DecideInput {
   readonly skillEnabled: boolean;
   /** 匹配到的「始终允许」，没有则 null。 */
   readonly grant: Grant | null;
+  /** 工具按 `grantBy` 授权时：授权记在哪个名下、怎么判断覆盖。 */
+  readonly grantBy?: { readonly key: string; covers(granted: string, requested: string): boolean };
   /** 配额快照，null 表示不限。 */
   readonly quota: QuotaSnapshot | null;
   readonly now: number;
@@ -95,7 +97,9 @@ export function decide(input: DecideInput): AdmissionOutcome {
 
   // ④ 授权匹配
   const g = input.grant;
-  if (g && GRANTABLE_RISKS.includes(risk) && g.agentId === input.agentId && g.toolId === toolId && scopeMatches(g.scope, scope)) {
+  const gb = input.grantBy;
+  const hit = g && (gb ? g.toolId === gb.key && gb.covers(g.scope, scope) : g.toolId === toolId && scopeMatches(g.scope, scope));
+  if (g && hit && GRANTABLE_RISKS.includes(risk) && g.agentId === input.agentId) {
     if (g.expiresAt !== undefined && g.expiresAt <= input.now) {
       // 过期的授权不匹配，落回矩阵，而不是当成拒绝
     } else {

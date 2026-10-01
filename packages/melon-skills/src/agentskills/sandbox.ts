@@ -2,19 +2,14 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Sandbox, SandboxDenial, SandboxPolicy } from '@melon-ai/core';
+import { SENSITIVE_HOME_PATHS } from '@melon-ai/core';
 
 /**
  * 默认不许脚本读的位置（家目录下）：密钥、云账号凭据、钥匙串、浏览器资料、邮件、终端历史。
  * 宿主再加上自己存 key 的目录（`AgentSkillsOptions.sandbox.denyRead`）。
  */
 export function sensitivePaths(home: string = homedir()): readonly string[] {
-  return [
-    '.ssh', '.aws', '.gnupg', '.config', '.netrc', '.docker', '.kube', '.npmrc', '.pypirc', '.git-credentials',
-    '.azure', '.gcloud', '.zsh_history', '.bash_history',
-    'Library/Keychains', 'Library/Cookies', 'Library/Mail', 'Library/Messages', 'Library/Safari',
-    'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox',
-    'Library/Application Support/Microsoft Edge', 'Library/Application Support/BraveSoftware',
-  ].map((p) => join(home, p));
+  return SENSITIVE_HOME_PATHS.map((p) => join(home, p));
 }
 
 /** Seatbelt 按真实路径匹配（/var 是 /private/var 的链接）：给出两种写法。 */

@@ -94,10 +94,10 @@ module.exports = {
     },
     {
       name: 'skills/root-runtime-agnostic',
-      comment: '技能包根入口与运行时无关 —— 不能引入 Node 专属的 builtin/web、builtin/mail、agentskills/（它们走子路径）',
+      comment: '技能包根入口与运行时无关 —— 不能引入 Node 专属的 builtin/web、builtin/mail、builtin/files、agentskills/（它们走子路径）',
       severity: 'error',
-      from: { path: '^packages/melon-skills/src/(?!builtin/web/|builtin/mail/|agentskills/)' },
-      to: { path: '^packages/melon-skills/src/(builtin/web|builtin/mail|agentskills)/' },
+      from: { path: '^packages/melon-skills/src/(?!builtin/web/|builtin/mail/|builtin/files/|agentskills/)' },
+      to: { path: '^packages/melon-skills/src/(builtin/web|builtin/mail|builtin/files|agentskills)/' },
     },
     {
       name: 'llm/components-independent',

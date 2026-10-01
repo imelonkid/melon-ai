@@ -9,6 +9,7 @@ import { consoleLogger, createAgent, defineTool } from '../src/index.js';
 import { nodePlatform } from '../src/node.js';
 import type { MelonAgent, Task } from '../src/index.js';
 import { sqlite } from '../src/sqlite.js';
+import { FILES_GRANT_KEY, files, folderScope } from '../src/files.js';
 
 /**
  * ── 宿主 API 的验收 ──
@@ -403,4 +404,62 @@ test('被沙箱拦下：工具错误里的拦截信息（联网 / 读 / 写）�
     assert.equal(fin.meta.errorCode, 'DENIED');
     assert.deepEqual(fin.meta.sandbox, { kind: 'network' });
   } finally { await agent.stop(); }
+});
+
+test('本地文件：第一次先问；「始终允许」按文件夹 —— 子文件夹、另外两个工具都放行，别的文件夹照样问；路径写错不打扰用户；宿主能替用户预先允许', async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const root = mkdtempSync(join(tmpdir(), 'jolly-files-'));
+  const dl = join(root, 'Downloads');
+  const docs = join(root, 'Documents');
+  mkdirSync(join(dl, '报表'), { recursive: true });
+  mkdirSync(docs);
+  writeFileSync(join(dl, '报表', 'a.txt'), '九月费用 1280');
+  writeFileSync(join(docs, 'b.txt'), 'b');
+  const { entry: e } = entry([
+    call('files.list', { folder: dl }), '下载目录里有一个报表文件夹',
+    call('files.read', { folder: join(dl, '报表'), file: 'a.txt' }), '九月费用 1280',
+    call('files.list', { folder: join(root, 'Download') }), '没有这个文件夹，是不是 Downloads？',
+    call('files.list', { folder: docs }), '文档里有 b.txt',
+    call('files.list', { folder: docs }), '文档里还是 b.txt',
+  ]);
+  const agent = await createAgent({ models: [e], skills: [files()], platform: quiet });
+  const states = (id: string) => agent.tasks.history(id).then((rows) => rows.map((r) => r.value.t));
+  try {
+    const ask = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const t1 = await agent.run('看下下载文件夹里有什么文件');
+    await ask;
+    const done1 = until(agent, (t) => t.id === t1.id && t.state === 'SUCCEEDED');
+    await agent.approve(t1.id, 'always');
+    await done1;
+    assert.deepEqual((await agent.grants.list()).map((g) => [g.toolId, g.scope]), [[FILES_GRANT_KEY, folderScope(dl)]]);
+
+    // 子文件夹 + 另一个工具：命中同一份授权，不再问
+    const done2 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === '九月费用 1280');
+    const t2 = await agent.run('读一下报表文件夹里的文件 a.txt');
+    await done2;
+    assert.ok(!(await states(t2.id)).includes('ApprovalRequested'), '允许过的文件夹里读文件不再问');
+
+    // 写错的文件夹：问之前就退回给模型（带上近似的名字），用户不用批准一个注定失败的调用
+    const done3 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer?.startsWith('没有这个文件夹') === true);
+    const t3 = await agent.run('看下 Download 文件夹');
+    await done3;
+    const rows3 = (await agent.tasks.history(t3.id)).map((r) => r.value);
+    assert.ok(!rows3.some((v) => v.t === 'ApprovalRequested'));
+    assert.match(JSON.stringify(rows3.find((v) => v.t === 'Observed')), /可能是 .*Downloads/);
+
+    // 别的文件夹：照样问
+    const ask4 = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const t4 = await agent.run('看下文档文件夹里的文件');
+    await ask4;
+    const done4 = until(agent, (t) => t.id === t4.id && t.state === 'SUCCEEDED');
+    await agent.approve(t4.id, 'allow');
+    await done4;
+
+    // 宿主替用户预先允许（「本地文件」里添加文件夹）
+    await agent.grants.add(FILES_GRANT_KEY, folderScope(docs));
+    const done5 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === '文档里还是 b.txt');
+    const t5 = await agent.run('再看下文档文件夹里的文件');
+    await done5;
+    assert.ok(!(await states(t5.id)).includes('ApprovalRequested'));
+  } finally { await agent.stop(); rmSync(root, { recursive: true, force: true }); }
 });
