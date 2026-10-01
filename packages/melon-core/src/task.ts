@@ -197,7 +197,15 @@ export interface PlanVia {
   readonly modelId?: string;
   /** 这一步的上下文发给了哪家（`ModelEntry.egress`）。运行时据此记「数据去向」审计。 */
   readonly egress?: string;
+  /**
+   * 模型这一步的思考过程（支持的模型才有：DeepSeek 推理模式的 `reasoning_content`、Claude 的 thinking 块）。
+   * 只为给人看、事后排查：**不回灌进以后的上下文**（又贵又会让模型把推测当成事实），截断到 `MAX_REASONING_CHARS`。
+   */
+  readonly reasoning?: string;
 }
+
+/** 落库的思考过程上限。几十 KB 的推理进事件日志不划算，看的人也只看开头。 */
+export const MAX_REASONING_CHARS = 8_000;
 
 export type PlanStep = (
   | { readonly kind: 'skill_query'; readonly thought: string; readonly query: string }

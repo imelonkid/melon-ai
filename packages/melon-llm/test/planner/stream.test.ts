@@ -12,14 +12,16 @@ class StreamingModel implements ChatModel {
   };
   readonly requests: GenerateRequest[] = [];
   private i = 0;
-  constructor(private readonly script: readonly { chunks: readonly string[]; toolCalls?: GenerateResult['toolCalls'] }[]) {}
+  constructor(private readonly script: readonly { chunks: readonly string[]; thinking?: readonly string[]; toolCalls?: GenerateResult['toolCalls'] }[]) {}
   async generate(req: GenerateRequest): Promise<GenerateResult> {
     this.requests.push(req);
     const item = this.script[this.i++] ?? { chunks: ['完成'] };
+    let reasoning = '';
+    for (const c of item.thinking ?? []) { reasoning += c; req.onReasoning?.(reasoning); }
     let text = '';
     for (const c of item.chunks) { text += c; req.onText?.(text); }
     return {
-      text, usage: { inputTokens: 1, outputTokens: 1 }, modelId: this.id,
+      text, ...(reasoning ? { reasoning } : {}), usage: { inputTokens: 1, outputTokens: 1 }, modelId: this.id,
       stopReason: item.toolCalls ? 'tool' : 'stop',
       ...(item.toolCalls ? { toolCalls: item.toolCalls } : {}),
     };
@@ -124,4 +126,41 @@ test('不传 draft 就不流式；必须调工具的一轮也不流式', async (
   assert.equal(m2.requests[0]?.toolChoice, 'required');
   assert.equal(m2.requests[0]?.onText, undefined);
   assert.equal(drafts.length, 0);
+});
+
+// ───────── 思考过程 ─────────
+
+test('思考：边想边交出去（kind: thinking），想完的全文记在这一步的 via.reasoning 上', async () => {
+  const drafts: AnswerDraft[] = [];
+  const m = new StreamingModel([{ thinking: ['用户想要', '本周要点，', '分两条写'], chunks: ['## 本周要点\n- 一、上线了新的检索服务'] }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(input('整理本周要点', [SEARCH], drafts), sig);
+  const thinking = drafts.flatMap((d) => (d.kind === 'thinking' ? [d.text] : []));
+  assert.deepEqual(thinking, ['用户想要', '用户想要本周要点，', '用户想要本周要点，分两条写']);
+  assert.equal(step.via?.reasoning, '用户想要本周要点，分两条写');
+  // 思考不是回答：回答草稿里没有它
+  assert.ok(texts(drafts).every((t) => !t.includes('分两条写')));
+});
+
+test('思考：思考里提到「已发送」不算声称做成了 —— 不撤回、不纠正；必须调工具的一轮也照样交出思考', async () => {
+  const drafts: AnswerDraft[] = [];
+  const m = new StreamingModel([{ thinking: ['如果我直接说邮件已发送就是在骗人，得先调工具'], chunks: [], toolCalls: [{ id: 'c1', name: 'mail.send', args: { to: 'a@b.com' } }] }]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(input('给 a@b.com 发邮件', [MAIL], drafts), sig);
+  assert.equal(step.kind, 'tool_call');
+  assert.equal(m.requests[0]?.toolChoice, 'required');
+  assert.ok(drafts.some((d) => d.kind === 'thinking'));
+  assert.ok(!drafts.some((d) => d.kind === 'reset'));
+  assert.match(step.via?.reasoning ?? '', /得先调工具/);
+});
+
+test('思考：一步里问了模型两次（守卫纠正），两次的思考都留下；太长的截断', async () => {
+  const m = new StreamingModel([
+    { thinking: ['第一次：直接说发了吧'], chunks: ['好的，我来处理这件事情，请稍等片刻。邮件已发送给 a@b.com'] },
+    { thinking: ['第二次：被纠正了，去调工具'], chunks: [], toolCalls: [{ id: 'c1', name: 'mail.send', args: { to: 'a@b.com' } }] },
+  ]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(input('给 a@b.com 发封信说明天开会', [MAIL], []), sig);
+  assert.match(step.via?.reasoning ?? '', /第一次[\s\S]*第二次/);
+
+  const long = new StreamingModel([{ thinking: ['想'.repeat(20_000)], chunks: ['好'] }]);
+  const s2 = await new ReActPlanner({ router: router(long) }).plan(input('随便聊聊', [SEARCH], []), sig);
+  assert.equal(s2.via?.reasoning?.length, 8_000);
 });

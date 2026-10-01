@@ -113,10 +113,12 @@ export class AnthropicChatModel implements ChatModel {
       };
       // 流式：只把正文（text 块）交出去；思考块、工具调用不算回答。一次响应里可能有好几个正文块，拼起来交全文
       let res: Anthropic.Message;
-      if (req.onText) {
+      if (req.onText || req.onReasoning) {
         const s = this.client.messages.stream(params, req.signal ? { signal: req.signal } : undefined);
         let all = '';
-        s.on('text', (delta) => { all += delta; req.onText!(all); });
+        s.on('text', (delta) => { all += delta; req.onText?.(all); });
+        let thinking = '';
+        s.on('thinking', (delta) => { thinking += delta; req.onReasoning?.(thinking); });
         res = await s.finalMessage();
       } else {
         res = await this.client.messages.create(params, req.signal ? { signal: req.signal } : undefined);
@@ -137,6 +139,12 @@ export class AnthropicChatModel implements ChatModel {
         .map((b) => b.text)
         .join('');
 
+      // 思考块：只给人看。模型可能只给摘要或省略正文，那就没有
+      const reasoning = res.content
+        .filter((b): b is Anthropic.ThinkingBlock => b.type === 'thinking')
+        .map((b) => b.thinking)
+        .join('\n\n');
+
       const toolCalls: ModelToolCall[] = res.content
         .filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
         .map((b) => ({ id: b.id, name: codec.decode(b.name), args: b.input }));
@@ -144,6 +152,7 @@ export class AnthropicChatModel implements ChatModel {
       return {
         text,
         ...(toolCalls.length > 0 ? { toolCalls } : {}),
+        ...(reasoning.trim() ? { reasoning } : {}),
         usage: toUsage(res.usage, this.id),
         modelId: res.model,
         stopReason: res.stop_reason === 'max_tokens' ? 'length'

@@ -268,3 +268,23 @@ test('流式：宿主用 on(\'draft\') 收到正在生成的回答（带 taskId�
     assert.ok(drafts.every((d) => answer.startsWith(d.text ?? '')));
   } finally { await agent.stop(); }
 });
+
+test('思考：记在这一步的事件上，宿主事后看得到；但不回灌进下一次问模型的上下文', async () => {
+  const lookup = defineTool({
+    id: 'kb.lookup', description: '查资料', risk: 'read', input: { q: 'string' },
+    run: ({ q }: { q: string }) => `资料：${q} 的结果`,
+  });
+  const { entry: e, model } = entry([
+    { ...call('kb.lookup', { q: '周报' }), reasoning: '先查资料，暗号XYZ' },
+    { text: '查好了，周报在这。', modelId: 'scripted', stopReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 }, reasoning: '整理一下' },
+  ]);
+  const agent = await createAgent({ models: [e], tools: [lookup], platform: quiet });
+  try {
+    const done = until(agent, (t) => t.state === 'SUCCEEDED');
+    const task = await agent.run('查一下周报资料');
+    await done;
+    const steps = (await agent.tasks.history(task.id)).map((r) => r.value).filter((v) => v.t === 'PlanProduced');
+    assert.deepEqual(steps.map((v) => (v.t === 'PlanProduced' ? v.step.via?.reasoning : null)), ['先查资料，暗号XYZ', '整理一下']);
+    assert.ok(!model.calls[1]!.messages.some((m) => m.content.includes('XYZ')), '思考不该进下一次的上下文');
+  } finally { await agent.stop(); }
+});

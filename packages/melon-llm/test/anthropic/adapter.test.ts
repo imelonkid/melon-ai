@@ -24,7 +24,7 @@ async function fakeServer(events: readonly [string, unknown][]) {
 
 const usage = { input_tokens: 10, output_tokens: 0 };
 
-test('流式：只把正文交出去（思考块不算），全文累加；工具调用照常还原', async () => {
+test('流式：正文与思考分开交（思考块不算回答），全文累加；工具调用照常还原', async () => {
   const srv = await fakeServer([
     ['message_start', { type: 'message_start', message: { id: 'm1', type: 'message', role: 'assistant', model: 'claude-opus-5', content: [], stop_reason: null, stop_sequence: null, usage } }],
     ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } }],
@@ -42,11 +42,15 @@ test('流式：只把正文交出去（思考块不算），全文累加；工�
   ]);
   try {
     const seen: string[] = [];
+    const thoughts: string[] = [];
     const res = await new AnthropicChatModel({ apiKey: 'k', baseURL: srv.url, model: 'claude-opus-5' }).generate({
       messages: [{ role: 'user', content: 'x' }],
       tools: [{ name: 'doc.read', description: '读文档', input: { type: 'object', properties: {} } }],
       onText: (t) => seen.push(t),
+      onReasoning: (t) => thoughts.push(t),
     });
+    assert.deepEqual(thoughts, ['想一想']);
+    assert.equal(res.reasoning, '想一想');
     assert.equal(srv.seen.body.stream, true);
     assert.deepEqual(seen, ['我先', '我先读一下']);
     assert.equal(res.text, '我先读一下');

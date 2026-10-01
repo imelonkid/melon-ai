@@ -188,3 +188,41 @@ test('不要流式就不发 stream 参数', async () => {
   await model(fakeFetch({ choices: [{ message: { content: 'ok' } }] }, cap)).generate({ messages: [{ role: 'user', content: 'x' }] });
   assert.equal(cap.body.stream, undefined);
 });
+
+// ───────── 思考过程（推理模型的 reasoning_content）─────────
+
+test('思考：流式里的 reasoning_content 单独回调、单独返回，不混进回答', async () => {
+  const thoughts: string[] = [];
+  const texts: string[] = [];
+  const res = await model(sseFetch([
+    { choices: [{ delta: { reasoning_content: '用户要的是' } }] },
+    { choices: [{ delta: { reasoning_content: '本周要点' } }] },
+    { choices: [{ delta: { content: '## 本周要点' } }] },
+    { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    '[DONE]',
+  ])).generate({ messages: [{ role: 'user', content: 'x' }], onText: (t) => texts.push(t), onReasoning: (t) => thoughts.push(t) });
+  assert.deepEqual(thoughts, ['用户要的是', '用户要的是本周要点']);
+  assert.deepEqual(texts, ['## 本周要点']);
+  assert.equal(res.reasoning, '用户要的是本周要点');
+  assert.equal(res.text, '## 本周要点');
+});
+
+test('思考：只要思考不要正文（必须调工具的一轮）也走流式', async () => {
+  const cap: { body?: any } = {};
+  const thoughts: string[] = [];
+  const res = await model(sseFetch([
+    { choices: [{ delta: { reasoning_content: '先搜一下' } }] },
+    { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'doc_read', arguments: '{}' } }] } }] },
+    { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+  ], 9, cap)).generate({ messages: [{ role: 'user', content: 'x' }], tools: TOOLS, onReasoning: (t) => thoughts.push(t) });
+  assert.equal(cap.body.stream, true);
+  assert.deepEqual(thoughts, ['先搜一下']);
+  assert.equal(res.toolCalls?.[0]?.name, 'doc.read');
+});
+
+test('思考：非流式响应里的 reasoning_content 也带上', async () => {
+  const res = await model(fakeFetch({ choices: [{ message: { content: '答', reasoning_content: '想' } }] }))
+    .generate({ messages: [{ role: 'user', content: 'x' }] });
+  assert.equal(res.reasoning, '想');
+  assert.equal(res.text, '答');
+});

@@ -32,6 +32,8 @@ export interface PlanInput {
  */
 export type AnswerDraft =
   | { readonly kind: 'text'; readonly text: string }
+  /** 正在思考：到目前为止的思考全文。思考不是回答，不过守卫；宿主只当过程显示。 */
+  | { readonly kind: 'thinking'; readonly text: string }
   | { readonly kind: 'reset'; readonly reason: 'tool' | 'check' };
 
 /**

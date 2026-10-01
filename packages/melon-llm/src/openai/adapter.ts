@@ -36,6 +36,8 @@ export interface OpenAICompatibleOptions {
 interface ChatChoice {
   message?: {
     content?: string | null;
+    /** 推理模型的思考过程（DeepSeek 推理模式等）。不是回答。 */
+    reasoning_content?: string | null;
     tool_calls?: { id: string; function: { name: string; arguments: string } }[];
   };
   finish_reason?: string;
@@ -89,7 +91,7 @@ export class OpenAICompatibleChatModel implements ChatModel {
     let timer = setTimeout(() => ctl.abort(), timeoutMs);
     const alive = (): void => { clearTimeout(timer); timer = setTimeout(() => ctl.abort(), timeoutMs); };
     if (req.signal) req.signal.addEventListener('abort', () => ctl.abort(), { once: true });
-    const stream = !!req.onText;
+    const stream = !!(req.onText || req.onReasoning);
 
     try {
       const res = await this.doFetch(`${this.baseURL}/chat/completions`, {
@@ -123,9 +125,13 @@ export class OpenAICompatibleChatModel implements ChatModel {
 
       // 兼容服务不一定支持流式：没按 SSE 回就当普通响应读，整段回调一次
       const sse = stream && res.ok && (res.headers?.get?.('content-type') ?? '').includes('text/event-stream') && !!res.body;
-      const body = sse ? await readStream(res.body!, req.onText!, alive) : (await res.json()) as ChatResponse;
+      const body = sse ? await readStream(res.body!, req.onText, alive, req.onReasoning) : (await res.json()) as ChatResponse;
       if (!res.ok) throw httpError(res.status, body.error?.message ?? res.statusText);
-      if (stream && !sse) req.onText!(body.choices?.[0]?.message?.content ?? '');
+      if (stream && !sse) {
+        const m = body.choices?.[0]?.message;
+        if (m?.reasoning_content) req.onReasoning?.(m.reasoning_content);
+        req.onText?.(m?.content ?? '');
+      }
 
       const choice = body.choices?.[0];
       // 工具参数是字符串，必须 JSON.parse —— 不同供应商的转义策略不同，不能做字符串匹配
@@ -135,8 +141,10 @@ export class OpenAICompatibleChatModel implements ChatModel {
         args: safeParse(c.function.arguments),
       }));
 
+      const reasoning = choice?.message?.reasoning_content ?? '';
       return {
         text: choice?.message?.content ?? '',
+        ...(reasoning ? { reasoning } : {}),
         ...(toolCalls.length > 0 ? { toolCalls } : {}),
         usage: this.toUsage(body),
         modelId: body.model ?? this.id,
@@ -170,12 +178,14 @@ export class OpenAICompatibleChatModel implements ChatModel {
  * 每收到一段正文就把到目前为止的全文交给 `onText`。
  */
 async function readStream(
-  body: ReadableStream<Uint8Array>, onText: (text: string) => void, alive: () => void,
+  body: ReadableStream<Uint8Array>, onText: ((text: string) => void) | undefined, alive: () => void,
+  onReasoning?: (text: string) => void,
 ): Promise<ChatResponse> {
   const decoder = new TextDecoder();
   const reader = body.getReader();
   let buf = '';
   let text = '';
+  let reasoning = '';
   let model: string | undefined;
   let finish: string | undefined;
   let usage: ChatResponse['usage'];
@@ -188,7 +198,7 @@ async function readStream(
     if (!data || data === '[DONE]') return;
     let chunk: {
       model?: string; usage?: ChatResponse['usage']; error?: ChatResponse['error'];
-      choices?: { delta?: { content?: string | null; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] }; finish_reason?: string | null }[];
+      choices?: { delta?: { content?: string | null; reasoning_content?: string | null; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] }; finish_reason?: string | null }[];
     };
     try { chunk = JSON.parse(data); } catch { return; }
     model ??= chunk.model;
@@ -203,8 +213,10 @@ async function readStream(
       if (tc.function?.name) slot.name += tc.function.name;
       if (tc.function?.arguments) slot.args += tc.function.arguments;
     }
+    const thought = c?.delta?.reasoning_content;
+    if (thought) { reasoning += thought; onReasoning?.(reasoning); }
     const piece = c?.delta?.content;
-    if (piece) { text += piece; onText(text); }
+    if (piece) { text += piece; onText?.(text); }
   };
 
   for (;;) {
@@ -227,6 +239,7 @@ async function readStream(
     choices: [{
       message: {
         content: text,
+        ...(reasoning ? { reasoning_content: reasoning } : {}),
         ...(calls.length > 0
           ? { tool_calls: calls.filter(Boolean).map((x) => ({ id: x.id, function: { name: x.name, arguments: x.args || '{}' } })) }
           : {}),

@@ -2,7 +2,7 @@ import type { PromptRef,
   ContextBundle, Intent, IntentClassifier, Message, ModelRouter, ModelTool, ModelToolCall,
   PlanInput, PlanStep, Planner, ToolCall,
 } from '@melon-ai/core';
-import { asCallId, asToolId } from '@melon-ai/core';
+import { MAX_REASONING_CHARS, asCallId, asToolId } from '@melon-ai/core';
 import { REACT_PROMPT, REACT_SYSTEM } from './prompt.js';
 import {
   DEFAULT_ACTION_WORDS, asksConfirmation, claimsDone, confirmCorrection, correctionFor, isActionTool,
@@ -54,15 +54,27 @@ export class ReActPlanner implements Planner {
   async plan(input: PlanInput, signal: AbortSignal): Promise<PlanStep> {
     let modelId: string | undefined;
     let egress: string | undefined;
-    const step = await this.decide(input, signal, (id, to) => { modelId = id; egress = to; });
+    // 这一步可能问了模型好几次（守卫纠正、参数退回），每次的思考都留下 —— 看的人要知道它为什么改了主意
+    const thoughts: string[] = [];
+    const step = await this.decide(input, signal, (id, to, reasoning) => {
+      modelId = id; egress = to;
+      if (reasoning?.trim()) thoughts.push(reasoning.trim());
+    });
     const promptRef = this.opts.system === undefined ? REACT_PROMPT : this.opts.promptRef;
+    const reasoning = thoughts.join('\n\n———\n\n').slice(0, MAX_REASONING_CHARS);
     return {
       ...step,
-      via: { ...(promptRef ? { promptRef } : {}), ...(modelId ? { modelId } : {}), ...(egress ? { egress } : {}) },
+      via: {
+        ...(promptRef ? { promptRef } : {}), ...(modelId ? { modelId } : {}), ...(egress ? { egress } : {}),
+        ...(reasoning ? { reasoning } : {}),
+      },
     };
   }
 
-  private async decide(input: PlanInput, signal: AbortSignal, answeredBy: (modelId: string, egress?: string) => void): Promise<PlanStep> {
+  private async decide(
+    input: PlanInput, signal: AbortSignal,
+    answeredBy: (modelId: string, egress?: string, reasoning?: string) => void,
+  ): Promise<PlanStep> {
     const { task } = input;
     const intent = await this.classify(input, signal);
     // 闲聊 / 纯问答：不召回、不注入任何 tool schema
@@ -131,11 +143,13 @@ export class ReActPlanner implements Planner {
         ...(tools.length > 0 ? { tools, toolChoice: required ? 'required' as const : 'auto' as const } : {}),
         signal,
         ...(onText ? { onText } : {}),
+        // 思考不是回答：不过守卫、不留尾巴，原样交出去当过程显示
+        ...(draft ? { onReasoning: (text: string) => { if (text.trim()) draft({ kind: 'thinking', text }); } } : {}),
       });
       // 先说一句「我先搜一下」再调工具：那是过程话，不是回答
       if (res.toolCalls?.length) retract('tool');
       // 只用首选模型：路由给的 egress 与候选同序，第一个就是它
-      answeredBy(res.modelId, decision.egress[0]);
+      answeredBy(res.modelId, decision.egress[0], res.reasoning);
       return res;
     };
 

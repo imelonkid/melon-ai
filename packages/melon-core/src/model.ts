@@ -74,12 +74,16 @@ export interface GenerateRequest {
    * 不支持流式的适配器忽略它，照常一次性返回；无论哪种，`generate()` 的返回值都是完整结果。
    */
   readonly onText?: (textSoFar: string) => void;
+  /** 思考过程的流式回调，同样给到目前为止的全文。模型不输出思考就不会被调用。 */
+  readonly onReasoning?: (reasoningSoFar: string) => void;
 }
 
 export interface GenerateResult {
   readonly text: string;
   /** 模型选择的工具调用。原生 tool use 比解析文本可靠得多。 */
   readonly toolCalls?: readonly ModelToolCall[];
+  /** 思考过程（支持的模型才有）。不是回答，也不该回灌进上下文。 */
+  readonly reasoning?: string;
   readonly usage: Usage;
   readonly modelId: string;
   /** `filtered` 表示被安全分类器拒绝（Anthropic 的 `stop_reason: refusal`）。 */
