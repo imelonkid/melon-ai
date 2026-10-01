@@ -1,5 +1,6 @@
-import type { ModelEntry } from '@melon-ai/core';
+import type { ModelEntry, ModelPrice } from '@melon-ai/core';
 import { OpenAICompatibleChatModel } from './adapter.js';
+import { convert } from '../shared/money.js';
 import type { OpenAICompatiblePreset } from './adapter.js';
 
 export interface ProviderOptions {
@@ -12,6 +13,8 @@ export interface ProviderOptions {
   /** 覆盖路由属性：质量分、每百万输入 token 的美元价。 */
   readonly quality?: number;
   readonly costUSD?: number;
+  /** 价格。不传用内置价格表（有的话）；内置表里也没有就是「未计价」。 */
+  readonly price?: ModelPrice;
 }
 
 interface Preset {
@@ -28,29 +31,58 @@ interface Preset {
  * 各家的默认值。质量分与价格只用于路由排序，不追求精确 ——
  * 宿主要调整时在工厂函数里传 `quality` / `costUSD`。
  */
+/** DeepSeek 的高峰时段：北京时间工作日 9–12、14–18 点，价格是平时的两倍。 */
+const DEEPSEEK_PEAK = {
+  multiplier: 2,
+  timeZone: 'Asia/Shanghai',
+  windows: [
+    { days: [1, 2, 3, 4, 5], from: '09:00', to: '12:00' },
+    { days: [1, 2, 3, 4, 5], from: '14:00', to: '18:00' },
+  ],
+} as const;
+const DEEPSEEK_SOURCE = 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing';
+const DEEPSEEK_FLASH: ModelPrice = { input: 1, cachedInput: 0.02, output: 4, currency: 'CNY', peak: DEEPSEEK_PEAK, source: DEEPSEEK_SOURCE };
+
+/**
+ * 内置价格表（每百万 token，空闲时段价），只收**核对过官方文档**的。
+ * 不在表里的模型不计价：照常记用量，费用标「未计价」—— 不拿粗估的数冒充花费。
+ * 以后按官方文档自动同步（插件里每家一个解析器），这张表是同步不到时的兜底。
+ */
+export const PRICES: Readonly<Record<string, ModelPrice>> = {
+  'deepseek-flash': DEEPSEEK_FLASH,
+  // 官方文档：旧名已弃用，路由到 deepseek-flash，价格相同
+  'deepseek-v4-flash': DEEPSEEK_FLASH,
+  'deepseek-v4-flash-vision-exp': DEEPSEEK_FLASH,
+  'deepseek-v4-pro': { input: 4.5, cachedInput: 0.15, output: 13.5, currency: 'CNY', peak: DEEPSEEK_PEAK, source: DEEPSEEK_SOURCE },
+};
+
 const PRESETS = {
-  deepseek: { preset: 'deepseek', label: 'DeepSeek', model: 'deepseek-chat', quality: 6, costUSD: 0.3, egress: 'deepseek', contextWindow: 64_000 },
+  deepseek: { preset: 'deepseek', label: 'DeepSeek', model: 'deepseek-flash', quality: 6, costUSD: 0.3, egress: 'deepseek', contextWindow: 64_000 },
   qwen: { preset: 'qwen', label: '通义千问', model: 'qwen-max', quality: 6, costUSD: 0.4, egress: 'aliyun', contextWindow: 32_000 },
   openai: { preset: 'openai', label: 'GPT', model: 'gpt-4o', quality: 8, costUSD: 2.5, egress: 'openai' },
   kimi: { preset: 'moonshot', label: 'Kimi', model: 'moonshot-v1-128k', quality: 6, costUSD: 1.7, egress: 'moonshot', contextWindow: 128_000 },
 } as const satisfies Record<string, Preset>;
 
+/** 路由排序用的「每百万输入 token 美元价」：有价格就按价格折算。 */
+const sortCost = (price: ModelPrice | undefined, fallback: number): number =>
+  price ? convert(price.input, price.currency, 'USD') : fallback;
+
 function entry(p: Preset, o: ProviderOptions): ModelEntry {
-  const costUSD = o.costUSD ?? p.costUSD;
+  const model = o.model ?? p.model;
+  const price = o.price ?? PRICES[model];
   return {
     label: p.label,
     model: new OpenAICompatibleChatModel({
-      model: o.model ?? p.model,
+      model,
       preset: p.preset,
       ...(o.apiKey !== undefined ? { apiKey: o.apiKey } : {}),
       ...(o.baseURL ? { baseURL: o.baseURL } : {}),
       ...(p.contextWindow ? { contextWindow: p.contextWindow } : {}),
-      // 输出价按输入价的 4 倍估 —— 各家大致如此，只用于成本归因
-      pricing: { inUSD: costUSD, outUSD: costUSD * 4 },
     }),
     quality: o.quality ?? p.quality,
-    costUSD,
+    costUSD: o.costUSD ?? sortCost(price, p.costUSD),
     egress: p.egress,
+    ...(price ? { price } : {}),
   };
 }
 
@@ -78,6 +110,8 @@ export interface CompatibleOptions {
   readonly quality?: number;
   /** 每百万输入 token 的美元价。不填按 1 估，只影响 cost 策略的排序。 */
   readonly costUSD?: number;
+  /** 价格。不填就是「未计价」。 */
+  readonly price?: ModelPrice;
   readonly contextWindow?: number;
 }
 
@@ -86,7 +120,6 @@ export interface CompatibleOptions {
  * 内置的几家（deepseek / qwen / openai / kimi）只是它预填了默认值的版本。
  */
 export function compatible(o: CompatibleOptions): ModelEntry {
-  const costUSD = o.costUSD ?? 1;
   return {
     label: o.label,
     model: new OpenAICompatibleChatModel({
@@ -94,11 +127,11 @@ export function compatible(o: CompatibleOptions): ModelEntry {
       apiKey: o.apiKey,
       baseURL: o.baseURL,
       ...(o.contextWindow ? { contextWindow: o.contextWindow } : {}),
-      pricing: { inUSD: costUSD, outUSD: costUSD * 4 },
     }),
     quality: o.quality ?? 5,
-    costUSD,
+    costUSD: o.costUSD ?? sortCost(o.price, 1),
     egress: o.egress,
+    ...(o.price ? { price: o.price } : {}),
   };
 }
 

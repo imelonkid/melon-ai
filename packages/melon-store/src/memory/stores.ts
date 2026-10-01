@@ -1,9 +1,10 @@
 import type {
   AgentId, Entry, Episode, EpisodeId, EpisodeStore, EpisodeSummary, EventLog, Grant, GrantStore,
   IdempotencyStore, Schedule, ScheduleId, ScheduleStatus, ScheduleStore, Sequenced, Task, TaskEvent,
-  TaskId, TaskState, TaskStore, ToolResult,
+  TaskId, TaskState, TaskStore, ToolResult, UsageLedger, UsageQuery, UsageRecord,
 } from '@melon-ai/core';
 import { ConflictError, asEpisodeId } from '@melon-ai/core';
+import { rollupRecords } from '../usage.js';
 
 /**
  * 内存存储：任务、事件、片段、定时、授权、幂等。
@@ -195,5 +196,27 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
   }
   async put(key: string, result: ToolResult, ttlMs = 3_600_000): Promise<void> {
     this.rows.set(key, { result, expiresAt: this.now() + ttlMs });
+  }
+}
+
+/** 用量账本（内存）。明细与汇总行分开放，汇总只动明细。 */
+export class InMemoryUsageLedger implements UsageLedger {
+  private details: UsageRecord[] = [];
+  private rolled: UsageRecord[] = [];
+
+  async record(r: UsageRecord): Promise<void> {
+    this.details.push(r);
+  }
+
+  async list(q: UsageQuery): Promise<readonly UsageRecord[]> {
+    return [...this.rolled, ...this.details].filter((r) => r.at >= q.from && r.at < q.to).sort((a, b) => a.at - b.at);
+  }
+
+  async rollup(before: number): Promise<number> {
+    const old = this.details.filter((r) => r.at < before);
+    if (old.length === 0) return 0;
+    this.details = this.details.filter((r) => r.at >= before);
+    this.rolled.push(...rollupRecords(old));
+    return old.length;
   }
 }

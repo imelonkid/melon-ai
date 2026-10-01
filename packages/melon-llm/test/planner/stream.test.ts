@@ -164,3 +164,43 @@ test('思考：一步里问了模型两次（守卫纠正），两次的思考�
   const s2 = await new ReActPlanner({ router: router(long) }).plan(input('随便聊聊', [SEARCH], []), sig);
   assert.equal(s2.via?.reasoning?.length, 8_000);
 });
+
+test('换模型：上一个模型说到一半出错、换了一个从头来 —— 已显示的半截收回（reset: retry），新的照常显示', async () => {
+  const drafts: AnswerDraft[] = [];
+  const m: ChatModel = {
+    id: 'failover',
+    capabilities: { contextWindow: 1000, maxOutputTokens: 100, tools: true, jsonSchema: true, promptCache: false },
+    async generate(req) {
+      req.onText?.('第一个模型说到一半，后面还有很多很多很多字');
+      req.onRetry?.();
+      const text = '第二个模型从头来，这是完整的回答内容，足够长';
+      req.onText?.(text);
+      return { text, usage: { inputTokens: 1, outputTokens: 1 }, modelId: 'b', stopReason: 'stop' };
+    },
+  };
+  await new ReActPlanner({ router: router(m) }).plan(input('整理一下', [SEARCH], drafts), sig);
+  const i = drafts.findIndex((d) => d.kind === 'reset' && d.reason === 'retry');
+  assert.ok(i > 0, JSON.stringify(drafts));
+  assert.ok(drafts.slice(i + 1).some((d) => d.kind === 'text' && d.text.startsWith('第二个模型')));
+});
+
+test('用量：一步里问了几次模型就加几次，记在 via.usage 上；数据去向含换过的每一家', async () => {
+  const m: ChatModel = {
+    id: 'x',
+    capabilities: { contextWindow: 1000, maxOutputTokens: 100, tools: true, jsonSchema: true, promptCache: false },
+    async generate() {
+      return {
+        text: '好的，我来处理这件事情，请稍等片刻。邮件已发送给 a@b.com', modelId: 'b', stopReason: 'stop', egress: 'vendor-b',
+        failedAttempts: [{ egress: 'vendor-a', model: 'a', errorCode: 'UPSTREAM' }],
+        usage: { inputTokens: 100, outputTokens: 20, costUSD: 0.01, cost: { amount: 0.07, currency: 'CNY' } },
+      };
+    },
+  };
+  // 第一次声称已发送 → 守卫纠正，再问一次：两次的用量都要算
+  const step = await new ReActPlanner({ router: router(m) }).plan(input('给 a@b.com 发封信说明天开会', [MAIL], []), sig);
+  assert.equal(step.via?.usage?.inputTokens, 200);
+  assert.equal(step.via?.usage?.outputTokens, 40);
+  assert.ok(Math.abs((step.via?.usage?.costUSD ?? 0) - 0.02) < 1e-12);
+  assert.ok(Math.abs((step.via?.usage?.cost?.amount ?? 0) - 0.14) < 1e-12);
+  assert.deepEqual(step.via?.egress?.split(',').sort(), ['vendor-a', 'vendor-b']);
+});

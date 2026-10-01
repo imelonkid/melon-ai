@@ -1,6 +1,6 @@
 import type { PromptRef,
-  ContextBundle, Intent, IntentClassifier, Message, ModelRouter, ModelTool, ModelToolCall,
-  PlanInput, PlanStep, Planner, ToolCall,
+  ContextBundle, GenerateResult, Intent, IntentClassifier, Message, ModelRouter, ModelTool, ModelToolCall,
+  PlanInput, PlanStep, Planner, ToolCall, Usage,
 } from '@melon-ai/core';
 import { MAX_REASONING_CHARS, asCallId, asToolId } from '@melon-ai/core';
 import { REACT_PROMPT, REACT_SYSTEM } from './prompt.js';
@@ -53,27 +53,36 @@ export class ReActPlanner implements Planner {
   /** 每一步都带上提示词版本与实际应答的模型，由运行时写进事件日志（§10 第 67 条）。 */
   async plan(input: PlanInput, signal: AbortSignal): Promise<PlanStep> {
     let modelId: string | undefined;
-    let egress: string | undefined;
+    // 数据去向：这一步发给过的每一家（换过模型时不止一家），都要进审计
+    const egress = new Set<string>();
     // 这一步可能问了模型好几次（守卫纠正、参数退回），每次的思考都留下 —— 看的人要知道它为什么改了主意
     const thoughts: string[] = [];
-    const step = await this.decide(input, signal, (id, to, reasoning) => {
-      modelId = id; egress = to;
-      if (reasoning?.trim()) thoughts.push(reasoning.trim());
+    // 每次的真实用量都加上：任务的费用预算靠它生效
+    let usage: Usage | undefined;
+    const step = await this.decide(input, signal, (res, fallbackEgress) => {
+      modelId = res.modelId;
+      for (const f of res.failedAttempts ?? []) egress.add(f.egress);
+      const to = res.egress ?? fallbackEgress;
+      if (to) egress.add(to);
+      if (res.reasoning?.trim()) thoughts.push(res.reasoning.trim());
+      usage = addUsage(usage, res.usage);
     });
     const promptRef = this.opts.system === undefined ? REACT_PROMPT : this.opts.promptRef;
     const reasoning = thoughts.join('\n\n———\n\n').slice(0, MAX_REASONING_CHARS);
     return {
       ...step,
       via: {
-        ...(promptRef ? { promptRef } : {}), ...(modelId ? { modelId } : {}), ...(egress ? { egress } : {}),
+        ...(promptRef ? { promptRef } : {}), ...(modelId ? { modelId } : {}),
+        ...(egress.size ? { egress: [...egress].join(',') } : {}),
         ...(reasoning ? { reasoning } : {}),
+        ...(usage ? { usage } : {}),
       },
     };
   }
 
   private async decide(
     input: PlanInput, signal: AbortSignal,
-    answeredBy: (modelId: string, egress?: string, reasoning?: string) => void,
+    answeredBy: (res: GenerateResult, fallbackEgress?: string) => void,
   ): Promise<PlanStep> {
     const { task } = input;
     const intent = await this.classify(input, signal);
@@ -113,7 +122,7 @@ export class ReActPlanner implements Planner {
     // 所以守卫③④⑤在流式过程中就对已收到的文本查，命中立刻停止显示并撤回；最终结论仍由下面的守卫给出
     const draft = input.draft;
     let shown = false;
-    const retract = (reason: 'tool' | 'check'): void => {
+    const retract = (reason: 'tool' | 'check' | 'retry'): void => {
       if (shown) { shown = false; draft?.({ kind: 'reset', reason }); }
     };
     const wouldCorrect = (text: string): boolean => {
@@ -145,11 +154,18 @@ export class ReActPlanner implements Planner {
         ...(onText ? { onText } : {}),
         // 思考不是回答：不过守卫、不留尾巴，原样交出去当过程显示
         ...(draft ? { onReasoning: (text: string) => { if (text.trim()) draft({ kind: 'thinking', text }); } } : {}),
+        // 为谁问、问来做什么：路由层据此记账
+        meta: {
+          taskId: task.id, agentId: task.agentId, taskKind: task.kind, trigger: task.trigger.type,
+          purpose: intent === 'task' ? 'plan' : 'answer',
+        },
+        // 上一个模型说到一半出错、换了一个从头来：已显示的半截收起，守卫状态也重来
+        onRetry: () => { held = false; retract('retry'); },
       });
       // 先说一句「我先搜一下」再调工具：那是过程话，不是回答
       if (res.toolCalls?.length) retract('tool');
       // 只用首选模型：路由给的 egress 与候选同序，第一个就是它
-      answeredBy(res.modelId, decision.egress[0], res.reasoning);
+      answeredBy(res, decision.egress[0]);
       return res;
     };
 
@@ -321,6 +337,23 @@ export class KeywordIntentClassifier implements IntentClassifier {
     if (t.length <= 12 && this.chatPatterns.some((r) => r.test(t))) return 'chat';
     return 'task';
   }
+}
+
+/**
+ * 一步里多次问模型的用量相加。折美元的费用有就加（预算宁可少算一点也要生效）；
+ * 按币种的费用只在每次都有、币种相同时才加 —— 有一次没价格，这个总数就不可信。
+ */
+function addUsage(a: Usage | undefined, b: Usage): Usage {
+  if (!a) return b;
+  const cost = a.cost && b.cost && a.cost.currency === b.cost.currency
+    ? { cost: { amount: a.cost.amount + b.cost.amount, currency: a.cost.currency } } : {};
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cachedInputTokens: (a.cachedInputTokens ?? 0) + (b.cachedInputTokens ?? 0),
+    ...(a.costUSD !== undefined || b.costUSD !== undefined ? { costUSD: (a.costUSD ?? 0) + (b.costUSD ?? 0) } : {}),
+    ...cost,
+  };
 }
 
 /** 非加密哈希，只用于循环检测与幂等 —— 授权用的是 policy 的可读 scope。 */

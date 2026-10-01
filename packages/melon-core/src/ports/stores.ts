@@ -6,6 +6,7 @@ import type { Entry, Episode, EpisodeSummary, Memory, MemoryQuery } from '../mem
 import type { Grant } from '../policy.js';
 import type { Schedule, ScheduleId, ScheduleStatus } from '../schedule.js';
 import type { Archive, Purger } from '../deletion.js';
+import type { UsageQuery, UsageRecord } from '../usage.js';
 
 /**
  * ─── 依赖倒置的核心 ───
@@ -114,6 +115,18 @@ export interface ScheduleStore {
 }
 
 /** 基础设施模块一次性提供全套存储。宿主只需注入这一个对象。 */
+/**
+ * 用量账本：每次问模型一条。只追加；超过保留期的明细按天汇总（`rollup`）。
+ * 与审计分开 —— 审计是防篡改的合规记录，计量数据量大、要能汇总和清理。
+ */
+export interface UsageLedger {
+  record(r: UsageRecord): Promise<void>;
+  /** `at` 落在 [from, to) 的记录，按时间升序。 */
+  list(q: UsageQuery): Promise<readonly UsageRecord[]>;
+  /** 把 `before` 之前的明细按天汇总成一条条汇总行，删掉明细。返回汇总掉的明细条数。 */
+  rollup(before: number): Promise<number>;
+}
+
 export interface StoreBundle {
   readonly tasks: TaskStore;
   readonly events: EventLog;
@@ -125,6 +138,7 @@ export interface StoreBundle {
   readonly vectors: VectorIndex;
   readonly purger: Purger;
   readonly archive: Archive;
+  readonly usage: UsageLedger;
   /** 跨多个 store 的原子写。单机 SQLite 下就是一个事务。 */
   transaction<T>(fn: () => Promise<T>): Promise<T>;
   close(): Promise<void>;

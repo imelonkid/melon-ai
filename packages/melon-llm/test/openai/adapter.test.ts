@@ -226,3 +226,11 @@ test('思考：非流式响应里的 reasoning_content 也带上', async () => {
   assert.equal(res.reasoning, '想');
   assert.equal(res.text, '答');
 });
+
+test('用量：DeepSeek 用 prompt_cache_hit_tokens 报缓存命中，也要读到', async () => {
+  const res = await model(fakeFetch({
+    choices: [{ message: { content: 'ok' } }],
+    usage: { prompt_tokens: 1000, completion_tokens: 10, prompt_cache_hit_tokens: 600, prompt_cache_miss_tokens: 400 },
+  })).generate({ messages: [{ role: 'user', content: 'x' }] });
+  assert.equal(res.usage.cachedInputTokens, 600);
+});

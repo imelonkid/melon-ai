@@ -2,13 +2,13 @@ import type {
   AgentId, AnswerDraft, ApprovalDecision, AuditSink, Grant, Memory, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
   ScheduleStatus, SchemaValidator, Sequenced, SkillProvider, StoreBundle, Task, TaskEvent, TaskId,
-  TaskKind, TaskState, ToolResolver, ToolsetSnapshot,
+  TaskKind, TaskState, ToolResolver, ToolsetSnapshot, UsageQuery, UsageRecord,
 } from '@melon-ai/core';
 import { TERMINAL_STATES, asAgentId, asScheduleId } from '@melon-ai/core';
 import { describeRule, whenToRule } from '@melon-ai/engine';
 import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
-import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelPool, ReActPlanner, testModel } from '@melon-ai/llm';
-import type { ModelTestResult, RouteStrategy } from '@melon-ai/llm';
+import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelPool, ReActPlanner, summarizeUsage, testModel } from '@melon-ai/llm';
+import type { FxRates, ModelTestResult, RouteStrategy, SummaryOptions, UsageSummary } from '@melon-ai/llm';
 import { ToolRegistry, activeMemories, artifact, basicValidator, memory, schedule } from '@melon-ai/skills';
 import type { Tool } from '@melon-ai/skills';
 import { memoryStorage } from '@melon-ai/store';
@@ -26,6 +26,13 @@ export interface AgentOptions {
   readonly models?: readonly ModelEntry[];
   /** 多模型时的路由策略。默认 balanced。 */
   readonly strategy?: RouteStrategy;
+  /**
+   * 计量：每次问模型的用量与费用进账本（`agent.usage`），任务的费用预算按真实花费生效。
+   * - `fx`：汇率，1 美元 = 多少该币种（默认 CNY 7.2）。引擎不去拉汇率。
+   * - `maxAttempts`：一次调用最多试几个模型（含首选），失败换下一个。默认 2。
+   * - `retentionDays`：明细保留多少天，超过的按天汇总。默认 90。
+   */
+  readonly metering?: { readonly fx?: FxRates; readonly maxAttempts?: number; readonly retentionDays?: number };
   /** 存储。不传 = 内存（进程退出即丢失）；要持久化用 `@melon-ai/agent/sqlite`。 */
   readonly storage?: Storage;
   /** 宿主自己的工具，用 `defineTool` 定义。 */
@@ -181,6 +188,13 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     /** 全部清除。返回删了几条。 */
     clear(): Promise<number>;
   };
+  /** 用量与费用。宿主做用量页、厂商状态用。 */
+  readonly usage: {
+    /** 时间范围内的汇总：总数、按小时 / 按天分格、按模型 / 厂商 / 任务类型 / 触发方式 / 用途分组。费用折成 `currency`（默认 CNY）。 */
+    summary(o: Omit<SummaryOptions, 'fx'>): Promise<UsageSummary>;
+    /** 原始记录（明细与汇总行），排查用。 */
+    list(q: UsageQuery): Promise<readonly UsageRecord[]>;
+  };
   readonly grants: {
     list(agentId?: string): Promise<readonly Grant[]>;
     /** 不传 scope 撤销这个工具的全部授权。 */
@@ -219,7 +233,24 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   const stores: Storage = opts.storage ?? opts.stores ?? memoryStorage();
   const defaultAgent = opts.agentId ?? 'default';
 
-  const pool = new ModelPool(opts.models ?? [], opts.strategy ?? 'balanced');
+  const metering = opts.metering ?? {};
+  const pool = new ModelPool(opts.models ?? [], opts.strategy ?? 'balanced', {
+    ledger: stores.usage,
+    ...(metering.fx ? { fx: metering.fx } : {}),
+    ...(metering.maxAttempts ? { maxAttempts: metering.maxAttempts } : {}),
+    now: () => platform.clock.now(),
+    onLedgerError: (e) => logger.log('warn', `用量记账失败：${e instanceof Error ? e.message : String(e)}`),
+  });
+  // 重启后接着认得出近一小时总出错的模型
+  pool.health.seed(await stores.usage.list({ from: platform.clock.now() - 3_600_000, to: platform.clock.now() + 1 }));
+  // 超过保留期的明细按天汇总：启动时一次，之后每天一次
+  const retentionMs = (metering.retentionDays ?? 90) * 86_400_000;
+  const rollup = async (): Promise<void> => {
+    try { await stores.usage.rollup(platform.clock.now() - retentionMs); } catch (e) {
+      logger.log('warn', `用量汇总失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  let rollupTimer: ReturnType<typeof setInterval> | undefined;
   const memoryOn = (): boolean => (typeof opts.memory === 'object' ? (opts.memory.enabled?.() ?? true) : !!opts.memory);
   // 内置技能总在最前：注册表按来源定先后，宿主和用户装的技能不能顶替它们
   const drafts = opts.scheduleDrafts;
@@ -420,6 +451,13 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       forget: async (id) => (await forgetMemories([id])) > 0,
       clear: async () => forgetMemories((await activeMemories(stores.memories, 10_000)).map((m) => m.id)),
     },
+    usage: {
+      summary: async (o) => summarizeUsage(
+        await stores.usage.list({ from: o.from, to: o.to }),
+        { ...o, ...(metering.fx ? { fx: metering.fx } : {}) },
+      ),
+      list: (q) => stores.usage.list(q),
+    },
     grants: {
       list: (id) => stores.grants.listByAgent(asAgentId(id ?? defaultAgent)),
       async revoke(toolId, scope, id) {
@@ -454,11 +492,16 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     async start() {
       stopping = false;
       await base.start();
+      await rollup();
+      rollupTimer ??= setInterval(() => void rollup(), 86_400_000);
+      // 不拖住进程退出（CLI 宿主跑完就该退）
+      (rollupTimer as { unref?: () => void }).unref?.();
       // 重启后接着跟住没结束的任务 —— 宿主的界面要继续动
       for (const t of await stores.tasks.listByState(ALL_STATES.filter((s) => !TERMINAL.has(s)), 1000)) follow(t.id);
     },
     async stop() {
       stopping = true;
+      if (rollupTimer) { clearInterval(rollupTimer); rollupTimer = undefined; }
       await base.stop();
     },
   };

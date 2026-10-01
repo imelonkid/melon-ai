@@ -44,7 +44,12 @@ test('testModel：成功带耗时与样例，失败带错误码与提示', async
 
 test('各家工厂：默认模型、名字与出境标识；可覆盖模型名与路由属性', () => {
   const d = deepseek({ apiKey: 'k' });
-  assert.deepEqual([d.label, d.model.id, d.egress], ['DeepSeek', 'deepseek-chat', 'deepseek']);
+  // 默认模型按官方文档：deepseek-chat / deepseek-reasoner 已不在文档里
+  assert.deepEqual([d.label, d.model.id, d.egress], ['DeepSeek', 'deepseek-flash', 'deepseek']);
+  assert.equal(d.price?.currency, 'CNY');
+  // 不在价格表里的模型不计价，不再拿「输出价 = 输入价 × 4」冒充
+  assert.equal(deepseek({ apiKey: 'k', model: 'deepseek-chat' }).price, undefined);
+  assert.equal(qwen({ apiKey: 'k' }).price, undefined);
   assert.equal(qwen({ apiKey: 'k' }).egress, 'aliyun');
   assert.equal(openai({ apiKey: 'k', model: 'gpt-5', quality: 9 }).model.id, 'gpt-5');
   assert.equal(openai({ apiKey: 'k', quality: 9 }).quality, 9);

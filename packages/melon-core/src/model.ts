@@ -1,10 +1,14 @@
 import type { JSONSchema, RiskClass } from './tool.js';
+import type { CallMeta, Currency, ModelPrice } from './usage.js';
 
 export interface Usage {
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly cachedInputTokens?: number;
+  /** 折成美元的费用：任务的费用预算按它算。 */
   readonly costUSD?: number;
+  /** 按厂商币种的费用。没有价格的模型不填。 */
+  readonly cost?: { readonly amount: number; readonly currency: Currency };
 }
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
@@ -76,6 +80,16 @@ export interface GenerateRequest {
   readonly onText?: (textSoFar: string) => void;
   /** 思考过程的流式回调，同样给到目前为止的全文。模型不输出思考就不会被调用。 */
   readonly onReasoning?: (reasoningSoFar: string) => void;
+  /**
+   * 这次调用为谁、做什么：计量层据此记账。适配器不看它。
+   * 不填的调用（连接测试等）不进账本。
+   */
+  readonly meta?: CallMeta;
+  /**
+   * 换模型重试时、开始下一次尝试之前回调：上一个模型流式吐出的半截内容作废。
+   * 回调方据此把已显示的草稿收起来。
+   */
+  readonly onRetry?: () => void;
 }
 
 export interface GenerateResult {
@@ -85,6 +99,10 @@ export interface GenerateResult {
   /** 思考过程（支持的模型才有）。不是回答，也不该回灌进上下文。 */
   readonly reasoning?: string;
   readonly usage: Usage;
+  /** 实际应答的厂商（失败换了模型时不是首选那家）。由路由层填，适配器不填。 */
+  readonly egress?: string;
+  /** 这次结果之前失败过几次（换过几个模型）。由路由层填。 */
+  readonly failedAttempts?: readonly { readonly egress: string; readonly model: string; readonly errorCode: string }[];
   readonly modelId: string;
   /** `filtered` 表示被安全分类器拒绝（Anthropic 的 `stop_reason: refusal`）。 */
   readonly stopReason: 'stop' | 'length' | 'tool' | 'filtered' | 'error';
@@ -147,8 +165,10 @@ export interface ModelEntry {
   readonly model: ChatModel;
   /** 相对质量分，越高越强。用于 quality 策略排序。 */
   readonly quality: number;
-  /** 每百万输入 token 的美元价，用于 cost 策略排序。 */
+  /** 每百万输入 token 的美元价，用于 cost 策略排序。有 `price` 时以它为准折算。 */
   readonly costUSD: number;
+  /** 价格（输入 / 缓存 / 输出，按厂商币种）。不填 = 不知道价格：照常记用量，费用记为「未计价」，不瞎估。 */
+  readonly price?: ModelPrice;
   /** 数据发往的供应商标识。进审计，支撑「数据不出境」这类合规要求。 */
   readonly egress: string;
   readonly enabled?: boolean;

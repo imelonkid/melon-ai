@@ -43,6 +43,31 @@ const sched = (id: string, over: Partial<Schedule> = {}): Schedule => ({
 });
 
 for (const impl of IMPLS) {
+  test(`[${impl.name}] 用量账本：按时间范围列出；过保留期的明细按天汇总（维度保留、任务 id 丢掉），只汇总一次`, async () => {
+    const b = impl.make(() => 0);
+    const DAY = 86_400_000;
+    const rec = (at: number, o: Record<string, unknown> = {}) => ({
+      at, calls: 1, taskId: T1, agentId: 'a', taskKind: 'conversation', trigger: 'manual', purpose: 'plan',
+      egress: 'deepseek', model: 'deepseek-flash', ok: true, attempt: 1,
+      inputTokens: 100, cachedInputTokens: 40, outputTokens: 10, cost: 0.5, currency: 'CNY' as const, priced: true, ms: 200, ...o,
+    });
+    await b.usage.record(rec(DAY + 1));
+    await b.usage.record(rec(DAY + 2, { taskId: T2 }));
+    await b.usage.record(rec(DAY + 3, { ok: false, errorCode: 'UPSTREAM', cost: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 }));
+    await b.usage.record(rec(3 * DAY));
+    assert.equal((await b.usage.list({ from: DAY, to: 2 * DAY })).length, 3);
+
+    assert.equal(await b.usage.rollup(2 * DAY), 3);
+    const rows = await b.usage.list({ from: 0, to: 10 * DAY });
+    const ok = rows.find((r) => r.at === DAY && r.ok)!;
+    assert.deepEqual([ok.calls, ok.inputTokens, ok.cost, ok.ms, ok.taskId, ok.taskKind], [2, 200, 1, 400, undefined, 'conversation']);
+    assert.ok(rows.some((r) => r.at === DAY && !r.ok && r.errorCode === 'UPSTREAM'));
+    assert.ok(rows.some((r) => r.at === 3 * DAY && r.taskId === T1), '保留期内的明细不动');
+    // 已汇总的不再汇总：再跑一次数不变
+    assert.equal(await b.usage.rollup(2 * DAY), 0);
+    assert.equal((await b.usage.list({ from: 0, to: 10 * DAY })).length, rows.length);
+  });
+
   test(`[${impl.name}] 定时：到期才返回，removed 默认不列出，supersede 留版本链`, async () => {
     const b = impl.make(() => 0);
     await b.schedules.put(sched('s1', { nextFireAt: 100 }));

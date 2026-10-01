@@ -50,6 +50,8 @@ interface ChatResponse {
     prompt_tokens?: number;
     completion_tokens?: number;
     prompt_tokens_details?: { cached_tokens?: number };
+    /** DeepSeek 用自己的字段报缓存命中（官方文档：上下文硬盘缓存）。 */
+    prompt_cache_hit_tokens?: number;
   };
   error?: { message?: string; type?: string };
 }
@@ -166,7 +168,7 @@ export class OpenAICompatibleChatModel implements ChatModel {
   private toUsage(body: ChatResponse): Usage {
     const inTok = body.usage?.prompt_tokens ?? 0;
     const outTok = body.usage?.completion_tokens ?? 0;
-    const cached = body.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+    const cached = body.usage?.prompt_tokens_details?.cached_tokens ?? body.usage?.prompt_cache_hit_tokens ?? 0;
     const base: Usage = { inputTokens: inTok, outputTokens: outTok, cachedInputTokens: cached };
     const p = this.opts.pricing;
     return p ? { ...base, costUSD: (inTok * p.inUSD + outTok * p.outUSD) / 1_000_000 } : base;

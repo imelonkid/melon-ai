@@ -1,7 +1,20 @@
-import type { ChatModel, ModelEntry, ModelRouter, RouteDecision, RouteIntent, Tokenizer } from '@melon-ai/core';
+import type { ChatModel, ModelEntry, ModelRouter, RouteDecision, RouteIntent, Tokenizer, UsageLedger } from '@melon-ai/core';
 import { ToolError } from '@melon-ai/core';
 import { HeuristicTokenizer, PolicyRouter } from './policy.js';
 import type { RouteStrategy } from './policy.js';
+import { FailoverModel, HealthStats } from './meter.js';
+import type { FxRates } from './meter.js';
+
+export interface MeteringOptions {
+  /** 用量账本。不给就不记账（失败换模型照样生效）。 */
+  readonly ledger?: UsageLedger;
+  /** 汇率：1 美元 = 多少该币种。任务的费用预算按美元算，人民币计价的模型要折算。 */
+  readonly fx?: FxRates;
+  /** 一次调用最多试几个模型（含首选）。默认 2。 */
+  readonly maxAttempts?: number;
+  readonly now?: () => number;
+  readonly onLedgerError?: (e: unknown) => void;
+}
 
 /**
  * 可热替换的模型池。
@@ -16,15 +29,27 @@ export class ModelPool implements ModelRouter {
   private router: PolicyRouter | null = null;
   private entries: readonly ModelEntry[] = [];
   private readonly fallbackTokenizer = new HeuristicTokenizer();
+  private metering: MeteringOptions = {};
+  /** 各模型近一小时的成败。换模型配置时不清空 —— 出错的模型换个配置还是那个模型。 */
+  readonly health: HealthStats;
 
-  constructor(entries: readonly ModelEntry[] = [], private strategy: RouteStrategy = 'balanced') {
+  constructor(entries: readonly ModelEntry[] = [], private strategy: RouteStrategy = 'balanced', metering: MeteringOptions = {}) {
+    this.metering = metering;
+    this.health = new HealthStats(metering.now);
     this.set(entries, strategy);
+  }
+
+  /** 接上账本、汇率等。可以在创建之后再给（账本要等存储就绪）。 */
+  meter(opts: MeteringOptions): void {
+    this.metering = { ...this.metering, ...opts };
   }
 
   set(entries: readonly ModelEntry[], strategy: RouteStrategy = this.strategy): void {
     this.entries = entries;
     this.strategy = strategy;
-    this.router = entries.length > 0 ? new PolicyRouter(entries, strategy) : null;
+    this.router = entries.length > 0
+      ? new PolicyRouter(entries, strategy, () => Date.now(), 60_000, (id) => this.health.demoted(id))
+      : null;
   }
 
   /** 至少有一个可用模型。 */
@@ -40,7 +65,23 @@ export class ModelPool implements ModelRouter {
     if (!this.router) {
       throw new ToolError('FATAL', '没有可用的模型', { retriable: false, hint: '先配置至少一个模型' });
     }
-    return this.router.select(intent);
+    const ranked = this.router.rank(intent);
+    const m = this.metering;
+    // 首选是一个会自己换下一个的模型：规划器照常调 primary.generate，失败换模型、记账都在里面
+    const primary = new FailoverModel(ranked, {
+      health: this.health,
+      now: m.now ?? (() => Date.now()),
+      maxAttempts: m.maxAttempts ?? 2,
+      ...(m.ledger ? { ledger: m.ledger } : {}),
+      ...(m.fx ? { fx: m.fx } : {}),
+      ...(m.onLedgerError ? { onLedgerError: m.onLedgerError } : {}),
+    });
+    return {
+      primary,
+      fallbacks: ranked.slice(1).map((e) => e.model),
+      reason: `${this.strategy}/${intent} → ${ranked[0]!.model.id}`,
+      egress: ranked.map((e) => e.egress),
+    };
   }
 
   tokenizerFor(_model: ChatModel): Tokenizer {

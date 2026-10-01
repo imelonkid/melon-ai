@@ -5,3 +5,4 @@ export * from './memories.js';
 export * from './audit.js';
 export * from './deletion.js';
 export * from './bundle.js';
+export * from './usage.js';

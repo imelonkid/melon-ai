@@ -88,7 +88,8 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
             step,
             ...(step.via?.promptRef ? { promptRef: step.via.promptRef } : {}),
             ...(step.via?.modelId ? { modelId: step.via.modelId } : {}),
-            usage: { inputTokens: context.totalTokens, outputTokens: 0 },
+            // 真实用量（规划器把这一步每次问模型的都加起来了）；拿不到时退回按上下文估的输入
+            usage: step.via?.usage ?? { inputTokens: context.totalTokens, outputTokens: 0 },
           }],
         }];
       } catch (e) {

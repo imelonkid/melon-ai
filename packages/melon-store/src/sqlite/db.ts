@@ -181,6 +181,33 @@ CREATE TABLE IF NOT EXISTS archive (
   archived_at INTEGER NOT NULL,
   PRIMARY KEY (kind, ref)
 );
+
+-- 用量账本：每次问模型一行（rolled = 0）；超过保留期的按天汇总成 rolled = 1 的行。
+-- 新增的表，老库打开时自动建，不升 SCHEMA_VERSION（§10 第 47 条）
+CREATE TABLE IF NOT EXISTS usage (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  at          INTEGER NOT NULL,
+  rolled      INTEGER NOT NULL DEFAULT 0,
+  calls       INTEGER NOT NULL,
+  task_id     TEXT,
+  agent_id    TEXT,
+  task_kind   TEXT,
+  trig        TEXT,
+  purpose     TEXT NOT NULL,
+  egress      TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  ok          INTEGER NOT NULL,
+  error_code  TEXT,
+  attempt     INTEGER,
+  in_tokens   INTEGER NOT NULL,
+  cached_tokens INTEGER NOT NULL,
+  out_tokens  INTEGER NOT NULL,
+  cost        REAL NOT NULL,
+  currency    TEXT NOT NULL,
+  priced      INTEGER NOT NULL,
+  ms          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_at ON usage(at);
 `;
 
 /**

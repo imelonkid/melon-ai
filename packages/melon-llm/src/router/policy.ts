@@ -36,6 +36,8 @@ export class PolicyRouter implements ModelRouter {
     private readonly now: () => number = () => Date.now(),
     /** 标记不健康后多久重新纳入候选。 */
     private readonly cooldownMs = 60_000,
+    /** 近期失败率超标的模型（见 `HealthStats`）：排到候选最后，但不剔除。 */
+    private readonly demoted: (modelId: string) => boolean = () => false,
   ) {
     if (entries.length === 0) throw new Error('PolicyRouter 至少需要一个模型');
   }
@@ -45,15 +47,20 @@ export class PolicyRouter implements ModelRouter {
     this.unhealthy.set(modelId, this.now() + this.cooldownMs);
   }
 
-  async select(intent: RouteIntent): Promise<RouteDecision> {
+  /** 候选按优先级排好：策略排序，失败率超标的挪到最后。 */
+  rank(intent: RouteIntent): readonly ModelEntry[] {
     const healthy = this.entries.filter(
       (e) => e.enabled !== false && (this.unhealthy.get(e.model.id) ?? 0) <= this.now(),
     );
     // 全都不健康时不要返回空 —— 宁可试一个也别让任务直接死
     const pool = healthy.length > 0 ? healthy : this.entries.filter((e) => e.enabled !== false);
     if (pool.length === 0) throw new Error('没有可用的模型');
+    const sorted = [...pool].sort(byStrategy(effectiveStrategy(this.strategy, intent)));
+    return [...sorted.filter((e) => !this.demoted(e.model.id)), ...sorted.filter((e) => this.demoted(e.model.id))];
+  }
 
-    const ranked = [...pool].sort(byStrategy(effectiveStrategy(this.strategy, intent)));
+  async select(intent: RouteIntent): Promise<RouteDecision> {
+    const ranked = this.rank(intent);
     const primary = ranked[0]!;
     return {
       primary: primary.model,

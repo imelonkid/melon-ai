@@ -30,5 +30,10 @@ export function claude(o: ClaudeOptions = {}): ModelEntry {
     quality: o.quality ?? 10,
     costUSD: ANTHROPIC_MODELS[model].inUSD,
     egress: 'anthropic',
+    // 读缓存按输入价的十分之一（写缓存的 1.25 倍没单独算，按普通输入计，略微低估）
+    price: {
+      input: ANTHROPIC_MODELS[model].inUSD, cachedInput: ANTHROPIC_MODELS[model].inUSD * 0.1,
+      output: ANTHROPIC_MODELS[model].outUSD, currency: 'USD',
+    },
   };
 }

@@ -288,3 +288,27 @@ test('思考：记在这一步的事件上，宿主事后看得到；但不回�
     assert.ok(!model.calls[1]!.messages.some((m) => m.content.includes('XYZ')), '思考不该进下一次的上下文');
   } finally { await agent.stop(); }
 });
+
+test('计量：任务的用量是真实的（含输出与费用），费用预算按真实花费生效；账本与汇总看得到每次调用', async () => {
+  const { model } = entry([
+    call('kb.lookup', { q: '一' }), call('kb.lookup', { q: '二' }), call('kb.lookup', { q: '三' }), '答完了',
+  ]);
+  const lookup = defineTool({ id: 'kb.lookup', description: '查资料', risk: 'read', input: { q: 'string' }, run: ({ q }: { q: string }) => `资料 ${q}` });
+  // 每次 10 输入 + 5 输出；每百万 token 10 万美元 → 每次 1.5 美元
+  const priced = { model, quality: 5, costUSD: 1, egress: 'test', label: 'test', price: { input: 100_000, output: 100_000, currency: 'USD' as const } };
+  const agent = await createAgent({ models: [priced], tools: [lookup], platform: quiet });
+  try {
+    const done = until(agent, (t) => ['SUCCEEDED', 'FAILED'].includes(t.state));
+    const task = await agent.run('查三次资料', { budget: { maxCostUSD: 2 } });
+    const final = await done;
+    // 第二次问完累计 3 美元，超了 2 美元的预算 —— 没有真实费用时这个预算永远不触发
+    assert.equal(final.state, 'FAILED');
+    assert.ok(final.usage.costUSD >= 2, `costUSD=${final.usage.costUSD}`);
+    assert.ok(final.usage.tokens > 20, '输出 token 也要算进去');
+    const rows = await agent.usage.list({ from: 0, to: Date.now() + 1000 });
+    assert.ok(rows.length >= 2 && rows.every((r) => r.taskId === task.id && r.priced && r.purpose === 'plan'));
+    const s = await agent.usage.summary({ from: Date.now() - 60_000, to: Date.now() + 1000, currency: 'USD' });
+    assert.equal(s.calls, rows.length);
+    assert.ok(Math.abs(s.cost - 1.5 * rows.length) < 1e-9);
+  } finally { await agent.stop(); }
+});
