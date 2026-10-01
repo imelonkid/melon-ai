@@ -161,6 +161,7 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
           { t: 'ToolCallFinished', callId: effect.call.callId, meta: {
             ok: result.ok, metrics: result.metrics,
             ...(result.error ? { errorCode: result.error.code } : {}),
+            ...(result.error?.sandbox ? { sandbox: result.error.sandbox } : {}),
             ...(result.artifactRef ? { artifactRef: result.artifactRef } : {}),
             ...(result.untrusted ? { untrusted: true } : {}),
           } },

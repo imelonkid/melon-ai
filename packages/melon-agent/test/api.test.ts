@@ -384,3 +384,23 @@ test('模型目录：providers 跟随厂商最新可用的模型（/models ∩ �
     assert.equal((await chat).outcome?.answer, 'flash 答的', '对话按推荐用便宜的');
   } finally { await agent.stop(); }
 });
+
+test('被沙箱拦下：工具错误里的拦截信息（联网 / 读 / 写）随事件落盘，宿主事后看得到、能给放行入口', async () => {
+  const { ToolError } = await import('@melon-ai/core');
+  const { entry: e } = entry([call('script.run', { name: 'a' }), '没能运行']);
+  const agent = await createAgent({
+    models: [e], platform: quiet,
+    tools: [defineTool({
+      id: 'script.run', description: '运行脚本', input: { name: 'string' }, risk: 'write',
+      run: async () => { throw new ToolError('DENIED', '脚本想联网，被沙箱拦下了', { retriable: false, sandbox: { kind: 'network' } }); },
+    })],
+  });
+  try {
+    const done = until(agent, (t) => t.state === 'SUCCEEDED' || t.state === 'FAILED');
+    const t = await agent.run('运行脚本');
+    await done;
+    const fin = (await agent.tasks.history(t.id)).map((r) => r.value).find((v) => v.t === 'ToolCallFinished') as { meta: { errorCode?: string; sandbox?: unknown } };
+    assert.equal(fin.meta.errorCode, 'DENIED');
+    assert.deepEqual(fin.meta.sandbox, { kind: 'network' });
+  } finally { await agent.stop(); }
+});

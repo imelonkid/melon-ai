@@ -156,6 +156,8 @@ export interface ToolMetrics {
 export interface ToolResultMeta {
   readonly ok: boolean;
   readonly errorCode?: ToolErrorShape['code'];
+  /** 被沙箱拦下了什么。随事件落盘：宿主事后给用户放行的入口（「允许这个技能联网」）。 */
+  readonly sandbox?: ToolErrorShape['sandbox'];
   readonly artifactRef?: ArtifactRef;
   readonly metrics: ToolMetrics;
   /**

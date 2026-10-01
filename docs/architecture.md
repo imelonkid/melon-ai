@@ -1270,7 +1270,7 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     - **规则**：读默认放行、敏感位置拦截（`sensitivePaths()` + 宿主给的 `denyRead`）—— 默认拦截会让依赖家目录里第三方包的脚本跑不起来；
       写只能写这次任务的工作目录（工作目录在拦截的目录里也能写：SBPL 后写的规则优先）；联网默认关，`network(技能名)` 放行。
       拦联网用 `(deny network-outbound (remote ip))`：本机的 unix socket（域名解析）照常，连本机端口也拦。
-    - **被拦下时**：`ToolError` 带结构化的 `sandbox: { kind: 'network' | 'read' | 'write', path? }`（管线原样保留进工具结果），
+    - **被拦下时**：`ToolError` 带结构化的 `sandbox: { kind: 'network' | 'read' | 'write', path? }`（管线保留进工具结果，`ToolCallFinished.meta.sandbox` 随事件落盘），
       宿主据此给用户放行的入口；给模型的提示是「告诉用户、不要换办法绕过」。Python / Node / shell 的「Operation not permitted」都认得。
 
 #### 包结构合并（14 → 8）
