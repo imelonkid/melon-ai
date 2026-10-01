@@ -6,7 +6,7 @@ import type { Entry, Episode, EpisodeSummary, Memory, MemoryQuery } from '../mem
 import type { Grant } from '../policy.js';
 import type { Schedule, ScheduleId, ScheduleStatus } from '../schedule.js';
 import type { Archive, Purger } from '../deletion.js';
-import type { UsageQuery, UsageRecord } from '../usage.js';
+import type { PriceSync, UsageQuery, UsageRecord } from '../usage.js';
 
 /**
  * ─── 依赖倒置的核心 ───
@@ -127,6 +127,13 @@ export interface UsageLedger {
   rollup(before: number): Promise<number>;
 }
 
+/** 价格同步的结果：每家只留最新的一条（历史在审计与日志里）。 */
+export interface PriceStore {
+  put(sync: PriceSync): Promise<void>;
+  get(vendor: string): Promise<PriceSync | null>;
+  list(): Promise<readonly PriceSync[]>;
+}
+
 export interface StoreBundle {
   readonly tasks: TaskStore;
   readonly events: EventLog;
@@ -139,6 +146,7 @@ export interface StoreBundle {
   readonly purger: Purger;
   readonly archive: Archive;
   readonly usage: UsageLedger;
+  readonly prices: PriceStore;
   /** 跨多个 store 的原子写。单机 SQLite 下就是一个事务。 */
   transaction<T>(fn: () => Promise<T>): Promise<T>;
   close(): Promise<void>;

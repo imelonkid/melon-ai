@@ -43,6 +43,17 @@ const sched = (id: string, over: Partial<Schedule> = {}): Schedule => ({
 });
 
 for (const impl of IMPLS) {
+  test(`[${impl.name}] 价格同步：每家一条最新的，覆盖写，能列出`, async () => {
+    const b = impl.make(() => 0);
+    const sync = (at: number) => ({ vendor: 'deepseek', url: 'u', at, ok: true, prices: { a: { input: at, output: 1, currency: 'CNY' as const } }, changed: [], pending: [] });
+    await b.prices.put(sync(1));
+    await b.prices.put(sync(2));
+    await b.prices.put({ ...sync(3), vendor: 'zhipu' });
+    assert.equal((await b.prices.get('deepseek'))!.prices.a!.input, 2);
+    assert.deepEqual((await b.prices.list()).map((s) => s.vendor).sort(), ['deepseek', 'zhipu']);
+    assert.equal(await b.prices.get('nope'), null);
+  });
+
   test(`[${impl.name}] 用量账本：按时间范围列出；过保留期的明细按天汇总（维度保留、任务 id 丢掉），只汇总一次`, async () => {
     const b = impl.make(() => 0);
     const DAY = 86_400_000;

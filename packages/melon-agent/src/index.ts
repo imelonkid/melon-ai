@@ -39,7 +39,7 @@ export { ToolError, BUILTIN_TOOLS, TIER_RANK } from '@melon-ai/core';
 export type {
   Task, TaskState, TaskEvent, Sequenced, Schedule, ScheduleStatus, ModelEntry, PolicyMode,
   ApprovalDecision, ApprovalRequest, Grant, Memory, SkillProvider, ToolContext, ToolOutput, Message, AnswerDraft,
-  ModelPrice, Currency, UsageRecord, UsageQuery, ModelTier, RouteContext,
+  ModelPrice, Currency, UsageRecord, UsageQuery, ModelTier, RouteContext, PlanPricing, PriceSource, PriceSheet, PriceSync, PriceChange,
 } from '@melon-ai/core';
 
 /** 兼容旧名。 */

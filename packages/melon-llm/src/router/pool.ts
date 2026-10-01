@@ -7,6 +7,7 @@ import type { RouteStrategy } from './policy.js';
 import { FailoverModel, HealthStats } from './meter.js';
 import type { FxRates } from './meter.js';
 import { QuotaCounter, UsageStats, rankAuto } from './auto.js';
+import type { PriceBook } from './prices.js';
 import type { RouteExplanation, RoutingRule, RoutingRules } from './auto.js';
 
 export interface MeteringOptions {
@@ -53,6 +54,18 @@ export class ModelPool implements ModelRouter {
   /** 套餐额度：按厂商数近一个月成功的请求。 */
   readonly quota: QuotaCounter;
   private rules: RoutingRules = NO_RULES;
+  /** 同步来的官方价格。没有时用条目自带的（内置或手填）。 */
+  private book: PriceBook | null = null;
+
+  /** 接上价格簿：选模型和记账都用同步来的价格（手填的不被覆盖）。 */
+  pricing(book: PriceBook): void {
+    this.book = book;
+  }
+
+  /** 生效中的模型条目：套上同步来的价格。 */
+  private live(): readonly ModelEntry[] {
+    return this.book ? this.entries.map((e) => this.book!.effective(e)) : this.entries;
+  }
 
   constructor(entries: readonly ModelEntry[] = [], private strategy: RouteStrategy = 'balanced', metering: MeteringOptions = {}) {
     this.metering = metering;
@@ -84,7 +97,7 @@ export class ModelPool implements ModelRouter {
   explain(rule: RoutingRule, ctx: RouteContext = {}): RouteExplanation {
     const m = this.metering;
     return rankAuto({
-      entries: this.entries, rule, ctx, stats: this.stats, health: this.health, quota: this.quota,
+      entries: this.live(), rule, ctx, stats: this.stats, health: this.health, quota: this.quota,
       now: (m.now ?? (() => Date.now()))(), ...(m.fx ? { fx: m.fx } : {}),
     }).explanation;
   }
@@ -119,11 +132,12 @@ export class ModelPool implements ModelRouter {
     const rule = this.rules(ctx.meta);
     const ranked = this.strategy === 'auto'
       ? rankAuto({
-          entries: this.entries, rule, ctx, stats: this.stats, health: this.health, quota: this.quota,
+          entries: this.live(), rule, ctx, stats: this.stats, health: this.health, quota: this.quota,
           now: (m.now ?? (() => Date.now()))(), ...(m.fx ? { fx: m.fx } : {}),
         }).ranked
       // 旧的三档：要工具时同样只给支持工具的
-      : this.router.rank(intent).filter((e, _i, all) => !ctx.needsTools || e.model.capabilities.tools || all.every((x) => !x.model.capabilities.tools));
+      : this.router.rank(intent).map((e) => (this.book ? this.book.effective(e) : e))
+        .filter((e, _i, all) => !ctx.needsTools || e.model.capabilities.tools || all.every((x) => !x.model.capabilities.tools));
     if (ranked.length === 0) {
       throw new ToolError('FATAL', ctx.needsTools ? '没有支持工具调用的模型' : '没有可用的模型', { retriable: false, hint: '在模型配置里启用一个模型' });
     }

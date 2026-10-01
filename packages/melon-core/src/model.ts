@@ -180,7 +180,7 @@ export interface ModelEntry {
    * 价格从哪来。`manual`（用户手填）优先于同步来的官方价格，同步不覆盖；
    * `builtin`（引擎内置表）会被同步来的价格替换。不填按 builtin。
    */
-  readonly priceSource?: 'manual' | 'builtin';
+  readonly priceSource?: 'manual' | 'builtin' | 'synced';
   /** 套餐计费（固定月费 + 额度，如阿里 Coding Plan）。有它时按次不另计费，路由优先用、额度快满时让位。 */
   readonly plan?: PlanPricing;
   /** 数据发往的供应商标识。进审计，支撑「数据不出境」这类合规要求。 */

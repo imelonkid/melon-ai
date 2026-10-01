@@ -209,6 +209,13 @@ CREATE TABLE IF NOT EXISTS usage (
   billing     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_at ON usage(at);
+
+-- 价格同步：每家厂商一条最新的结果（JSON）
+CREATE TABLE IF NOT EXISTS price_sync (
+  vendor  TEXT PRIMARY KEY,
+  at      INTEGER NOT NULL,
+  payload TEXT NOT NULL
+);
 `;
 
 /**

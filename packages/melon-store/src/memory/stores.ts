@@ -1,7 +1,7 @@
 import type {
   AgentId, Entry, Episode, EpisodeId, EpisodeStore, EpisodeSummary, EventLog, Grant, GrantStore,
   IdempotencyStore, Schedule, ScheduleId, ScheduleStatus, ScheduleStore, Sequenced, Task, TaskEvent,
-  TaskId, TaskState, TaskStore, ToolResult, UsageLedger, UsageQuery, UsageRecord,
+  TaskId, TaskState, TaskStore, ToolResult, UsageLedger, UsageQuery, UsageRecord, PriceStore, PriceSync,
 } from '@melon-ai/core';
 import { ConflictError, asEpisodeId } from '@melon-ai/core';
 import { rollupRecords } from '../usage.js';
@@ -219,4 +219,12 @@ export class InMemoryUsageLedger implements UsageLedger {
     this.rolled.push(...rollupRecords(old));
     return old.length;
   }
+}
+
+/** 价格同步结果（内存）。每家一条最新的。 */
+export class InMemoryPriceStore implements PriceStore {
+  private readonly byVendor = new Map<string, PriceSync>();
+  async put(sync: PriceSync): Promise<void> { this.byVendor.set(sync.vendor, sync); }
+  async get(vendor: string): Promise<PriceSync | null> { return this.byVendor.get(vendor) ?? null; }
+  async list(): Promise<readonly PriceSync[]> { return [...this.byVendor.values()]; }
 }

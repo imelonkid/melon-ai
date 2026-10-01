@@ -1,4 +1,4 @@
-import type { Currency, TaskId, UsageLedger, UsageQuery, UsageRecord } from '@melon-ai/core';
+import type { Currency, PriceStore, PriceSync, TaskId, UsageLedger, UsageQuery, UsageRecord } from '@melon-ai/core';
 import type { SqliteContext } from './db.js';
 import { rollupRecords } from '../usage.js';
 
@@ -56,5 +56,23 @@ export class SqliteUsageLedger implements UsageLedger {
       for (const r of sums) this.insert(r, true);
     });
     return rows.length;
+  }
+}
+
+export class SqlitePriceStore implements PriceStore {
+  constructor(private readonly cx: SqliteContext) {}
+
+  async put(sync: PriceSync): Promise<void> {
+    this.cx.db.prepare('INSERT INTO price_sync (vendor, at, payload) VALUES (?,?,?) ON CONFLICT(vendor) DO UPDATE SET at=excluded.at, payload=excluded.payload')
+      .run(sync.vendor, sync.at, JSON.stringify(sync));
+  }
+
+  async get(vendor: string): Promise<PriceSync | null> {
+    const r = this.cx.db.prepare('SELECT payload FROM price_sync WHERE vendor = ?').get(vendor) as { payload: string } | undefined;
+    return r ? JSON.parse(r.payload) as PriceSync : null;
+  }
+
+  async list(): Promise<readonly PriceSync[]> {
+    return (this.cx.db.prepare('SELECT payload FROM price_sync ORDER BY vendor').all() as { payload: string }[]).map((r) => JSON.parse(r.payload) as PriceSync);
   }
 }

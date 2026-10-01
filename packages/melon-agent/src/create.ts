@@ -2,12 +2,12 @@ import type {
   AgentId, AnswerDraft, ApprovalDecision, AuditSink, Grant, Memory, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
   ScheduleStatus, SchemaValidator, Sequenced, SkillProvider, StoreBundle, Task, TaskEvent, TaskId,
-  TaskKind, TaskState, ToolResolver, ToolsetSnapshot, UsageQuery, UsageRecord, RouteContext,
+  TaskKind, TaskState, ToolResolver, ToolsetSnapshot, UsageQuery, UsageRecord, RouteContext, PriceSource, PriceSync,
 } from '@melon-ai/core';
 import { TERMINAL_STATES, asAgentId, asScheduleId } from '@melon-ai/core';
 import { describeRule, whenToRule } from '@melon-ai/engine';
 import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
-import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelPool, ReActPlanner, summarizeUsage, testModel } from '@melon-ai/llm';
+import { DEFAULT_ACTION_WORDS, KeywordIntentClassifier, ModelPool, PriceBook, ReActPlanner, summarizeUsage, testModel } from '@melon-ai/llm';
 import type {
   FxRates, ModelTestResult, RouteExplanation, RouteStrategy, RoutingRule, RoutingRules, SummaryOptions, UsageSummary,
 } from '@melon-ai/llm';
@@ -40,6 +40,11 @@ export interface AgentOptions {
    * 不给时所有调用同一类、不限档。
    */
   readonly routing?: RoutingRules;
+  /**
+   * 价格同步：从各家官方价格文档拉取（来源在 `@melon-ai/plugins` 的各厂商子路径）。
+   * 默认每 24 小时一次；失败保留上次的价格；变化超过 5 倍的等确认。
+   */
+  readonly pricing?: { readonly sources?: readonly PriceSource[]; readonly intervalHours?: number };
   /** 存储。不传 = 内存（进程退出即丢失）；要持久化用 `@melon-ai/agent/sqlite`。 */
   readonly storage?: Storage;
   /** 宿主自己的工具，用 `defineTool` 定义。 */
@@ -199,6 +204,13 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     /** 全部清除。返回删了几条。 */
     clear(): Promise<number>;
   };
+  /** 价格同步：每家上次同步的结果、立即同步、确认 / 忽略变化很大的价格。 */
+  readonly prices: {
+    status(): readonly (PriceSync | { readonly vendor: string; readonly url: string; readonly never: true })[];
+    sync(vendor?: string): Promise<readonly PriceSync[]>;
+    confirm(vendor: string, model: string): Promise<boolean>;
+    dismiss(vendor: string, model: string): Promise<boolean>;
+  };
   /** 用量与费用。宿主做用量页、厂商状态用。 */
   readonly usage: {
     /** 时间范围内的汇总：总数、按小时 / 按天分格、按模型 / 厂商 / 任务类型 / 触发方式 / 用途分组。费用折成 `currency`（默认 CNY）。 */
@@ -221,6 +233,8 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     /** 汇率、最多试几个模型。保留期只在创建时给。 */
     metering?: { fx?: FxRates; maxAttempts?: number };
     routing?: RoutingRules;
+    /** 换价格来源（宿主按用户启用了哪几家决定）。 */
+    pricing?: { sources: readonly PriceSource[] };
   }): Promise<void>;
   /** 底层调度器。一般用 `schedules` 就够了。 */
   readonly scheduler: Scheduler;
@@ -256,6 +270,25 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     onLedgerError: (e) => logger.log('warn', `用量记账失败：${e instanceof Error ? e.message : String(e)}`),
   });
   if (opts.routing) pool.route(opts.routing);
+  // 价格簿：同步来的官方价格，选模型和记账都用它（手填的不覆盖）。第一次同步时和内置价格比
+  const book = new PriceBook({
+    store: stores.prices, now: () => platform.clock.now(),
+    builtin: (vendor, model) => pool.current.entries.find((e) => e.egress === vendor && e.model.id === model && e.priceSource !== 'manual')?.price,
+  });
+  await book.load();
+  book.setSources(opts.pricing?.sources ?? []);
+  pool.pricing(book);
+  const syncEvery = (opts.pricing?.intervalHours ?? 24) * 3_600_000;
+  // 到期的才同步；在后台跑，不拖慢启动，失败只记日志（价格照旧用上次的）
+  const syncDue = (): void => {
+    for (const s of book.status()) {
+      if (book.age(s.vendor) < syncEvery) continue;
+      book.sync(s.vendor).then(([r]) => {
+        if (r && !r.ok) logger.log('warn', `价格同步失败（${r.vendor}）：${r.error}`);
+      }).catch((e) => logger.log('warn', `价格同步出错：${e instanceof Error ? e.message : String(e)}`));
+    }
+  };
+  let priceTimer: ReturnType<typeof setInterval> | undefined;
   // 用账本预热：近一小时总出错的模型、近 7 天各类任务的典型用量（自动路由预估花费用）、近一个月的套餐用量（额度）
   const seedPool = async (): Promise<void> => {
     pool.stats.clear();
@@ -470,6 +503,12 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       forget: async (id) => (await forgetMemories([id])) > 0,
       clear: async () => forgetMemories((await activeMemories(stores.memories, 10_000)).map((m) => m.id)),
     },
+    prices: {
+      status: () => book.status(),
+      sync: (vendor) => book.sync(vendor),
+      confirm: (vendor, model) => book.confirm(vendor, model),
+      dismiss: (vendor, model) => book.dismiss(vendor, model),
+    },
     usage: {
       summary: async (o) => summarizeUsage(
         await stores.usage.list({ from: o.from, to: o.to }),
@@ -509,6 +548,10 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       // 换技能来源时内置的保留 —— 宿主只管自己那一份
       if (patch.skills !== undefined) await registry.setProviders([...builtins, ...patch.skills]);
       if (patch.policy !== undefined) policy = patch.policy;
+      if (patch.pricing) {
+        book.setSources(patch.pricing.sources);
+        if (!stopping) syncDue();
+      }
       if (patch.routing) {
         pool.route(patch.routing);
         // 任务类别的分法可能变了：统计按新规则重新归类
@@ -529,12 +572,17 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       rollupTimer ??= setInterval(() => void rollup(), 86_400_000);
       // 不拖住进程退出（CLI 宿主跑完就该退）
       (rollupTimer as { unref?: () => void }).unref?.();
+      // 价格：启动时把到期的同步了，之后每小时看一次有没有到期的
+      syncDue();
+      priceTimer ??= setInterval(syncDue, 3_600_000);
+      (priceTimer as { unref?: () => void }).unref?.();
       // 重启后接着跟住没结束的任务 —— 宿主的界面要继续动
       for (const t of await stores.tasks.listByState(ALL_STATES.filter((s) => !TERMINAL.has(s)), 1000)) follow(t.id);
     },
     async stop() {
       stopping = true;
       if (rollupTimer) { clearInterval(rollupTimer); rollupTimer = undefined; }
+      if (priceTimer) { clearInterval(priceTimer); priceTimer = undefined; }
       await base.stop();
     },
   };

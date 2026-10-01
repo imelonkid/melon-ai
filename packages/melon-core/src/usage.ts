@@ -103,3 +103,52 @@ export interface UsageQuery {
   readonly from: number;
   readonly to: number;
 }
+
+// ── 价格同步：从厂商的官方价格文档拉取 ──
+
+/**
+ * 一家厂商的价格来源（官方文档）。厂商实现在 `@melon-ai/plugins`，每家一个子路径；引擎只管定时同步、校验、存档。
+ * `vendor` 与 `ModelEntry.egress` 一致 —— 同步来的价格按它对到模型上。
+ */
+export interface PriceSource {
+  readonly vendor: string;
+  readonly label?: string;
+  /** 官方价格文档的地址，给人核对用。 */
+  readonly url: string;
+  fetch(signal: AbortSignal): Promise<PriceSheet>;
+}
+
+export interface PriceSheet {
+  /** 模型 id → 价格。 */
+  readonly prices: Readonly<Record<string, ModelPrice>>;
+  /** 给人看的说明，如「按输入长度分档的，取最低一档」。 */
+  readonly notes?: readonly string[];
+}
+
+/** 一个模型的价格变了。 */
+export interface PriceChange {
+  readonly model: string;
+  readonly from?: ModelPrice;
+  readonly to: ModelPrice;
+  /** 输入、输出里变化最大的倍数（≥ 1）。 */
+  readonly ratio: number;
+}
+
+/**
+ * 一次同步的结果（每家一条最新的）。失败时 `prices` 保持上一次成功的 —— 页面改版了也不会把价格清空。
+ */
+export interface PriceSync {
+  readonly vendor: string;
+  readonly url: string;
+  readonly at: number;
+  readonly ok: boolean;
+  readonly error?: string;
+  /** 生效中的价格（模型 id → 价格）。 */
+  readonly prices: Readonly<Record<string, ModelPrice>>;
+  /** 这次生效的变化（新模型、小幅调价）。 */
+  readonly changed: readonly PriceChange[];
+  /** 变化太大、等用户确认的（防止表格解析错位把价格读成别的列）。确认前用旧价。 */
+  readonly pending: readonly PriceChange[];
+  readonly lastSuccessAt?: number;
+  readonly notes?: readonly string[];
+}
