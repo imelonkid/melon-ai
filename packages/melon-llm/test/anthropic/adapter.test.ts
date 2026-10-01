@@ -71,7 +71,8 @@ test('模型发现与新模型：/v1/models 列出模型；目录里没有的模
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as { port: number }).port;
   try {
-    const m = new AnthropicChatModel({ apiKey: 'k', baseURL: `http://127.0.0.1:${port}`, model: 'claude-opus-5-5' });
+    // 目录里没有的模型：默认上限
+    const m = new AnthropicChatModel({ apiKey: 'k', baseURL: `http://127.0.0.1:${port}`, model: 'claude-future-9' });
     assert.deepEqual(await m.listModels(), ['claude-opus-5-5']);
     assert.equal(m.capabilities.contextWindow, 200_000);
   } finally {

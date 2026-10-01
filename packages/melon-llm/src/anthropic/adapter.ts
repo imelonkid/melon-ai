@@ -12,6 +12,10 @@ import { toolNameCodec } from '../shared/toolname.js';
  * 价格单位：美元 / 百万 token。
  */
 export const ANTHROPIC_MODELS = {
+  // 价格按官方价格文档（2026-10）；之后以价格同步为准
+  'claude-fable-5-1': { contextWindow: 1_000_000, maxOutput: 128_000, inUSD: 10, outUSD: 50 },
+  'claude-opus-5-5': { contextWindow: 1_000_000, maxOutput: 128_000, inUSD: 4, outUSD: 20 },
+  'claude-sonnet-5-5': { contextWindow: 1_000_000, maxOutput: 128_000, inUSD: 2, outUSD: 10 },
   'claude-opus-5': { contextWindow: 1_000_000, maxOutput: 128_000, inUSD: 5, outUSD: 25 },
   'claude-sonnet-5': { contextWindow: 1_000_000, maxOutput: 128_000, inUSD: 2, outUSD: 10 },
   'claude-haiku-4-5': { contextWindow: 200_000, maxOutput: 64_000, inUSD: 1, outUSD: 5 },

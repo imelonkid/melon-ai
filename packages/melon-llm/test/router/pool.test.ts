@@ -55,7 +55,7 @@ test('各家工厂：默认模型、名字与出境标识；可覆盖模型名�
   assert.equal(openai({ apiKey: 'k', quality: 9 }).quality, 9);
   assert.equal(kimi({ apiKey: 'k' }).egress, 'moonshot');
   const c = claude({ apiKey: 'k' });
-  assert.deepEqual([c.label, c.model.id, c.egress, c.costUSD], ['Claude', 'claude-opus-5', 'anthropic', 5]);
+  assert.deepEqual([c.label, c.model.id, c.egress, c.costUSD], ['Claude', 'claude-opus-5-5', 'anthropic', 4]);
 });
 
 test('compatible：任意 OpenAI 兼容供应商，名字与出境标识按宿主给的记', () => {

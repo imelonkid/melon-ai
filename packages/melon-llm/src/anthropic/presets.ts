@@ -3,7 +3,7 @@ import { ANTHROPIC_MODELS, AnthropicChatModel } from './adapter.js';
 import type { AnthropicModelId } from './adapter.js';
 
 /** 不指定模型时用的 Claude 模型。宿主的配置页拿它做占位，不必自己再写一份。 */
-export const CLAUDE_DEFAULT_MODEL: AnthropicModelId = 'claude-opus-5';
+export const CLAUDE_DEFAULT_MODEL: AnthropicModelId = 'claude-opus-5-5';
 
 export interface ClaudeOptions {
   /** 不传时由 SDK 读 ANTHROPIC_API_KEY。 */
@@ -24,7 +24,8 @@ export interface ClaudeOptions {
 }
 
 export const CLAUDE_TIERS: Readonly<Partial<Record<string, ModelTier>>> = {
-  'claude-opus-5': 'strong', 'claude-sonnet-5': 'standard', 'claude-haiku-4-5': 'basic',
+  'claude-fable-5-1': 'strong', 'claude-opus-5-5': 'strong', 'claude-opus-5': 'strong',
+  'claude-sonnet-5-5': 'standard', 'claude-sonnet-5': 'standard', 'claude-haiku-4-5': 'basic',
 };
 
 /**

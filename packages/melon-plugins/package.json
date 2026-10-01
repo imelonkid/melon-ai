@@ -1,20 +1,45 @@
 {
   "name": "@melon-ai/plugins",
   "version": "0.0.1",
-  "description": "扩展插件：各厂商对引擎协议的实现（如搜索服务博查），每家一个子路径，宿主按需引入。",
+  "description": "扩展插件：各厂商对引擎协议的实现（搜索服务博查；DeepSeek、Claude、Kimi、通义、智谱的官方价格文档解析），每家一个子路径，宿主按需引入。",
   "type": "module",
   "exports": {
     "./bocha": {
       "types": "./dist/bocha.d.ts",
       "import": "./dist/bocha.js",
       "require": "./dist/bocha.cjs"
+    },
+    "./deepseek": {
+      "types": "./dist/deepseek.d.ts",
+      "import": "./dist/deepseek.js",
+      "require": "./dist/deepseek.cjs"
+    },
+    "./anthropic": {
+      "types": "./dist/anthropic.d.ts",
+      "import": "./dist/anthropic.js",
+      "require": "./dist/anthropic.cjs"
+    },
+    "./kimi": {
+      "types": "./dist/kimi.d.ts",
+      "import": "./dist/kimi.js",
+      "require": "./dist/kimi.cjs"
+    },
+    "./qwen": {
+      "types": "./dist/qwen.d.ts",
+      "import": "./dist/qwen.js",
+      "require": "./dist/qwen.cjs"
+    },
+    "./zhipu": {
+      "types": "./dist/zhipu.d.ts",
+      "import": "./dist/zhipu.js",
+      "require": "./dist/zhipu.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup --entry.bocha src/bocha/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.bocha src/bocha/index.ts --entry.deepseek src/deepseek/index.ts --entry.anthropic src/anthropic/index.ts --entry.kimi src/kimi/index.ts --entry.qwen src/qwen/index.ts --entry.zhipu src/zhipu/index.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
