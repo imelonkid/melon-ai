@@ -35,7 +35,7 @@ export type {
 export { whenToRule, describeRule, hostTimeZone } from '@melon-ai/engine';
 export type { When } from '@melon-ai/engine';
 export { memoryStorage } from '@melon-ai/store';
-export { ToolError, BUILTIN_TOOLS, TIER_RANK } from '@melon-ai/core';
+export { ToolError, BUILTIN_TOOLS, TIER_RANK, SENSITIVE_HOME_PATHS } from '@melon-ai/core';
 export type {
   Task, TaskState, TaskEvent, Sequenced, Schedule, ScheduleStatus, ModelEntry, PolicyMode,
   ApprovalDecision, ApprovalRequest, Grant, Memory, SkillProvider, ToolContext, ToolOutput, Message, AnswerDraft,
