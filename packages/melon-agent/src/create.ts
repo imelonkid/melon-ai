@@ -207,6 +207,8 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     tools?: readonly Tool[];
     skills?: readonly SkillProvider[];
     policy?: PolicyMode | ((task: Task) => PolicyMode);
+    /** 汇率、最多试几个模型。保留期只在创建时给。 */
+    metering?: { fx?: FxRates; maxAttempts?: number };
   }): Promise<void>;
   /** 底层调度器。一般用 `schedules` 就够了。 */
   readonly scheduler: Scheduler;
@@ -233,7 +235,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   const stores: Storage = opts.storage ?? opts.stores ?? memoryStorage();
   const defaultAgent = opts.agentId ?? 'default';
 
-  const metering = opts.metering ?? {};
+  let metering = opts.metering ?? {};
   const pool = new ModelPool(opts.models ?? [], opts.strategy ?? 'balanced', {
     ledger: stores.usage,
     ...(metering.fx ? { fx: metering.fx } : {}),
@@ -488,6 +490,13 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       // 换技能来源时内置的保留 —— 宿主只管自己那一份
       if (patch.skills !== undefined) await registry.setProviders([...builtins, ...patch.skills]);
       if (patch.policy !== undefined) policy = patch.policy;
+      if (patch.metering) {
+        metering = { ...metering, ...patch.metering };
+        pool.meter({
+          ...(patch.metering.fx ? { fx: patch.metering.fx } : {}),
+          ...(patch.metering.maxAttempts ? { maxAttempts: patch.metering.maxAttempts } : {}),
+        });
+      }
     },
     async start() {
       stopping = false;

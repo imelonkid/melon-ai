@@ -135,4 +135,9 @@ test('汇总：按小时分格（空格也在）、按模型与任务类型分�
   assert.equal(s.cacheHitRate, 150 / 300);
   assert.equal(s.groups.model[0]!.key, 'anthropic/claude-opus-5');
   assert.deepEqual(s.groups.trigger.map((g) => g.key).sort(), ['manual', 'schedule']);
+  assert.equal(s.groups.custom.length, 0);
+  const c = summarizeUsage([rec({}), rec({ trigger: 'schedule' })], {
+    from: base, to: base + 3_600_000, classify: (r) => (r.trigger === 'schedule' ? '定时任务' : '对话'),
+  });
+  assert.deepEqual(c.groups.custom.map((g) => [g.key, g.calls]).sort(), [['定时任务', 1], ['对话', 1]]);
 });

@@ -47,6 +47,8 @@ export interface UsageSummary extends UsageTotals {
     readonly taskKind: readonly UsageGroup[];
     readonly trigger: readonly UsageGroup[];
     readonly purpose: readonly UsageGroup[];
+    /** 按宿主给的 `classify` 分组（没给时为空）。 */
+    readonly custom: readonly UsageGroup[];
   };
 }
 
@@ -59,6 +61,8 @@ export interface SummaryOptions {
   /** 费用折成什么币种。默认 CNY。 */
   readonly currency?: Currency;
   readonly fx?: FxRates;
+  /** 宿主自己的分组（如「对话 / 定时任务 / 后台」要组合任务类型、触发方式、用途），结果在 `groups.custom`。 */
+  readonly classify?: (r: UsageRecord) => string;
 }
 
 const ZERO: UsageTotals = { calls: 0, failed: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: 0, unpricedCalls: 0, ms: 0 };
@@ -106,7 +110,7 @@ export function summarizeUsage(records: readonly UsageRecord[], o: SummaryOption
   }
 
   let total = ZERO;
-  const dims = { model: new Map<string, UsageTotals>(), egress: new Map(), taskKind: new Map(), trigger: new Map(), purpose: new Map() } as
+  const dims = { model: new Map<string, UsageTotals>(), egress: new Map(), taskKind: new Map(), trigger: new Map(), purpose: new Map(), custom: new Map() } as
     Record<keyof UsageSummary['groups'], Map<string, UsageTotals>>;
   for (const r of records) {
     if (r.at < o.from || r.at >= o.to) continue;
@@ -115,8 +119,12 @@ export function summarizeUsage(records: readonly UsageRecord[], o: SummaryOption
     const modelKey = `${r.egress}/${r.model}`;
     const keys: Record<keyof UsageSummary['groups'], string> = {
       model: modelKey, egress: r.egress, taskKind: r.taskKind ?? '', trigger: r.trigger ?? '', purpose: r.purpose,
+      custom: o.classify ? o.classify(r) : '',
     };
-    for (const d of Object.keys(dims) as (keyof typeof dims)[]) dims[d].set(keys[d], add(dims[d].get(keys[d]) ?? ZERO, r, cost));
+    for (const d of Object.keys(dims) as (keyof typeof dims)[]) {
+      if (d === 'custom' && !o.classify) continue;
+      dims[d].set(keys[d], add(dims[d].get(keys[d]) ?? ZERO, r, cost));
+    }
     const cell = cells.get(floorLocal(r.at, bucket, tz));
     if (cell) {
       cell.totals = add(cell.totals, r, cost);
@@ -132,7 +140,7 @@ export function summarizeUsage(records: readonly UsageRecord[], o: SummaryOption
       .map(([start, c]) => ({ start, ...c.totals, byModel: grouped(c.byModel) })),
     groups: {
       model: grouped(dims.model), egress: grouped(dims.egress), taskKind: grouped(dims.taskKind),
-      trigger: grouped(dims.trigger), purpose: grouped(dims.purpose),
+      trigger: grouped(dims.trigger), purpose: grouped(dims.purpose), custom: grouped(dims.custom),
     },
   };
 }
