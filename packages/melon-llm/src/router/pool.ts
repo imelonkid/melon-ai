@@ -6,7 +6,7 @@ import { HeuristicTokenizer, PolicyRouter } from './policy.js';
 import type { RouteStrategy } from './policy.js';
 import { FailoverModel, HealthStats } from './meter.js';
 import type { FxRates } from './meter.js';
-import { UsageStats, rankAuto } from './auto.js';
+import { QuotaCounter, UsageStats, rankAuto } from './auto.js';
 import type { RouteExplanation, RoutingRule, RoutingRules } from './auto.js';
 
 export interface MeteringOptions {
@@ -50,12 +50,15 @@ export class ModelPool implements ModelRouter {
   readonly health: HealthStats;
   /** 近 7 天的实际用量（每类任务的典型用量、每个模型的缓存命中率与耗时），自动路由预估花费用。 */
   readonly stats: UsageStats;
+  /** 套餐额度：按厂商数近一个月成功的请求。 */
+  readonly quota: QuotaCounter;
   private rules: RoutingRules = NO_RULES;
 
   constructor(entries: readonly ModelEntry[] = [], private strategy: RouteStrategy = 'balanced', metering: MeteringOptions = {}) {
     this.metering = metering;
     this.health = new HealthStats(metering.now);
     this.stats = new UsageStats(metering.now);
+    this.quota = new QuotaCounter(metering.now);
     this.set(entries, strategy);
   }
 
@@ -68,7 +71,10 @@ export class ModelPool implements ModelRouter {
   seed(records: readonly UsageRecord[]): void {
     const now = (this.metering.now ?? (() => Date.now()))();
     this.health.seed(records.filter((r) => r.at > now - this.health.windowMs));
-    for (const r of records) this.stats.record(r, this.rules(metaOf(r)).taskClass);
+    for (const r of records) {
+      this.stats.record(r, this.rules(metaOf(r)).taskClass);
+      if (r.billing === 'plan' && r.ok) for (let k = 0; k < r.calls; k++) this.quota.add(r.egress, r.at);
+    }
   }
 
   /**
@@ -78,7 +84,7 @@ export class ModelPool implements ModelRouter {
   explain(rule: RoutingRule, ctx: RouteContext = {}): RouteExplanation {
     const m = this.metering;
     return rankAuto({
-      entries: this.entries, rule, ctx, stats: this.stats, health: this.health,
+      entries: this.entries, rule, ctx, stats: this.stats, health: this.health, quota: this.quota,
       now: (m.now ?? (() => Date.now()))(), ...(m.fx ? { fx: m.fx } : {}),
     }).explanation;
   }
@@ -113,7 +119,7 @@ export class ModelPool implements ModelRouter {
     const rule = this.rules(ctx.meta);
     const ranked = this.strategy === 'auto'
       ? rankAuto({
-          entries: this.entries, rule, ctx, stats: this.stats, health: this.health,
+          entries: this.entries, rule, ctx, stats: this.stats, health: this.health, quota: this.quota,
           now: (m.now ?? (() => Date.now()))(), ...(m.fx ? { fx: m.fx } : {}),
         }).ranked
       // 旧的三档：要工具时同样只给支持工具的
@@ -130,7 +136,10 @@ export class ModelPool implements ModelRouter {
       ...(m.fx ? { fx: m.fx } : {}),
       ...(m.onLedgerError ? { onLedgerError: m.onLedgerError } : {}),
       // 每记一笔顺带更新路由的用量统计（按这次调用所属的任务类别）
-      onRecord: (r) => this.stats.record(r, rule.taskClass),
+      onRecord: (r) => {
+        this.stats.record(r, rule.taskClass);
+        if (r.billing === 'plan' && r.ok) this.quota.add(r.egress, r.at);
+      },
     });
     return {
       primary,

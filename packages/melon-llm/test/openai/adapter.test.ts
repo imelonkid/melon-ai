@@ -234,3 +234,13 @@ test('用量：DeepSeek 用 prompt_cache_hit_tokens 报缓存命中，也要读�
   })).generate({ messages: [{ role: 'user', content: 'x' }] });
   assert.equal(res.usage.cachedInputTokens, 600);
 });
+
+test('模型发现：GET /models 列出这个账号能用的模型', async () => {
+  const cap: { url?: string } = {};
+  const f = (async (url: string) => {
+    cap.url = url;
+    return { ok: true, status: 200, json: async () => ({ data: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }] }) };
+  }) as unknown as typeof fetch;
+  assert.deepEqual(await model(f).listModels(), ['deepseek-flash', 'deepseek-v4-pro']);
+  assert.equal(cap.url, 'http://x/v1/models');
+});

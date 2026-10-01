@@ -102,3 +102,22 @@ test('用量统计：模型池每记一笔都按这次调用的任务类别更�
   for (let i = 0; i < 5; i++) await (await p.select('plan', undefined, { meta })).primary.generate({ messages: [], meta });
   assert.deepEqual(p.stats.typical('chat'), { inputTokens: 100, outputTokens: 10, samples: 5 });
 });
+
+test('套餐：按次不另计（费用 0、标记走套餐），够档时优先用；额度某个窗口到 95% 就让位', async () => {
+  const plan = { name: 'Coding Plan', monthlyFee: 200, currency: 'CNY' as const, quotas: [{ requests: 20, hours: 5 }, { requests: 1000, hours: 168 }] };
+  const rows: UsageRecord[] = [];
+  const planned: ModelEntry = { ...e('qwen3.7-plus', 'aliyun-coding', 'standard', undefined), plan };
+  const p = new ModelPool([e('deepseek-flash', 'deepseek', 'standard', CNY(1, 4)), planned], 'auto', {
+    now: () => FRI_13, ledger: { record: async (r) => { rows.push(r); }, list: async () => rows, rollup: async () => 0 },
+  });
+  p.route(() => ({ taskClass: 'chat', minTier: 'standard' }));
+  const res = await (await p.select('plan', undefined, { meta })).primary.generate({ messages: [], meta });
+  assert.equal(res.modelId, 'qwen3.7-plus');
+  assert.deepEqual([res.usage.cost?.amount, rows[0]!.billing, rows[0]!.priced], [0, 'plan', true]);
+  // 再用 18 次：5 小时窗口 19 / 20 = 95%，让位给按 token 计费的
+  for (let k = 0; k < 18; k++) p.quota.add('aliyun-coding', FRI_13);
+  const ex = p.explain({ taskClass: 'chat', minTier: 'standard' });
+  assert.equal(ex.ranked[0]!.key, 'deepseek/deepseek-flash');
+  const q = ex.ranked.find((c) => c.key === 'aliyun-coding/qwen3.7-plus')!;
+  assert.deepEqual([q.plan?.nearQuota, q.plan?.windows[0]], [true, { hours: 5, used: 19, limit: 20 }]);
+});

@@ -1,4 +1,4 @@
-import type { ModelEntry, ModelPrice, ModelTier } from '@melon-ai/core';
+import type { ModelEntry, ModelPrice, ModelTier, PlanPricing } from '@melon-ai/core';
 import { ANTHROPIC_MODELS, AnthropicChatModel } from './adapter.js';
 import type { AnthropicModelId } from './adapter.js';
 
@@ -8,17 +8,22 @@ export const CLAUDE_DEFAULT_MODEL: AnthropicModelId = 'claude-opus-5';
 export interface ClaudeOptions {
   /** 不传时由 SDK 读 ANTHROPIC_API_KEY。 */
   readonly apiKey?: string;
-  /** 默认 claude-opus-5。 */
-  readonly model?: AnthropicModelId;
+  /** 默认 claude-opus-5。也可以是目录里没有的模型 id（新模型、兼容网关）。 */
+  readonly model?: string;
   readonly baseURL?: string;
   readonly quality?: number;
   /** 不传按模型定：Opus 强、Sonnet 标准、Haiku 基础。 */
   readonly tier?: ModelTier;
   /** 不传用内置价格表。 */
   readonly price?: ModelPrice;
+  /** Anthropic 兼容的网关（阿里 Coding Plan 等）：厂商标识与名字。不传是 Anthropic 官方。 */
+  readonly egress?: string;
+  readonly label?: string;
+  /** 套餐计费。 */
+  readonly plan?: PlanPricing;
 }
 
-export const CLAUDE_TIERS: Readonly<Record<AnthropicModelId, ModelTier>> = {
+export const CLAUDE_TIERS: Readonly<Partial<Record<string, ModelTier>>> = {
   'claude-opus-5': 'strong', 'claude-sonnet-5': 'standard', 'claude-haiku-4-5': 'basic',
 };
 
@@ -28,21 +33,23 @@ export const CLAUDE_TIERS: Readonly<Record<AnthropicModelId, ModelTier>> = {
  */
 export function claude(o: ClaudeOptions = {}): ModelEntry {
   const model = o.model ?? CLAUDE_DEFAULT_MODEL;
+  const known = (ANTHROPIC_MODELS as Record<string, { inUSD: number; outUSD: number } | undefined>)[model];
+  // 读缓存按输入价的十分之一（写缓存的 1.25 倍没单独算，按普通输入计，略微低估）
+  const builtin = known ? { input: known.inUSD, cachedInput: known.inUSD * 0.1, output: known.outUSD, currency: 'USD' as const } : undefined;
+  const price = o.price ?? builtin;
+  const tier = o.tier ?? CLAUDE_TIERS[model];
   return {
-    label: 'Claude',
+    label: o.label ?? 'Claude',
     model: new AnthropicChatModel({
       model,
       ...(o.apiKey !== undefined ? { apiKey: o.apiKey } : {}),
       ...(o.baseURL ? { baseURL: o.baseURL } : {}),
     }),
     quality: o.quality ?? 10,
-    costUSD: ANTHROPIC_MODELS[model].inUSD,
-    egress: 'anthropic',
-    tier: o.tier ?? CLAUDE_TIERS[model],
-    // 读缓存按输入价的十分之一（写缓存的 1.25 倍没单独算，按普通输入计，略微低估）
-    price: o.price ?? {
-      input: ANTHROPIC_MODELS[model].inUSD, cachedInput: ANTHROPIC_MODELS[model].inUSD * 0.1,
-      output: ANTHROPIC_MODELS[model].outUSD, currency: 'USD',
-    },
+    costUSD: price ? price.input * (price.currency === 'USD' ? 1 : 1 / 7.2) : 3,
+    egress: o.egress ?? 'anthropic',
+    ...(tier ? { tier } : {}),
+    ...(price ? { price, priceSource: o.price ? 'manual' as const : 'builtin' as const } : {}),
+    ...(o.plan ? { plan: o.plan } : {}),
   };
 }

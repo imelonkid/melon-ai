@@ -61,3 +61,25 @@ test('流式：正文与思考分开交（思考块不算回答），全文累�
     await srv.close();
   }
 });
+
+test('模型发现与新模型：/v1/models 列出模型；目录里没有的模型 id 也能用（默认上限、不计价），网关可以换厂商标识', async () => {
+  const { createServer } = await import('node:http');
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: [{ type: 'model', id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5', created_at: '2026-01-01T00:00:00Z' }], has_more: false, first_id: 'claude-opus-5-5', last_id: 'claude-opus-5-5' }));
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const m = new AnthropicChatModel({ apiKey: 'k', baseURL: `http://127.0.0.1:${port}`, model: 'claude-opus-5-5' });
+    assert.deepEqual(await m.listModels(), ['claude-opus-5-5']);
+    assert.equal(m.capabilities.contextWindow, 200_000);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+  const { claude } = await import('../../src/anthropic/index.js');
+  const e = claude({ apiKey: 'k', model: 'qwen3.7-plus', egress: 'aliyun-coding', label: '阿里 Coding Plan' });
+  assert.deepEqual([e.model.id, e.egress, e.label, e.price, e.tier], ['qwen3.7-plus', 'aliyun-coding', '阿里 Coding Plan', undefined, undefined]);
+  assert.equal(claude({ apiKey: 'k' }).priceSource, 'builtin');
+  assert.equal(claude({ apiKey: 'k', price: { input: 1, output: 1, currency: 'USD' } }).priceSource, 'manual');
+});

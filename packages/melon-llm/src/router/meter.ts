@@ -119,14 +119,16 @@ export class FailoverModel implements ChatModel {
       try {
         const res = await entry.model.generate(req);
         const at = this.opts.now();
-        const cost = entry.price ? costOf(entry.price, res.usage, at) : undefined;
+        // 套餐内按次不另计：费用 0，记账时标出来（用量页按套餐单独显示）
+        const cost = entry.plan ? 0 : entry.price ? costOf(entry.price, res.usage, at) : undefined;
+        const currency = entry.plan?.currency ?? entry.price?.currency;
         const usage = {
           inputTokens: res.usage.inputTokens,
           outputTokens: res.usage.outputTokens,
           ...(res.usage.cachedInputTokens !== undefined ? { cachedInputTokens: res.usage.cachedInputTokens } : {}),
           // 费用只按配置的价格算；没有价格就不报，不用适配器里的粗估
-          ...(entry.price && cost !== undefined
-            ? { cost: { amount: cost, currency: entry.price.currency }, costUSD: convert(cost, entry.price.currency, 'USD', this.opts.fx) }
+          ...(currency && cost !== undefined
+            ? { cost: { amount: cost, currency }, costUSD: convert(cost, currency, 'USD', this.opts.fx) }
             : {}),
         };
         this.opts.health.record(entry.model.id, true, at);
@@ -164,8 +166,9 @@ export class FailoverModel implements ChatModel {
       cachedInputTokens: r.usage?.cachedInputTokens ?? 0,
       outputTokens: r.usage?.outputTokens ?? 0,
       cost: r.usage?.cost?.amount ?? 0,
-      currency: entry.price?.currency ?? 'USD',
-      priced: !!entry.price,
+      currency: entry.plan?.currency ?? entry.price?.currency ?? 'USD',
+      priced: !!entry.price || !!entry.plan,
+      ...(entry.plan ? { billing: 'plan' as const } : {}),
     };
     this.opts.onRecord?.(rec);
     if (!this.opts.ledger) return;

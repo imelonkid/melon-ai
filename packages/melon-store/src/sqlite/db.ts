@@ -205,7 +205,8 @@ CREATE TABLE IF NOT EXISTS usage (
   cost        REAL NOT NULL,
   currency    TEXT NOT NULL,
   priced      INTEGER NOT NULL,
-  ms          INTEGER NOT NULL
+  ms          INTEGER NOT NULL,
+  billing     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_at ON usage(at);
 `;
@@ -273,7 +274,21 @@ export class SqliteContext {
       );
     }
     this.artifactDir = opts.artifactDir ?? defaultArtifactDir(opts.file);
-    if (!opts.readonly) this.reindexFts();
+    if (!opts.readonly) {
+      this.addColumns();
+      this.reindexFts();
+    }
+  }
+
+  /**
+   * 给已有的表补上后来加的列。只加不删、可空，老数据照常能读 —— 同样不升 SCHEMA_VERSION（§10 第 47 条）。
+   */
+  private addColumns(): void {
+    const add: [table: string, col: string, type: string][] = [['usage', 'billing', 'TEXT']];
+    for (const [table, col, type] of add) {
+      const cols = (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+      if (!cols.includes(col)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+    }
   }
 
   /**

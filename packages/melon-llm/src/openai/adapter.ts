@@ -16,6 +16,8 @@ export const OPENAI_COMPATIBLE_PRESETS = {
   /** 通义千问的 OpenAI 兼容模式。 */
   qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', env: 'DASHSCOPE_API_KEY' },
   moonshot: { baseURL: 'https://api.moonshot.cn/v1', env: 'MOONSHOT_API_KEY' },
+  /** 智谱（官方文档的 OpenAI 兼容地址）。 */
+  zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4', env: 'ZHIPU_API_KEY' },
 } as const;
 
 export type OpenAICompatiblePreset = keyof typeof OPENAI_COMPATIBLE_PRESETS;
@@ -79,6 +81,17 @@ export class OpenAICompatibleChatModel implements ChatModel {
       // 多数兼容服务有自动前缀缓存，但不保证；按没有算，装配器的排序依然有益无害
       promptCache: false,
     };
+  }
+
+  async listModels(signal?: AbortSignal): Promise<readonly string[]> {
+    if (!this.apiKey) throw new ToolError('FATAL', `${this.id} 缺少 API key`);
+    const res = await this.doFetch(`${this.baseURL}/models`, {
+      headers: { authorization: `Bearer ${this.apiKey}` },
+      ...(signal ? { signal } : {}),
+    });
+    const body = (await res.json().catch(() => ({}))) as { data?: { id?: string }[]; error?: { message?: string } };
+    if (!res.ok) throw httpError(res.status, body.error?.message ?? res.statusText);
+    return (body.data ?? []).map((m) => String(m.id ?? '')).filter(Boolean);
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {

@@ -1,4 +1,4 @@
-import type { CallMeta, ModelEntry, ModelTier, RouteContext, UsageRecord } from '@melon-ai/core';
+import type { CallMeta, ModelEntry, ModelTier, PlanPricing, RouteContext, UsageRecord } from '@melon-ai/core';
 import { TIER_RANK } from '@melon-ai/core';
 import { convert } from '../shared/money.js';
 import type { FxRates } from '../shared/money.js';
@@ -84,6 +84,35 @@ export class UsageStats {
   }
 }
 
+/**
+ * 套餐额度：按厂商（`egress`）数近一段时间成功的请求。套餐的额度是整个账号共用的，不分模型。
+ * 只在内存里；启动时用账本预热（最长的窗口一般是一个月）。
+ */
+export class QuotaCounter {
+  private readonly log = new Map<string, number[]>();
+  constructor(private readonly now: () => number = () => Date.now(), private readonly keepHours = 24 * 31) {}
+
+  add(egress: string, at: number): void {
+    const list = this.log.get(egress) ?? [];
+    list.push(at);
+    // 偶尔清掉一个月以前的
+    if (list.length % 500 === 0) {
+      const since = this.now() - this.keepHours * 3_600_000;
+      this.log.set(egress, list.filter((x) => x >= since));
+    } else this.log.set(egress, list);
+  }
+
+  /** 每个窗口用了多少：`[{ hours, used, limit }]`。 */
+  usage(egress: string, quotas: PlanPricing['quotas']): { hours: number; used: number; limit: number }[] {
+    const list = this.log.get(egress) ?? [];
+    const now = this.now();
+    return quotas.map((q) => ({ hours: q.hours, limit: q.requests, used: list.filter((x) => x > now - q.hours * 3_600_000).length }));
+  }
+}
+
+/** 额度用到这个比例就让位：别等撞上限、请求失败了才换。 */
+export const PLAN_YIELD_AT = 0.95;
+
 /** 一个候选为什么能用 / 不能用、预估多少钱。给宿主的路由页解释「为什么选它」。 */
 export interface RouteCandidate {
   readonly key: string;
@@ -97,6 +126,8 @@ export interface RouteCandidate {
   /** 预估每次的花费（按模型的币种）；没价格时没有。 */
   readonly estimate?: { readonly amount: number; readonly currency: 'CNY' | 'USD' };
   readonly peak: boolean;
+  /** 走套餐：各窗口的用量；`nearQuota` 表示有一个窗口快满了（排到后面）。 */
+  readonly plan?: { readonly name?: string; readonly windows: readonly { hours: number; used: number; limit: number }[]; readonly nearQuota: boolean };
 }
 
 export interface RouteExplanation {
@@ -115,6 +146,7 @@ export interface AutoRankInput {
   readonly ctx?: RouteContext;
   readonly stats: UsageStats;
   readonly health: HealthStats;
+  readonly quota?: QuotaCounter;
   readonly now: number;
   readonly fx?: FxRates;
 }
@@ -133,16 +165,21 @@ export function rankAuto(i: AutoRankInput): { readonly ranked: readonly ModelEnt
     else if (!pinned && !e.tier) reason = '未定档';
     else if (!pinned && TIER_RANK[e.tier!] < min) reason = '档次不够';
     const cache = i.stats.cacheRate(key);
-    const amount = e.price
+    // 套餐：按次不另计，预估 0 —— 够档时优先用；额度快满时让位
+    const windows = e.plan && i.quota ? i.quota.usage(e.egress, e.plan.quotas) : [];
+    const nearQuota = windows.some((w) => w.limit > 0 && w.used / w.limit >= PLAN_YIELD_AT);
+    const amount = e.plan ? 0 : e.price
       ? costOf(e.price, { inputTokens: typical.inputTokens, cachedInputTokens: Math.round(typical.inputTokens * cache), outputTokens: typical.outputTokens }, i.now)
       : null;
+    const cur = e.plan?.currency ?? e.price?.currency;
     return {
       entry: e, key, label: e.label ?? e.egress, ...(e.tier ? { tier: e.tier } : {}),
       eligible: reason === undefined, ...(reason ? { reason } : {}),
-      pinned, demoted: i.health.demoted(e.model.id),
-      ...(amount !== null && e.price ? { estimate: { amount, currency: e.price.currency } } : {}),
-      peak: !!e.price && isPeak(e.price, i.now),
-      usd: amount !== null && e.price ? convert(amount, e.price.currency, 'USD', i.fx) : null,
+      pinned, demoted: i.health.demoted(e.model.id) || nearQuota,
+      ...(amount !== null && cur ? { estimate: { amount, currency: cur } } : {}),
+      peak: !e.plan && !!e.price && isPeak(e.price, i.now),
+      ...(e.plan ? { plan: { ...(e.plan.name ? { name: e.plan.name } : {}), windows, nearQuota } } : {}),
+      usd: amount !== null && cur ? convert(amount, cur, 'USD', i.fx) : null,
       ms: i.stats.avgMs(key) ?? Number.POSITIVE_INFINITY,
     };
   };

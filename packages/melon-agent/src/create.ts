@@ -181,6 +181,8 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     test(entry: ModelEntry): Promise<ModelTestResult>;
     /** 某类任务现在会选哪个模型、为什么、预估每次多少钱。不发请求。 */
     explain(rule: RoutingRule, ctx?: RouteContext): RouteExplanation;
+    /** 这个账号在这家能用哪些模型（`/models`）。宿主做「新发现的模型」。适配器不支持时返回 null。 */
+    discover(entry: ModelEntry, signal?: AbortSignal): Promise<readonly string[] | null>;
   };
   readonly tools: ToolRegistry;
   /**
@@ -254,10 +256,10 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     onLedgerError: (e) => logger.log('warn', `用量记账失败：${e instanceof Error ? e.message : String(e)}`),
   });
   if (opts.routing) pool.route(opts.routing);
-  // 用账本预热：近一小时总出错的模型、近 7 天各类任务的典型用量（自动路由预估花费用）
+  // 用账本预热：近一小时总出错的模型、近 7 天各类任务的典型用量（自动路由预估花费用）、近一个月的套餐用量（额度）
   const seedPool = async (): Promise<void> => {
     pool.stats.clear();
-    pool.seed(await stores.usage.list({ from: platform.clock.now() - 7 * 86_400_000, to: platform.clock.now() + 1 }));
+    pool.seed(await stores.usage.list({ from: platform.clock.now() - 31 * 86_400_000, to: platform.clock.now() + 1 }));
   };
   await seedPool();
   // 超过保留期的明细按天汇总：启动时一次，之后每天一次
@@ -497,6 +499,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       get entries() { return pool.current.entries; },
       test: (entry) => testModel(entry),
       explain: (rule, ctx) => pool.explain(rule, ctx),
+      discover: async (entry, signal) => (entry.model.listModels ? entry.model.listModels(signal) : null),
     },
     async configure(patch) {
       if (patch.models !== undefined || patch.strategy !== undefined) {

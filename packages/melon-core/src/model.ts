@@ -1,5 +1,5 @@
 import type { JSONSchema, RiskClass } from './tool.js';
-import type { CallMeta, Currency, ModelPrice } from './usage.js';
+import type { CallMeta, Currency, ModelPrice, PlanPricing } from './usage.js';
 
 export interface Usage {
   readonly inputTokens: number;
@@ -122,6 +122,11 @@ export interface ChatModel {
   readonly capabilities: ModelCapabilities;
   generate(req: GenerateRequest): Promise<GenerateResult>;
   stream?(req: GenerateRequest): AsyncIterable<{ delta: string }>;
+  /**
+   * 这个账号在这家能用哪些模型（OpenAI 兼容的 `/models`、Anthropic 的 `/v1/models`）。
+   * 宿主用它做「新发现的模型」。不支持的适配器不实现。
+   */
+  listModels?(signal?: AbortSignal): Promise<readonly string[]>;
 }
 
 /** 计 token。独立成端口是因为不同模型分词不同，而预算计算必须准。 */
@@ -171,6 +176,13 @@ export interface ModelEntry {
   readonly price?: ModelPrice;
   /** 档次。不填 = 未定档：不参与自动路由，只能被固定使用。 */
   readonly tier?: ModelTier;
+  /**
+   * 价格从哪来。`manual`（用户手填）优先于同步来的官方价格，同步不覆盖；
+   * `builtin`（引擎内置表）会被同步来的价格替换。不填按 builtin。
+   */
+  readonly priceSource?: 'manual' | 'builtin';
+  /** 套餐计费（固定月费 + 额度，如阿里 Coding Plan）。有它时按次不另计费，路由优先用、额度快满时让位。 */
+  readonly plan?: PlanPricing;
   /** 数据发往的供应商标识。进审计，支撑「数据不出境」这类合规要求。 */
   readonly egress: string;
   readonly enabled?: boolean;

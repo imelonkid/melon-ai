@@ -26,7 +26,7 @@ export type {
   Tool, ToolSpec, SkillSpec, InputShape, FieldSpec, RegistrationReport, RejectedTool, ProposeArgs, ProposedWhen,
 } from '@melon-ai/skills';
 export {
-  deepseek, qwen, openai, kimi, compatible, DEFAULT_MODELS, ModelPool, testModel, DEFAULT_ACTION_WORDS, PRICES, TIERS, costOf, modelKey,
+  deepseek, qwen, openai, kimi, zhipu, compatible, DEFAULT_MODELS, ModelPool, testModel, DEFAULT_ACTION_WORDS, PRICES, TIERS, costOf, modelKey,
 } from '@melon-ai/llm';
 export type {
   ProviderOptions, CompatibleOptions, RouteStrategy, ModelTestResult, FxRates, UsageSummary, UsageBucket, UsageGroup, UsageTotals,

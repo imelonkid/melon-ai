@@ -19,10 +19,16 @@ export const ANTHROPIC_MODELS = {
 
 export type AnthropicModelId = keyof typeof ANTHROPIC_MODELS;
 
+/** 目录里没有的模型（新出的、自定义网关上的）用的默认上限。 */
+const UNKNOWN_SPEC = { contextWindow: 200_000, maxOutput: 32_000 } as const;
+const specOf = (id: string): { contextWindow: number; maxOutput: number; inUSD?: number; outUSD?: number } =>
+  (ANTHROPIC_MODELS as Record<string, { contextWindow: number; maxOutput: number; inUSD: number; outUSD: number }>)[id] ?? UNKNOWN_SPEC;
+
 export interface AnthropicModelOptions {
   readonly apiKey?: string;
   readonly baseURL?: string;
-  readonly model?: AnthropicModelId;
+  /** 模型 id。不限于目录里的：新模型、Anthropic 兼容的网关（如阿里 Coding Plan）上的模型都可以，上限用默认值。 */
+  readonly model?: string;
   /** 思考深度。low..max，默认 high。 */
   readonly effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   readonly maxTokens?: number;
@@ -61,7 +67,7 @@ export class AnthropicChatModel implements ChatModel {
 
   constructor(opts: AnthropicModelOptions = {}) {
     const model = opts.model ?? 'claude-opus-5';
-    const spec = ANTHROPIC_MODELS[model];
+    const spec = specOf(model);
     this.id = model;
     this.opts = opts;
     this.capabilities = {
@@ -77,6 +83,16 @@ export class AnthropicChatModel implements ChatModel {
       ...(opts.baseURL !== undefined ? { baseURL: opts.baseURL } : {}),
       ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
     });
+  }
+
+  async listModels(signal?: AbortSignal): Promise<readonly string[]> {
+    const ids: string[] = [];
+    try {
+      for await (const m of this.client.models.list({ limit: 100 }, signal ? { signal } : undefined)) ids.push(m.id);
+    } catch (e) {
+      throw toMelonError(e);
+    }
+    return ids;
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
@@ -165,7 +181,7 @@ export class AnthropicChatModel implements ChatModel {
 }
 
 function toUsage(u: Anthropic.Usage, model: string): Usage {
-  const spec = ANTHROPIC_MODELS[model as AnthropicModelId];
+  const spec = (ANTHROPIC_MODELS as Record<string, { inUSD: number; outUSD: number }>)[model];
   const cached = u.cache_read_input_tokens ?? 0;
   const created = u.cache_creation_input_tokens ?? 0;
   const base = {

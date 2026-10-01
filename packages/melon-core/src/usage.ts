@@ -41,6 +41,18 @@ export interface PeakPricing {
   readonly windows: readonly { readonly days: readonly number[]; readonly from: string; readonly to: string }[];
 }
 
+/**
+ * 套餐：固定月费 + 请求额度（阿里 Coding Plan：每 5 小时 6000 次、每周 45000 次、每月 90000 次）。
+ * 额度按同一个厂商（`ModelEntry.egress`）下所有模型的请求数合计 —— 套餐的额度是整个账号共用的。
+ * 窗口按滚动时长估算（「每周一零点重置」按 7 天算），与厂商控制台可能略有出入。
+ */
+export interface PlanPricing {
+  readonly name?: string;
+  readonly monthlyFee: number;
+  readonly currency: Currency;
+  readonly quotas: readonly { readonly requests: number; readonly hours: number }[];
+}
+
 /** 这次问模型是为了谁、做什么。规划器填，计量层据此记账；宿主据此分组展示。 */
 export interface CallMeta {
   readonly taskId?: TaskId;
@@ -77,8 +89,10 @@ export interface UsageRecord {
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
-  /** 费用，`currency` 计。没有价格的模型记 0，并且 `priced = false`。 */
+  /** 费用，`currency` 计。没有价格的模型记 0，并且 `priced = false`；套餐内的调用记 0，`billing = 'plan'`。 */
   readonly cost: number;
+  /** `plan`：走的是套餐（月费已付，按次不另计）。不填是按 token 计费。 */
+  readonly billing?: 'plan';
   readonly currency: Currency;
   readonly priced: boolean;
   /** 耗时（毫秒）；汇总行是总和。 */

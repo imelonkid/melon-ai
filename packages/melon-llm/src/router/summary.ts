@@ -18,6 +18,8 @@ export interface UsageTotals {
   readonly cost: number;
   /** 没有价格的调用次数：费用里没算它们。 */
   readonly unpricedCalls: number;
+  /** 走套餐的调用次数（月费已付，按次不另计，费用里是 0）。 */
+  readonly planCalls: number;
   readonly ms: number;
 }
 
@@ -65,7 +67,7 @@ export interface SummaryOptions {
   readonly classify?: (r: UsageRecord) => string;
 }
 
-const ZERO: UsageTotals = { calls: 0, failed: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: 0, unpricedCalls: 0, ms: 0 };
+const ZERO: UsageTotals = { calls: 0, failed: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: 0, unpricedCalls: 0, planCalls: 0, ms: 0 };
 
 function add(t: UsageTotals, r: UsageRecord, cost: number): UsageTotals {
   return {
@@ -76,6 +78,7 @@ function add(t: UsageTotals, r: UsageRecord, cost: number): UsageTotals {
     outputTokens: t.outputTokens + r.outputTokens,
     cost: t.cost + cost,
     unpricedCalls: t.unpricedCalls + (r.priced ? 0 : r.calls),
+    planCalls: t.planCalls + (r.billing === 'plan' ? r.calls : 0),
     ms: t.ms + r.ms,
   };
 }

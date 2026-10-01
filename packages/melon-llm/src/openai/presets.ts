@@ -1,4 +1,4 @@
-import type { ModelEntry, ModelPrice, ModelTier } from '@melon-ai/core';
+import type { ModelEntry, ModelPrice, ModelTier, PlanPricing } from '@melon-ai/core';
 import { OpenAICompatibleChatModel } from './adapter.js';
 import { convert } from '../shared/money.js';
 import type { OpenAICompatiblePreset } from './adapter.js';
@@ -17,6 +17,8 @@ export interface ProviderOptions {
   readonly price?: ModelPrice;
   /** 档次。不传用内置档次表（有的话）；都没有就是「未定档」，不参与自动路由。 */
   readonly tier?: ModelTier;
+  /** 套餐计费。 */
+  readonly plan?: PlanPricing;
 }
 
 interface Preset {
@@ -73,6 +75,7 @@ const PRESETS = {
   qwen: { preset: 'qwen', label: '通义千问', model: 'qwen-max', quality: 6, costUSD: 0.4, egress: 'aliyun', contextWindow: 32_000 },
   openai: { preset: 'openai', label: 'GPT', model: 'gpt-4o', quality: 8, costUSD: 2.5, egress: 'openai' },
   kimi: { preset: 'moonshot', label: 'Kimi', model: 'moonshot-v1-128k', quality: 6, costUSD: 1.7, egress: 'moonshot', contextWindow: 128_000 },
+  zhipu: { preset: 'zhipu', label: '智谱', model: 'glm-5.3-flash', quality: 6, costUSD: 0.2, egress: 'zhipu', contextWindow: 128_000 },
 } as const satisfies Record<string, Preset>;
 
 /** 路由排序用的「每百万输入 token 美元价」：有价格就按价格折算。 */
@@ -95,8 +98,9 @@ function entry(p: Preset, o: ProviderOptions): ModelEntry {
     quality: o.quality ?? p.quality,
     costUSD: o.costUSD ?? sortCost(price, p.costUSD),
     egress: p.egress,
-    ...(price ? { price } : {}),
+    ...(price ? { price, priceSource: o.price ? 'manual' as const : 'builtin' as const } : {}),
     ...(tier ? { tier } : {}),
+    ...(o.plan ? { plan: o.plan } : {}),
   };
 }
 
@@ -108,6 +112,8 @@ export const qwen = (o: ProviderOptions = {}): ModelEntry => entry(PRESETS.qwen,
 export const openai = (o: ProviderOptions = {}): ModelEntry => entry(PRESETS.openai, o);
 /** Kimi（月之暗面）。 */
 export const kimi = (o: ProviderOptions = {}): ModelEntry => entry(PRESETS.kimi, o);
+/** 智谱（GLM）。 */
+export const zhipu = (o: ProviderOptions = {}): ModelEntry => entry(PRESETS.zhipu, o);
 
 export interface CompatibleOptions {
   /** 给人看的名字，如「智谱」。 */
@@ -128,6 +134,8 @@ export interface CompatibleOptions {
   readonly price?: ModelPrice;
   /** 档次。不填就是「未定档」。 */
   readonly tier?: ModelTier;
+  /** 套餐计费（阿里 Coding Plan 等）。 */
+  readonly plan?: PlanPricing;
   readonly contextWindow?: number;
 }
 
@@ -147,8 +155,9 @@ export function compatible(o: CompatibleOptions): ModelEntry {
     quality: o.quality ?? 5,
     costUSD: o.costUSD ?? sortCost(o.price, 1),
     egress: o.egress,
-    ...(o.price ? { price: o.price } : {}),
+    ...(o.price ? { price: o.price, priceSource: 'manual' as const } : {}),
     ...(o.tier ? { tier: o.tier } : {}),
+    ...(o.plan ? { plan: o.plan } : {}),
   };
 }
 
@@ -158,4 +167,5 @@ export const DEFAULT_MODELS = {
   qwen: PRESETS.qwen.model,
   openai: PRESETS.openai.model,
   kimi: PRESETS.kimi.model,
+  zhipu: PRESETS.zhipu.model,
 } as const;

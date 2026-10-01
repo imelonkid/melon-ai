@@ -145,3 +145,20 @@ for (const impl of IMPLS) {
     await b.close();
   });
 }
+
+test('[SQLite] 用量账本：老库（没有 billing 列）打开时自动补列，套餐标记能存能读', async () => {
+  const { default: Database } = await import('better-sqlite3');
+  const file = join(mkdtempSync(join(tmpdir(), 'melon-old-')), 'old.db');
+  // 先按新代码建库，再把列删掉，模拟第 1 期的老库
+  openSqliteStores({ file, dims: 3 }).context.close();
+  const raw = new Database(file);
+  raw.exec('ALTER TABLE usage DROP COLUMN billing');
+  raw.close();
+  const b = openSqliteStores({ file, dims: 3 });
+  await b.usage.record({
+    at: 1, calls: 1, purpose: 'plan', egress: 'aliyun-coding', model: 'qwen3.7-plus', ok: true,
+    inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, cost: 0, currency: 'CNY', priced: true, ms: 1, billing: 'plan',
+  });
+  assert.equal((await b.usage.list({ from: 0, to: 10 }))[0]!.billing, 'plan');
+  b.context.close();
+});
