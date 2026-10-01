@@ -5,6 +5,7 @@ import { ToolError, asSkillId } from '@melon-ai/core';
 import { defineTool } from '../../registry/define.js';
 import type { Tool } from '../../registry/define.js';
 import { extract, readableKind } from './extract.js';
+import { organizeTools } from './organize.js';
 import {
   FILES_GRANT_KEY, canonical, folderCovers, folderScope, isDir, isProtected, nearest, protectedPaths, tilde, within,
 } from './paths.js';
@@ -14,6 +15,15 @@ export interface FilesSkillOptions {
   readonly denyRead?: readonly string[];
   /** 一次读进上下文的字数，默认 8000。后面的用 offset 接着读。 */
   readonly chunkChars?: number;
+  /**
+   * 也提供整理工具（新建文件夹、移动 / 重命名、复制、新建文本文件；给了 `trash` 还有移到废纸篓）。默认只读。
+   * 整理的「始终允许」与查看的分开记（`FILES_ORGANIZE_GRANT_KEY`）。
+   */
+  readonly organize?: boolean;
+  /** 移到废纸篓，由宿主给（Electron 的 `shell.trashItem`）。不给就没有删除工具 —— 引擎不做彻底删除。 */
+  readonly trash?: (path: string) => Promise<void>;
+  /** 能整理的范围，默认只有家目录。 */
+  readonly organizeRoots?: readonly string[];
 }
 
 /** 列目录、找文件时跳过的：隐藏文件、系统和开发产物目录。 */
@@ -29,7 +39,8 @@ const date = (ms: number): string => {
 };
 
 /**
- * 本地文件：列目录、按名字找文件、读文件内容（文本；PDF、Word、Excel 抽文字）。只读，不写不删。
+ * 本地文件：列目录、按名字找文件、读文件内容（文本；PDF、Word、Excel 抽文字）。默认只读；
+ * 宿主开了 `organize` 还能整理（见 organize.ts：一个文件夹为界、不覆盖、删除只进废纸篓、记下改动可撤销）。
  *
  * - **数据出境**：读到的内容会发给模型厂商，所以三个工具都按对外操作处理（risk: external）—— 先问用户；
  *   「始终允许」按文件夹（`grantBy`）：允许了 ~/Downloads，三个工具在它和子文件夹里都放行。
@@ -42,11 +53,16 @@ export class FilesSkillProvider implements SkillProvider {
   readonly id = 'melon-files';
   private readonly prot: readonly string[];
   private readonly chunk: number;
+  private readonly opts: FilesSkillOptions;
 
   constructor(opts: FilesSkillOptions = {}) {
     this.prot = protectedPaths(opts.denyRead ?? []);
     this.chunk = opts.chunkChars ?? 8000;
+    this.opts = opts;
   }
+
+  /** 受保护的位置（撤销时宿主也要用同一份）。 */
+  get protectedPaths(): readonly string[] { return this.prot; }
 
   async health(): Promise<Health> {
     return { status: 'up' };
@@ -197,7 +213,12 @@ export class FilesSkillProvider implements SkillProvider {
         return `${head}\n${part || '（没有文字）'}${more}`;
       },
     });
-    return [list, find, read];
+    const organize = this.opts.organize ? organizeTools({
+      prot: this.prot,
+      ...(this.opts.trash ? { trash: this.opts.trash } : {}),
+      ...(this.opts.organizeRoots ? { roots: this.opts.organizeRoots } : {}),
+    }) : [];
+    return [list, find, read, ...organize];
   }
 
   async list(): Promise<readonly SkillBundle[]> {
@@ -205,8 +226,13 @@ export class FilesSkillProvider implements SkillProvider {
     const skill: Skill = {
       id: asSkillId('files'),
       name: '本地文件',
-      purpose: '需要查看本机的文件夹、找文件、读文件内容（文本、PDF、Word、Excel）时使用',
-      keywords: ['文件', '文件夹', '目录', '下载', '桌面', '文档', 'PDF', 'Word', 'Excel', '表格', 'Downloads', 'Documents', 'Desktop', '~/', 'file', 'folder'],
+      purpose: this.opts.organize
+        ? '需要查看本机的文件夹、找文件、读文件内容（文本、PDF、Word、Excel），或整理文件（新建文件夹、移动、重命名、复制、删除到废纸篓）时使用'
+        : '需要查看本机的文件夹、找文件、读文件内容（文本、PDF、Word、Excel）时使用',
+      keywords: [
+        '文件', '文件夹', '目录', '下载', '桌面', '文档', 'PDF', 'Word', 'Excel', '表格', 'Downloads', 'Documents', 'Desktop', '~/', 'file', 'folder',
+        ...(this.opts.organize ? ['整理', '归档', '分类', '移动', '移到', '重命名', '改名', '复制', '拷贝', '删除', '删掉', '清理', '新建文件夹'] : []),
+      ],
       tools: tools.map((t) => t.descriptor),
       source: { kind: 'builtin' },
     };

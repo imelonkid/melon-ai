@@ -535,3 +535,52 @@ test('附件：这一轮的上下文里有附件的开头和句柄，能读全�
     assert.deepEqual(fin.meta.files?.map((f) => f.name), ['汇总.csv']);
   } finally { await agent.stop(); rmSync(out, { recursive: true, force: true }); }
 });
+
+test('整理文件：允许查看不等于允许整理（单独问、单独「始终允许」）；改动随事件落盘，宿主据此撤销；读过文件名的任务整理照样问', async () => {
+  const { mkdirSync, writeFileSync, existsSync, realpathSync } = await import('node:fs');
+  const { FILES_ORGANIZE_GRANT_KEY, undoState, undoChanges } = await import('../src/files.js');
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'jolly-org-')));
+  const dl = join(root, 'Downloads');
+  mkdirSync(dl);
+  writeFileSync(join(dl, 'a.pdf'), 'a');
+  writeFileSync(join(dl, 'b.pdf'), 'b');
+  const { entry: e } = entry([
+    call('files.move', { folder: dl, items: [{ from: 'a.pdf', to: 'PDF/' }] }), '移好了',
+    call('files.move', { folder: dl, items: [{ from: 'b.pdf', to: 'PDF/' }] }), '又移好了',
+    call('files.list', { folder: dl }), call('files.move', { folder: dl, items: [{ from: 'PDF/a.pdf', to: 'a.pdf' }] }), '移回来了',
+  ]);
+  const agent = await createAgent({ models: [e], skills: [files({ organize: true, organizeRoots: [root] })], platform: quiet });
+  try {
+    await agent.grants.add(FILES_GRANT_KEY, folderScope(dl));
+    const ask = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const t1 = await agent.run('把 a.pdf 移到 PDF 文件夹');
+    await ask;
+    const done1 = until(agent, (t) => t.id === t1.id && t.state === 'SUCCEEDED');
+    await agent.approve(t1.id, 'always');
+    await done1;
+    assert.ok(existsSync(join(dl, 'PDF', 'a.pdf')));
+    assert.ok((await agent.grants.list()).some((g) => g.toolId === FILES_ORGANIZE_GRANT_KEY && g.scope === folderScope(dl)));
+    const fin = (await agent.tasks.history(t1.id)).map((r) => r.value).find((v) => v.t === 'ToolCallFinished') as unknown as { meta: { changes?: Parameters<typeof undoState>[0] } };
+    assert.deepEqual(fin.meta.changes?.map((c) => c.op), ['mkdir', 'move']);
+
+    // 允许过整理这个文件夹：不再问
+    const done2 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === '又移好了');
+    const t2 = await agent.run('把 b.pdf 也移过去');
+    await done2;
+    assert.ok(!(await agent.tasks.history(t2.id)).some((r) => r.value.t === 'ApprovalRequested'));
+
+    // 先看过文件夹（文件名是外部内容）：整理照样问，「始终允许」也放不过
+    const ask3 = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const t3 = await agent.run('看看下载文件夹，把 a.pdf 拿出来');
+    await ask3;
+    assert.equal((await agent.tasks.get(t3.id))!.pendingCall?.toolId, 'files.move');
+    const done3 = until(agent, (t) => t.id === t3.id && t.state === 'SUCCEEDED');
+    await agent.approve(t3.id, 'allow');
+    await done3;
+
+    // 撤销第一次：a.pdf 已经被第三次挪走了 → 冲突，不动
+    assert.equal(undoState(fin.meta.changes!).state, 'conflict');
+    assert.equal((await undoChanges(fin.meta.changes!)).undone, 0);
+    assert.ok(existsSync(join(dl, 'a.pdf')));
+  } finally { await agent.stop(); rmSync(root, { recursive: true, force: true }); }
+});

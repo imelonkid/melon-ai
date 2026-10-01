@@ -147,6 +147,21 @@ export interface ToolOutput {
   readonly artifactRef?: ArtifactRef;
   /** 这次生成了哪些文件（技能脚本的输出、「生成文件」）。宿主据此给用户「打开 / 另存为」。 */
   readonly files?: readonly OutputFile[];
+  /** 这次改了用户的哪些文件（移动、复制、新建、移到废纸篓）。随事件落盘，宿主据此提供「撤销」。 */
+  readonly changes?: readonly FileChange[];
+}
+
+/**
+ * 工具对用户文件做的一次改动。记下改动后的大小与修改时间：撤销前核对，文件之后被别的程序改过就不撤。
+ * - move：`from` → `path`；copy：复制出了 `path`；mkdir：新建了文件夹 `path`；write：新建了文件 `path`
+ * - trash：`from` 移到了废纸篓（撤销靠用户在废纸篓里「放回原处」）
+ */
+export interface FileChange {
+  readonly op: 'move' | 'copy' | 'mkdir' | 'write' | 'trash';
+  readonly path: string;
+  readonly from?: string;
+  readonly size?: number;
+  readonly mtime?: number;
 }
 
 /** 工具生成的一个文件。路径是宿主的本机路径（工作目录、输出目录里）。 */
@@ -168,6 +183,7 @@ export interface ToolResult {
   readonly error?: ToolErrorShape;
   readonly metrics: ToolMetrics;
   readonly files?: readonly OutputFile[];
+  readonly changes?: readonly FileChange[];
   /** 由管线按 `ToolDescriptor.untrustedOutput` 填，工具自己不用管。 */
   readonly untrusted?: boolean;
 }
@@ -189,6 +205,8 @@ export interface ToolResultMeta {
   readonly metrics: ToolMetrics;
   /** 生成的文件，随事件落盘：宿主事后在对话里显示文件卡片。 */
   readonly files?: readonly OutputFile[];
+  /** 改了用户的哪些文件，随事件落盘：宿主事后提供「撤销」。 */
+  readonly changes?: readonly FileChange[];
   /**
    * 这次输出不可信。随事件落盘，reducer 据此置 `Task.tainted` ——
    * 放在事件里而不是让 reducer 去查工具描述，重放时才得出同样的结果。

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import JSZip from 'jszip';
@@ -168,4 +168,112 @@ test('生成文件：写到输出目录（每个任务一个子目录），结�
     assert.ok(readFileSync(r.files![0]!.path, 'utf8').startsWith('﻿部门,费用'));
     await assert.rejects(run({ name: 'x.exe', content: 'x' }, cx()), /文件名不行/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('整理：默认不提供；开了才有，「始终允许」与查看分开记；删除只在宿主给了废纸篓时才有，而且不能「始终允许」', async () => {
+  const { FILES_ORGANIZE_GRANT_KEY } = await import('../../src/builtin/files/index.js');
+  const ro = await files().list();
+  assert.deepEqual(ro[0]!.skill.tools.map((t) => t.id), ['files.list', 'files.find', 'files.read']);
+  const [b] = await files({ organize: true }).list();
+  assert.deepEqual(b!.skill.tools.map((t) => t.id), ['files.list', 'files.find', 'files.read', 'files.mkdir', 'files.move', 'files.copy', 'files.write']);
+  for (const id of ['files.mkdir', 'files.move', 'files.copy', 'files.write']) {
+    const d = b!.skill.tools.find((t) => t.id === id)!;
+    assert.equal(d.risk, 'external', `${id} 改用户的文件：要问`);
+    assert.equal(d.grantBy!.key, FILES_ORGANIZE_GRANT_KEY);
+    assert.notEqual(FILES_ORGANIZE_GRANT_KEY, FILES_GRANT_KEY, '允许查看不等于允许整理');
+  }
+  const [withTrash] = await files({ organize: true, trash: async () => {} }).list();
+  assert.equal(withTrash!.skill.tools.find((t) => t.id === 'files.trash')!.risk, 'irreversible');
+});
+
+test('整理：问之前先查 —— 源不在、目标已有（不覆盖）、两项重名、越出文件夹、受保护、不在能整理的范围', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'org-')));
+  try {
+    const dl = join(root, 'Downloads');
+    mkdirSync(join(dl, 'PDF'), { recursive: true });
+    writeFileSync(join(dl, 'a.pdf'), 'a');
+    writeFileSync(join(dl, 'b.pdf'), 'b');
+    writeFileSync(join(dl, 'PDF', 'b.pdf'), 'old');
+    mkdirSync(join(root, 'appdata'));
+    const t = await tools({ organize: true, organizeRoots: [root], denyRead: [join(root, 'appdata')] });
+    const pre = t.d('files.move').precheck!;
+    assert.equal(await pre({ folder: dl, items: [{ from: 'a.pdf', to: 'PDF/' }] }), null);
+    const bad = (await pre({ folder: dl, items: [
+      { from: 'x.pdf', to: 'PDF/' }, { from: 'b.pdf', to: 'PDF/' }, { from: 'a.pdf', to: '../a.pdf' },
+    ] }))!;
+    assert.match(bad.message, /有 3 项不行/);
+    assert.match(bad.message, /没有 .*x\.pdf/);
+    assert.match(bad.message, /PDF\/b\.pdf 已经有了（不覆盖）/);
+    assert.match(bad.message, /不在 .*Downloads 里/);
+    assert.match((await pre({ folder: dl, items: [{ from: 'a.pdf', to: 'X/c.pdf' }, { from: 'b.pdf', to: 'X/c.pdf' }] }))!.message, /两项都要放到/);
+    assert.match((await pre({ folder: dl, items: [{ from: 'PDF', to: 'PDF/sub/' }] }))!.message, /放进它自己里面/);
+    assert.match((await pre({ folder: join(root, 'appdata'), items: [{ from: 'a', to: 'b' }] }))!.message, /受保护的位置/);
+    assert.match((await pre({ folder: tmpdir(), items: [{ from: 'a', to: 'b' }] }))!.message, /不在能整理的范围里/);
+    assert.match((await t.d('files.write').precheck!({ folder: dl, name: 'a.exe', content: '' }))!.message, /不能新建这种文件/);
+    assert.match((await t.d('files.write').precheck!({ folder: dl, name: 'PDF/b.pdf.md', content: '' }) ?? { message: 'ok' }).message, /ok/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('整理：成批移动（放进文件夹 / 改名、缺的上级自动建）、复制、新建；记下改动；撤销按相反顺序，之后被改过的不动', async () => {
+  const { undoState, undoChanges } = await import('../../src/builtin/files/index.js');
+  const { existsSync, readFileSync } = await import('node:fs');
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'org-')));
+  try {
+    const dl = join(root, 'Downloads');
+    mkdirSync(dl);
+    writeFileSync(join(dl, 'a.pdf'), 'a');
+    writeFileSync(join(dl, 'b.pdf'), 'bb');
+    writeFileSync(join(dl, '照片.png'), 'p');
+    const [b] = await files({ organize: true, organizeRoots: [root] }).list();
+    const run = (id: string, args: unknown) => (b!.handlers.get(id) as ToolHandler)(args, cx());
+
+    const mv = await run('files.move', { folder: dl, items: [{ from: 'a.pdf', to: 'PDF/' }, { from: 'b.pdf', to: 'PDF/2026/合同.pdf' }] });
+    assert.match(mv.summary, /移动了 2 项/);
+    assert.match(mv.summary, /b\.pdf → PDF\/2026\/合同\.pdf/);
+    assert.equal(readFileSync(join(dl, 'PDF', '2026', '合同.pdf'), 'utf8'), 'bb');
+    assert.deepEqual(mv.changes!.map((c) => c.op), ['mkdir', 'move', 'mkdir', 'move'], '新建的上级文件夹也记下');
+
+    const cp = await run('files.copy', { folder: dl, items: [{ from: '照片.png', to: '图片/' }] });
+    assert.ok(existsSync(join(dl, '照片.png')) && existsSync(join(dl, '图片', '照片.png')));
+    const wr = await run('files.write', { folder: dl, name: '清单.csv', content: '名字\na.pdf' });
+    assert.ok(readFileSync(join(dl, '清单.csv'), 'utf8').startsWith('﻿名字'));
+    assert.equal(wr.files![0]!.name, '清单.csv');
+    await assert.rejects(run('files.write', { folder: dl, name: '清单.csv', content: 'x' }), /EEXIST/, '不覆盖');
+
+    assert.deepEqual(undoState(mv.changes!), { state: 'undoable' });
+    const u = await undoChanges(mv.changes!);
+    assert.equal(u.undone, 4);
+    assert.ok(existsSync(join(dl, 'a.pdf')) && existsSync(join(dl, 'b.pdf')));
+    assert.ok(!existsSync(join(dl, 'PDF')), '新建的空文件夹也删掉');
+    assert.deepEqual(undoState(mv.changes!), { state: 'undone' });
+
+    // 新建的文件之后被改过：不撤
+    writeFileSync(join(dl, '清单.csv'), '用户后来改的，长一点');
+    assert.equal(undoState(wr.changes!).state, 'conflict');
+    const u2 = await undoChanges(wr.changes!);
+    assert.equal(u2.undone, 0);
+    assert.match(u2.skipped[0]!.why, /之后又被改过/);
+    assert.ok(existsSync(join(dl, '清单.csv')));
+
+    // 复制的撤销：有废纸篓就走废纸篓
+    const trashed: string[] = [];
+    await undoChanges(cp.changes!, { trash: async (p) => { trashed.push(p); rmSync(p); } });
+    assert.deepEqual(trashed, [join(dl, '图片', '照片.png')]);
+    assert.ok(!existsSync(join(dl, '图片')) && existsSync(join(dl, '照片.png')));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('整理：移到废纸篓走宿主给的函数；记下来但不在这里撤（从废纸篓放回）', async () => {
+  const { undoState, undoChanges } = await import('../../src/builtin/files/index.js');
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'org-')));
+  try {
+    writeFileSync(join(root, 'old.zip'), 'z');
+    const trashed: string[] = [];
+    const [b] = await files({ organize: true, organizeRoots: [root], trash: async (p) => { trashed.push(p); rmSync(p); } }).list();
+    const r = await (b!.handlers.get('files.trash') as ToolHandler)({ folder: root, paths: ['old.zip'] }, cx());
+    assert.match(r.summary, /移到废纸篓了 1 项/);
+    assert.deepEqual(trashed, [join(root, 'old.zip')]);
+    assert.deepEqual(undoState(r.changes!), { state: 'none' });
+    assert.match((await undoChanges(r.changes!)).skipped[0]!.why, /放回原处/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
