@@ -86,7 +86,7 @@ export class AnthropicChatModel implements ChatModel {
     const codec = toolNameCodec(req.tools ?? []);
 
     try {
-      const res = await this.client.messages.create({
+      const params = {
         model: this.id,
         max_tokens: req.maxOutputTokens ?? this.opts.maxTokens ?? 16_000,
         ...(system
@@ -109,8 +109,18 @@ export class AnthropicChatModel implements ChatModel {
           : {}),
         // 自适应思考。budget_tokens 在 Opus 5 上已移除，传了会 400
         ...(this.opts.thinking === false ? {} : { thinking: { type: 'adaptive' as const } }),
-        output_config: { effort: this.opts.effort ?? 'high' },
-      });
+        output_config: { effort: this.opts.effort ?? 'high' as const },
+      };
+      // 流式：只把正文（text 块）交出去；思考块、工具调用不算回答。一次响应里可能有好几个正文块，拼起来交全文
+      let res: Anthropic.Message;
+      if (req.onText) {
+        const s = this.client.messages.stream(params, req.signal ? { signal: req.signal } : undefined);
+        let all = '';
+        s.on('text', (delta) => { all += delta; req.onText!(all); });
+        res = await s.finalMessage();
+      } else {
+        res = await this.client.messages.create(params, req.signal ? { signal: req.signal } : undefined);
+      }
 
       // 安全分类器拒绝时是 HTTP 200 + stop_reason=refusal，必须在读 content 前检查
       if (res.stop_reason === 'refusal') {

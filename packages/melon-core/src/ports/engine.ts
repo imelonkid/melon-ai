@@ -15,7 +15,24 @@ export interface PlanInput {
    * 会破坏稳定前缀，prompt cache 收益归零。
    */
   readonly trace: TraceContext;
+  /**
+   * 回答草稿：规划器把正在生成的回答边收边交给宿主显示（流式）。不传就不流式。
+   * 草稿**不进事件日志**（一个回答几千个增量），也不是结论 —— 最终回答以 `Settled` 里的为准。
+   */
+  readonly draft?: (d: AnswerDraft) => void;
 }
+
+/**
+ * 正在生成的回答。
+ *
+ * - `text`：到目前为止可以显示的全文，整段替换显示即可。末尾会少几个字（守卫要先看过），
+ *   所以草稿永远不等于最终回答 —— 最终回答以 `Settled` 为准。
+ * - `reset`：刚才显示的那段作废。`tool` = 那是调用工具前的过程话，不是回答；
+ *   `check` = 没通过动作守卫（如「已发送」但没调工具），要打回重写 —— 宿主应如实告诉用户，而不是悄悄替换。
+ */
+export type AnswerDraft =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'reset'; readonly reason: 'tool' | 'check' };
 
 /**
  * 可插拔的「大脑」。ReAct 只是其中一种实现；

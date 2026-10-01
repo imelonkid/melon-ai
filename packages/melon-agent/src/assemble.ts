@@ -1,5 +1,5 @@
 import type {
-  AgentEngine, AgentId, AuditRecorder, AuditSink, ContextBundle, IdempotencyStore, ModelTool,
+  AgentEngine, AgentId, AnswerDraft, AuditRecorder, AuditSink, ContextBundle, IdempotencyStore, ModelTool,
   Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, SchemaValidator, StoreBundle,
   Task, ToolResolver, ToolsetSnapshot,
 } from '@melon-ai/core';
@@ -48,6 +48,8 @@ export interface AssembleOptions {
    * 回调抛错只记日志，不影响提交本身。
    */
   readonly onSubmitted?: (task: Task) => void;
+  /** 回答草稿（流式）。不进事件日志，见 `AnswerDraft`。 */
+  readonly onDraft?: (taskId: Task['id'], d: AnswerDraft) => void;
 }
 
 export interface AssembledAgent extends AgentEngine {
@@ -124,6 +126,7 @@ export async function assemble(opts: AssembleOptions): Promise<AssembledAgent> {
     ...(opts.recallSkills ? { recallSkills: opts.recallSkills } : {}),
     toolset: opts.toolset ?? ((): ToolsetSnapshot => DEFAULT_TOOLSET),
     ...(opts.pollIntervalMs !== undefined ? { pollIntervalMs: opts.pollIntervalMs } : {}),
+    ...(opts.onDraft ? { onDraft: opts.onDraft } : {}),
   });
 
   const submit = async (spec: Parameters<Runtime['submit']>[0]): Promise<Task> => {

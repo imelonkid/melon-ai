@@ -41,6 +41,9 @@ export interface ReActOptions {
  * 大部分对话轮次根本不需要工具，却常被无脑塞进全套 schema ——
  * 这是整条链路里最省的一笔。
  */
+/** 流式草稿末尾先不显示的字数：要比守卫认得出的说法（「已经成功发送」「has been sent」）长。 */
+const DRAFT_HOLD = 16;
+
 export class ReActPlanner implements Planner {
   readonly kind = 'react';
   private seq = 0;
@@ -87,12 +90,50 @@ export class ReActPlanner implements Planner {
 
     const decision = await this.opts.router.select(intent === 'task' ? 'plan' : 'answer', signal);
     const messages = this.assemble(input.context, tools.length > 0);
+    const acted = succeeded.some((id) => {
+      const t = input.availableTools.find((x) => x.name === id);
+      return t ? isActionTool(t) : false;
+    });
+    const toolResults = input.context.messages.filter((m) => m.from === 'tool').map((m) => m.content).join('\n');
+
+    // ── 流式：回答边生成边交给宿主显示 ──
+    // 显示出去的话收不回来：「邮件已发送」先被用户看到、再被守卫打回，比不显示更糟。
+    // 所以守卫③④⑤在流式过程中就对已收到的文本查，命中立刻停止显示并撤回；最终结论仍由下面的守卫给出
+    const draft = input.draft;
+    let shown = false;
+    const retract = (reason: 'tool' | 'check'): void => {
+      if (shown) { shown = false; draft?.({ kind: 'reset', reason }); }
+    };
+    const wouldCorrect = (text: string): boolean => {
+      const claim = claimsDone(text);
+      if (claim && (!acted || unbackedValues(text, toolResults).length > 0)) return true;
+      if (!asksConfirmation(text)) return false;
+      return (task.denied ?? []).length > 0
+        || matchActionTools(`${task.goal}\n${text}`, tools).some((t) => !called.includes(t.name));
+    };
     const generate = async (msgs: readonly Message[], required: boolean) => {
+      // 必须调工具的一轮不会有回答，不流式
+      let held = false;
+      const onText = draft && !required
+        ? (text: string) => {
+            if (held) return;
+            if (wouldCorrect(text)) { held = true; retract('check'); return; }
+            // 末尾留几个字先不显示：「已发送」可能被切在两段里，只显示「邮件已发」也是在说做成了。
+            // 守卫查的是收到的全文，显示的总比查过的少一截；最终回答随任务结果到，不靠草稿补齐
+            const safe = text.slice(0, Math.max(0, text.length - DRAFT_HOLD));
+            if (!safe.trim()) return;
+            shown = true;
+            draft({ kind: 'text', text: safe });
+          }
+        : undefined;
       const res = await decision.primary.generate({
         messages: msgs,
         ...(tools.length > 0 ? { tools, toolChoice: required ? 'required' as const : 'auto' as const } : {}),
         signal,
+        ...(onText ? { onText } : {}),
       });
+      // 先说一句「我先搜一下」再调工具：那是过程话，不是回答
+      if (res.toolCalls?.length) retract('tool');
       // 只用首选模型：路由给的 egress 与候选同序，第一个就是它
       answeredBy(res.modelId, decision.egress[0]);
       return res;
@@ -108,6 +149,7 @@ export class ReActPlanner implements Planner {
       // 同一轮里其余的调用排队依次执行；参数来源不对的不排（它们没机会被退回去问用户）
       if (!miss) return this.toToolCall(text, c, rest.filter((x) => !bad(x)));
       // 退回一次：让它去问用户。这一轮不强制调工具 —— 缺的信息只能问用户
+      retract('check');
       const retry = await generate(
         [...base, { role: 'assistant', content: text.trim() || `（准备调用 ${c.name}）` }, { role: 'user', content: supplyCorrection(miss.field, miss.values) }],
         false,
@@ -137,15 +179,11 @@ export class ReActPlanner implements Planner {
     // ── 动作守卫③：答复里说做成了，本任务却没有成功执行过任何有副作用的工具 ──
     const answer = res.text.trim() || '（模型没有返回内容）';
     const claim = claimsDone(answer);
-    const acted = succeeded.some((id) => {
-      const t = input.availableTools.find((x) => x.name === id);
-      return t ? isActionTool(t) : false;
-    });
     // 做过一件事，不等于说到的每一件都做了：提到的邮箱、网址、手机号要在工具结果里出现过
-    const toolResults = input.context.messages.filter((m) => m.from === 'tool').map((m) => m.content).join('\n');
     const unbacked = claim && acted ? unbackedValues(answer, toolResults) : [];
     if (claim && (!acted || unbacked.length > 0)) {
       // 纠正一次：它可能只是想先说后做，给它一次真的去调工具的机会
+      retract('check');
       const retry = await generate(
         [...messages, { role: 'assistant', content: answer }, {
           role: 'user',
@@ -173,6 +211,7 @@ export class ReActPlanner implements Planner {
     // 拒绝后的回喂已经写明「别再用文字征求确认」，实测 DeepSeek 照样写「需要先确认一下收件人……」。
     // 用户已经做了决定，结果由规则给出，不用模型的话
     if ((task.denied ?? []).length > 0 && asksConfirmation(answer)) {
+      retract('check');
       return { kind: 'final', thought: `拒绝后模型又用文字征求确认（「${asksConfirmation(answer)}」），按用户的决定收尾`, answer: '你拒绝了这个操作，它没有执行。' };
     }
 
@@ -181,6 +220,7 @@ export class ReActPlanner implements Planner {
     const ask = asksConfirmation(answer);
     const untried = matchActionTools(`${task.goal}\n${answer}`, tools).filter((t) => !called.includes(t.name));
     if (ask && untried.length > 0) {
+      retract('check');
       const retry = await generate(
         [...messages, { role: 'assistant', content: answer }, { role: 'user', content: confirmCorrection }],
         true,

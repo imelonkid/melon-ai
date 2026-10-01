@@ -32,6 +32,8 @@ export class ScriptedModel implements ChatModel {
       throw new Error(`ScriptedModel 脚本用尽：这是第 ${this.i} 次调用，脚本只有 ${this.script.length} 条`);
     }
     if (typeof item !== 'string') return item;
+    // 要流式就按几个字一段吐：测宿主的草稿通道，不必另造一个模型
+    if (req.onText) for (let n = 4; n < item.length + 4; n += 4) req.onText(item.slice(0, Math.min(n, item.length)));
     return {
       text: item,
       usage: { inputTokens: 10, outputTokens: 5 },

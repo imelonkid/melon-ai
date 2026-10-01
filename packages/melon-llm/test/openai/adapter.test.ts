@@ -124,3 +124,67 @@ test('没有 key 直接报错，不发请求', async () => {
   await assert.rejects(() => m.generate({ messages: [] }), /缺少 API key/);
   assert.equal(called, false);
 });
+
+// ───────── 流式（SSE）─────────
+
+/** 假的 SSE 响应：把整段事件流按任意字节边界切开发送 —— 真实网络里一个汉字可能被切在两个分片中间。 */
+function sseFetch(events: readonly unknown[], cut = 7, captured: { body?: any } = {}) {
+  const raw = new TextEncoder().encode(events.map((e) => `data: ${typeof e === 'string' ? e : JSON.stringify(e)}\n\n`).join(''));
+  return (async (_url: string, init: RequestInit) => {
+    captured.body = JSON.parse(String(init.body));
+    const body = new ReadableStream<Uint8Array>({
+      start(c) { for (let i = 0; i < raw.length; i += cut) c.enqueue(raw.slice(i, i + cut)); c.close(); },
+    });
+    return { ok: true, status: 200, headers: new Headers({ 'content-type': 'text/event-stream' }), body } as unknown as Response;
+  }) as unknown as typeof fetch;
+}
+
+test('流式：边收边回调全文，汉字被切在分片中间也不乱码；用量取最后一个分片', async () => {
+  const seen: string[] = [];
+  const cap: { body?: any } = {};
+  const res = await model(sseFetch([
+    { model: 'deepseek-chat', choices: [{ delta: { content: '## 本周' } }] },
+    { choices: [{ delta: { content: '要点\n- 一' } }] },
+    { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    { choices: [], usage: { prompt_tokens: 12, completion_tokens: 5 } },
+    '[DONE]',
+  ], 5, cap)).generate({ messages: [{ role: 'user', content: 'x' }], onText: (t) => seen.push(t) });
+
+  assert.equal(cap.body.stream, true);
+  assert.deepEqual(seen, ['## 本周', '## 本周要点\n- 一']);
+  assert.equal(res.text, '## 本周要点\n- 一');
+  assert.equal(res.modelId, 'deepseek-chat');
+  assert.equal(res.stopReason, 'stop');
+  assert.equal(res.usage.outputTokens, 5);
+});
+
+test('流式：工具调用的参数分片到达，拼完再解析并还原工具名', async () => {
+  const res = await model(sseFetch([
+    { choices: [{ delta: { content: '我先读一下' } }] },
+    { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'doc_read', arguments: '{"que' } }] } }] },
+    { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'ry":"周报"}' } }] } }] },
+    { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    '[DONE]',
+  ])).generate({ messages: [{ role: 'user', content: 'x' }], tools: TOOLS, onText: () => {} });
+
+  assert.equal(res.stopReason, 'tool');
+  assert.equal(res.toolCalls?.[0]?.name, 'doc.read');
+  assert.deepEqual(res.toolCalls?.[0]?.args, { query: '周报' });
+});
+
+test('流式：服务不支持、照常回了 JSON —— 当普通响应读，整段回调一次', async () => {
+  const seen: string[] = [];
+  const f = (async () => ({
+    ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }),
+    json: async () => ({ choices: [{ message: { content: '整段' } }] }),
+  })) as unknown as typeof fetch;
+  const res = await model(f).generate({ messages: [{ role: 'user', content: 'x' }], onText: (t) => seen.push(t) });
+  assert.equal(res.text, '整段');
+  assert.deepEqual(seen, ['整段']);
+});
+
+test('不要流式就不发 stream 参数', async () => {
+  const cap: { body?: any } = {};
+  await model(fakeFetch({ choices: [{ message: { content: 'ok' } }] }, cap)).generate({ messages: [{ role: 'user', content: 'x' }] });
+  assert.equal(cap.body.stream, undefined);
+});

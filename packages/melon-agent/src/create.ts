@@ -1,5 +1,5 @@
 import type {
-  AgentId, ApprovalDecision, AuditSink, Grant, Memory, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
+  AgentId, AnswerDraft, ApprovalDecision, AuditSink, Grant, Memory, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
   ScheduleStatus, SchemaValidator, Sequenced, SkillProvider, StoreBundle, Task, TaskEvent, TaskId,
   TaskKind, TaskState, ToolResolver, ToolsetSnapshot,
@@ -135,7 +135,15 @@ export interface AgentEvents {
   task: (task: Task) => void;
   /** 定时任务新建、修改、暂停、恢复、删除，或刚触发了一次。 */
   schedule: (schedule: Schedule) => void;
+  /**
+   * 正在生成的回答（流式）。`text` 是到目前为止的全文；`reset` 表示刚才那段作废（见 `AnswerDraft`）。
+   * 草稿不落库，错过了也没关系 —— 任务结束时 `task` 事件里有最终回答，以它为准。
+   */
+  draft: (draft: TaskDraft) => void;
 }
+
+/** 某个任务正在生成的回答。 */
+export type TaskDraft = AnswerDraft & { readonly taskId: TaskId };
 
 export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
   /** 让 Agent 做一件事。返回刚创建的任务；进展通过 `on('task')` 或 `watch` 看。 */
@@ -245,7 +253,9 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   });
 
   // ── 事件：宿主不必自己给每个任务挂 watch ──
-  const listeners = { task: new Set<AgentEvents['task']>(), schedule: new Set<AgentEvents['schedule']>() };
+  const listeners = {
+    task: new Set<AgentEvents['task']>(), schedule: new Set<AgentEvents['schedule']>(), draft: new Set<AgentEvents['draft']>(),
+  };
   const emit = <E extends keyof AgentEvents>(event: E, value: Parameters<AgentEvents[E]>[0]): void => {
     for (const cb of listeners[event]) {
       try { (cb as (v: typeof value) => void)(value); } catch (e) {
@@ -273,6 +283,8 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     ...(opts.execute ? { execute: opts.execute } : {}),
     ...(opts.pollIntervalMs !== undefined ? { pollIntervalMs: opts.pollIntervalMs } : {}),
     ...(opts.schedulePollMs !== undefined ? { schedulePollMs: opts.schedulePollMs } : {}),
+    // 草稿只是显示用的，没人听就不发
+    onDraft: (taskId, d) => { if (listeners.draft.size > 0) emit('draft', { ...d, taskId }); },
     ...(opts.recallSkills ? { recallSkills: opts.recallSkills } : {}),
     onSubmitted: (task) => {
       follow(task.id);

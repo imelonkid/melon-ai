@@ -35,7 +35,7 @@ export { memoryStorage } from '@melon-ai/store';
 export { ToolError, BUILTIN_TOOLS } from '@melon-ai/core';
 export type {
   Task, TaskState, TaskEvent, Sequenced, Schedule, ScheduleStatus, ModelEntry, PolicyMode,
-  ApprovalDecision, ApprovalRequest, Grant, Memory, SkillProvider, ToolContext, ToolOutput, Message,
+  ApprovalDecision, ApprovalRequest, Grant, Memory, SkillProvider, ToolContext, ToolOutput, Message, AnswerDraft,
 } from '@melon-ai/core';
 
 /** 兼容旧名。 */

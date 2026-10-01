@@ -250,3 +250,21 @@ test('入口一次拿全：各家模型工厂（含通用 compatible）都从 @m
   const z = api.compatible({ label: '智谱', baseURL: 'https://x.test/v4', model: 'glm-4', apiKey: 'k', egress: 'zhipu' });
   assert.equal(z.egress, 'zhipu');
 });
+
+test('流式：宿主用 on(\'draft\') 收到正在生成的回答（带 taskId、全文），最终回答以任务结果为准', async () => {
+  const answer = '本周完成了三件事：上线了新的检索服务，修好了登录超时，整理了接入文档。';
+  const { entry: e } = entry([answer]);
+  const agent = await createAgent({ models: [e], platform: quiet });
+  try {
+    const drafts: { taskId: string; kind: string; text?: string }[] = [];
+    agent.on('draft', (d) => drafts.push({ taskId: d.taskId, kind: d.kind, ...(d.kind === 'text' ? { text: d.text } : {}) }));
+    const done = until(agent, (t) => t.state === 'SUCCEEDED');
+    const task = await agent.run('汇总本周进展');
+    const final = await done;
+    assert.ok(drafts.length >= 2, '应当分好几段到达');
+    assert.ok(drafts.every((d) => d.taskId === task.id && d.kind === 'text'));
+    // 草稿末尾留了几个字（守卫先看过才显示），所以只是最终回答的前缀；最终回答以任务结果为准
+    assert.equal(final.outcome?.answer, answer);
+    assert.ok(drafts.every((d) => answer.startsWith(d.text ?? '')));
+  } finally { await agent.stop(); }
+});

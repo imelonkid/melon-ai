@@ -1,5 +1,5 @@
 import type {
-  AuditRecorder, ContextBundle, Effect, EpisodeStore, IdGen, Logger, ModelTool, Planner, PolicyMode, Task,
+  AnswerDraft, AuditRecorder, ContextBundle, Effect, EpisodeStore, IdGen, Logger, ModelTool, Planner, PolicyMode, Task,
   TaskEvent, TaskSpec, TaskStore, ToolCall, Tracer,
 } from '@melon-ai/core';
 import type { ToolPipeline } from '@melon-ai/skills';
@@ -34,6 +34,8 @@ export interface EffectDeps {
    * 这两样都不经过工具管线，管线的审计管不到。不传就不记（测试）。
    */
   readonly audit?: AuditRecorder;
+  /** 回答草稿（流式）交给宿主。不进事件日志；不传就不流式。 */
+  readonly onDraft?: (taskId: Task['id'], d: AnswerDraft) => void;
 }
 
 /**
@@ -54,7 +56,10 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
         ]);
         const ctl = new AbortController();
         const step = await deps.planner.plan(
-          { task, context, availableTools, trace: deps.tracer.child(task.trace) },
+          {
+            task, context, availableTools, trace: deps.tracer.child(task.trace),
+            ...(deps.onDraft ? { draft: (d: AnswerDraft) => deps.onDraft!(task.id, d) } : {}),
+          },
           ctl.signal,
         );
         span.end({ ok: true });

@@ -68,6 +68,12 @@ export interface GenerateRequest {
   readonly maxOutputTokens?: number;
   readonly temperature?: number;
   readonly signal?: AbortSignal;
+  /**
+   * 流式输出：支持的适配器边收边回调，参数是**到目前为止的全文**（不是增量）——
+   * 回调方不用自己拼，中途换了一路输出（重试、回退到别的模型）也只是整段替换。
+   * 不支持流式的适配器忽略它，照常一次性返回；无论哪种，`generate()` 的返回值都是完整结果。
+   */
+  readonly onText?: (textSoFar: string) => void;
 }
 
 export interface GenerateResult {

@@ -84,8 +84,12 @@ export class OpenAICompatibleChatModel implements ChatModel {
     // 供应商不接受工具名里的点号，转码后发送、收到调用时再映射回来
     const codec = toolNameCodec(req.tools ?? []);
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), this.opts.timeoutMs ?? 120_000);
+    // 流式时按「多久没收到新内容」计时：长回答整体超过两分钟是正常的，卡住不动才是故障
+    const timeoutMs = this.opts.timeoutMs ?? 120_000;
+    let timer = setTimeout(() => ctl.abort(), timeoutMs);
+    const alive = (): void => { clearTimeout(timer); timer = setTimeout(() => ctl.abort(), timeoutMs); };
     if (req.signal) req.signal.addEventListener('abort', () => ctl.abort(), { once: true });
+    const stream = !!req.onText;
 
     try {
       const res = await this.doFetch(`${this.baseURL}/chat/completions`, {
@@ -112,11 +116,16 @@ export class OpenAICompatibleChatModel implements ChatModel {
               }
             : {}),
           ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+          // 流式时用量在最后一个分片里，要显式要
+          ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
         }),
       });
 
-      const body = (await res.json()) as ChatResponse;
+      // 兼容服务不一定支持流式：没按 SSE 回就当普通响应读，整段回调一次
+      const sse = stream && res.ok && (res.headers?.get?.('content-type') ?? '').includes('text/event-stream') && !!res.body;
+      const body = sse ? await readStream(res.body!, req.onText!, alive) : (await res.json()) as ChatResponse;
       if (!res.ok) throw httpError(res.status, body.error?.message ?? res.statusText);
+      if (stream && !sse) req.onText!(body.choices?.[0]?.message?.content ?? '');
 
       const choice = body.choices?.[0];
       // 工具参数是字符串，必须 JSON.parse —— 不同供应商的转义策略不同，不能做字符串匹配
@@ -154,6 +163,77 @@ export class OpenAICompatibleChatModel implements ChatModel {
     const p = this.opts.pricing;
     return p ? { ...base, costUSD: (inTok * p.inUSD + outTok * p.outUSD) / 1_000_000 } : base;
   }
+}
+
+/**
+ * 读 SSE 流，拼成和非流式一样的响应。工具调用的参数是按 `index` 分片到达的字符串，要拼完才能解析。
+ * 每收到一段正文就把到目前为止的全文交给 `onText`。
+ */
+async function readStream(
+  body: ReadableStream<Uint8Array>, onText: (text: string) => void, alive: () => void,
+): Promise<ChatResponse> {
+  const decoder = new TextDecoder();
+  const reader = body.getReader();
+  let buf = '';
+  let text = '';
+  let model: string | undefined;
+  let finish: string | undefined;
+  let usage: ChatResponse['usage'];
+  let error: ChatResponse['error'];
+  const calls: { id: string; name: string; args: string }[] = [];
+
+  const take = (line: string): void => {
+    if (!line.startsWith('data:')) return;
+    const data = line.slice(5).trim();
+    if (!data || data === '[DONE]') return;
+    let chunk: {
+      model?: string; usage?: ChatResponse['usage']; error?: ChatResponse['error'];
+      choices?: { delta?: { content?: string | null; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] }; finish_reason?: string | null }[];
+    };
+    try { chunk = JSON.parse(data); } catch { return; }
+    model ??= chunk.model;
+    if (chunk.usage) usage = chunk.usage;
+    if (chunk.error) error = chunk.error;
+    const c = chunk.choices?.[0];
+    if (c?.finish_reason) finish = c.finish_reason;
+    for (const tc of c?.delta?.tool_calls ?? []) {
+      const i = tc.index ?? calls.length;
+      const slot = (calls[i] ??= { id: '', name: '', args: '' });
+      if (tc.id) slot.id = tc.id;
+      if (tc.function?.name) slot.name += tc.function.name;
+      if (tc.function?.arguments) slot.args += tc.function.arguments;
+    }
+    const piece = c?.delta?.content;
+    if (piece) { text += piece; onText(text); }
+  };
+
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    alive();
+    buf += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      take(buf.slice(0, nl).replace(/\r$/, ''));
+      buf = buf.slice(nl + 1);
+    }
+  }
+  take(buf.trim());
+
+  return {
+    ...(model ? { model } : {}),
+    ...(usage ? { usage } : {}),
+    ...(error ? { error } : {}),
+    choices: [{
+      message: {
+        content: text,
+        ...(calls.length > 0
+          ? { tool_calls: calls.filter(Boolean).map((x) => ({ id: x.id, function: { name: x.name, arguments: x.args || '{}' } })) }
+          : {}),
+      },
+      ...(finish ? { finish_reason: finish } : {}),
+    }],
+  };
 }
 
 /** 参数解析失败不能静默吞掉 —— 那会让模型以为调用成功了。 */
