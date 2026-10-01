@@ -1244,6 +1244,14 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     - **预估花费**：这类任务近 7 天的典型输入 / 输出（不到 5 次用初始值 4000 / 600）× 这个模型此刻（分时段）的价格，缓存命中率取模型的实际值；
       统计在内存里维护，启动时从账本预热，规则换了按新类别重新归类。
     - **解释**：`agent.models.explain(rule)` 给出「现在会选谁、为什么不选别的、预估每次多少钱」，宿主的路由页直接展示。
+82. **价格会过时，模型会上新，套餐不按 token 计。** 内置价格表是写死的（Claude 那张已经过时，Opus 5.5 都不在里面），新模型加不进来（Claude 适配器只认目录里的 id）。
+    - **模型发现**：`ChatModel.listModels`（OpenAI 兼容 `/models`、Anthropic `/v1/models`），`agent.models.discover`。Claude 适配器接受任意模型 id，目录外的用默认上限、不计价。
+    - **价格同步**：协议 `PriceSource` 在 core，机制 `PriceBook` 在 llm，各家文档的解析在 plugins（DeepSeek HTML 表、Claude / 智谱 Markdown 表、Kimi DocTable、通义大 HTML 页）。
+      失败或没读出价格时保留上次的；没出现的模型保留旧价；单个模型变化超过 5 倍等确认（第一次也和内置比）；优先级 手填 > 同步 > 内置。
+      实地看过：OpenAI 的价格页对程序访问返回 403，不同步；按输入长度分档的（通义、智谱）这期取最低档并注明。
+    - **套餐**（阿里 Coding Plan / Token Plan：固定月费 + 请求额度）：`ModelEntry.plan`，按次不另计、账本标 `billing: plan`；路由预估 0 优先用，
+      任一额度窗口（按厂商数成功请求、滚动时长估算）到 95% 让位。Token Plan 的 Credits 各模型消耗不同、官方没给按次算法，只数请求。
+    - **按次收费的工具**：`ToolDescriptor.billing`，管线每次真的执行记一笔（`purpose: 'tool'`），命中重复调用缓存的不算；汇总里单独成组。搜索的单价宿主给（博查没有可读的价格页）。
 
 #### 包结构合并（14 → 8）
 

@@ -61,6 +61,8 @@ const withTimeout = (signal: AbortSignal, ms: number): AbortSignal => AbortSigna
 export interface WebSkillOptions {
   /** 搜索服务（实现 core 的 `SearchProvider`，厂商实现见 `@melon-ai/plugins`）。null / 不传 = 不提供 web.search（只剩读网页）。 */
   readonly search?: SearchProvider | null;
+  /** 搜索每次多少钱（宿主按用户填的给）。不给就只记次数、不计价。 */
+  readonly searchPrice?: { readonly amount: number; readonly currency: 'CNY' | 'USD' } | null;
   readonly fetch?: FetchOptions;
 }
 
@@ -77,8 +79,11 @@ export class WebSkillProvider implements SkillProvider {
   private readonly fetchOpts: FetchOptions;
   private readonly listeners = new Set<() => void>();
 
+  private readonly searchPrice: WebSkillOptions['searchPrice'];
+
   constructor(opts: WebSkillOptions = {}) {
     this.search = opts.search ?? null;
+    this.searchPrice = opts.searchPrice ?? null;
     this.fetchOpts = opts.fetch ?? {};
   }
 
@@ -97,7 +102,8 @@ export class WebSkillProvider implements SkillProvider {
     const tools: ToolDescriptor[] = [];
     const handlers = new Map<string, ToolHandler>();
     if (this.search) {
-      tools.push(searchDescriptor);
+      // 搜索按次收费：每次执行进用量账本，厂商按搜索服务记
+      tools.push({ ...searchDescriptor, billing: { vendor: this.search.id, ...(this.searchPrice ? { perCall: this.searchPrice } : {}) } });
       handlers.set(WEB_SEARCH, (args, cx) => this.runSearch(args, cx));
     }
     tools.push(fetchDescriptor);

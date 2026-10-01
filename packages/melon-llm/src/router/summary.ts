@@ -51,6 +51,8 @@ export interface UsageSummary extends UsageTotals {
     readonly purpose: readonly UsageGroup[];
     /** 按宿主给的 `classify` 分组（没给时为空）。 */
     readonly custom: readonly UsageGroup[];
+    /** 按次收费的工具（搜索等），key 是 `厂商/工具 id`。`model` 组里不含它们。 */
+    readonly tool: readonly UsageGroup[];
   };
 }
 
@@ -113,7 +115,7 @@ export function summarizeUsage(records: readonly UsageRecord[], o: SummaryOption
   }
 
   let total = ZERO;
-  const dims = { model: new Map<string, UsageTotals>(), egress: new Map(), taskKind: new Map(), trigger: new Map(), purpose: new Map(), custom: new Map() } as
+  const dims = { model: new Map<string, UsageTotals>(), egress: new Map(), taskKind: new Map(), trigger: new Map(), purpose: new Map(), custom: new Map(), tool: new Map() } as
     Record<keyof UsageSummary['groups'], Map<string, UsageTotals>>;
   for (const r of records) {
     if (r.at < o.from || r.at >= o.to) continue;
@@ -123,9 +125,12 @@ export function summarizeUsage(records: readonly UsageRecord[], o: SummaryOption
     const keys: Record<keyof UsageSummary['groups'], string> = {
       model: modelKey, egress: r.egress, taskKind: r.taskKind ?? '', trigger: r.trigger ?? '', purpose: r.purpose,
       custom: o.classify ? o.classify(r) : '',
+      tool: modelKey,
     };
+    const isTool = r.purpose === 'tool';
     for (const d of Object.keys(dims) as (keyof typeof dims)[]) {
       if (d === 'custom' && !o.classify) continue;
+      if ((d === 'tool') !== isTool && (d === 'tool' || d === 'model')) continue;
       dims[d].set(keys[d], add(dims[d].get(keys[d]) ?? ZERO, r, cost));
     }
     const cell = cells.get(floorLocal(r.at, bucket, tz));
@@ -143,7 +148,7 @@ export function summarizeUsage(records: readonly UsageRecord[], o: SummaryOption
       .map(([start, c]) => ({ start, ...c.totals, byModel: grouped(c.byModel) })),
     groups: {
       model: grouped(dims.model), egress: grouped(dims.egress), taskKind: grouped(dims.taskKind),
-      trigger: grouped(dims.trigger), purpose: grouped(dims.purpose), custom: grouped(dims.custom),
+      trigger: grouped(dims.trigger), purpose: grouped(dims.purpose), custom: grouped(dims.custom), tool: grouped(dims.tool),
     },
   };
 }

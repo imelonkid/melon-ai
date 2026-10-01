@@ -2,6 +2,7 @@ import type { ArtifactRef, CallId, SkillId, TaskId, ToolId } from './ids.js';
 import type { ToolErrorShape } from './errors.js';
 import type { LogField } from './ports/platform.js';
 import type { TraceContext } from './trace.js';
+import type { Currency } from './usage.js';
 
 /**
  * 风险等级。决定准入层要不要拦。顺序即严重程度。
@@ -48,6 +49,11 @@ export interface ToolDescriptor {
    */
   readonly scopeKeys?: readonly string[];
   readonly costHint?: { readonly latencyMs: number; readonly bytesOut: number };
+  /**
+   * 按次收费的外部服务（搜索等）：每次真的执行都记进用量账本（`purpose: 'tool'`），宿主的用量页能看到「搜索 N 次 · ¥x」。
+   * `perCall` 不知道就不填 —— 只记次数，费用记「未计价」。重复调用命中缓存的不算（没真的调用）。
+   */
+  readonly billing?: { readonly vendor: string; readonly perCall?: { readonly amount: number; readonly currency: Currency } };
   /**
    * 输出来自外部、不可信（网页、搜索结果、第三方 MCP 返回……）。
    *

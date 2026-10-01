@@ -103,6 +103,8 @@ export async function assemble(opts: AssembleOptions): Promise<AssembledAgent> {
     ...(stores.idempotency ? { idempotency: stores.idempotency } : {}),
     ...(opts.quotaOf ? { quotaOf: opts.quotaOf } : {}),
     ...(opts.execute ? { execute: opts.execute } : {}),
+    // 按次收费的工具（搜索）每次执行记一笔
+    usage: stores.usage,
   });
 
   const configured = opts.policy;

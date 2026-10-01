@@ -141,3 +141,14 @@ test('汇总：按小时分格（空格也在）、按模型与任务类型分�
   });
   assert.deepEqual(c.groups.custom.map((g) => [g.key, g.calls]).sort(), [['定时任务', 1], ['对话', 1]]);
 });
+
+test('汇总：按次收费的工具单独成组，不混进模型组；费用照样算进总数', () => {
+  const r = (o: Partial<UsageRecord>): UsageRecord => ({
+    at: 1, calls: 1, purpose: 'plan', egress: 'deepseek', model: 'deepseek-flash', ok: true,
+    inputTokens: 10, cachedInputTokens: 0, outputTokens: 1, cost: 0.01, currency: 'CNY', priced: true, ms: 1, ...o,
+  });
+  const s = summarizeUsage([r({}), r({ purpose: 'tool', egress: 'bocha', model: 'web.search', cost: 0.036, inputTokens: 0, outputTokens: 0 })], { from: 0, to: 10, currency: 'CNY' });
+  assert.deepEqual(s.groups.model.map((g) => g.key), ['deepseek/deepseek-flash']);
+  assert.deepEqual(s.groups.tool.map((g) => [g.key, g.calls]), [['bocha/web.search', 1]]);
+  assert.ok(Math.abs(s.cost - 0.046) < 1e-12);
+});

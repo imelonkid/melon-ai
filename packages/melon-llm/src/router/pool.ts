@@ -83,8 +83,10 @@ export class ModelPool implements ModelRouter {
   /** 用账本里的历史记录预热：近一小时的成败、近 7 天的用量统计。 */
   seed(records: readonly UsageRecord[]): void {
     const now = (this.metering.now ?? (() => Date.now()))();
-    this.health.seed(records.filter((r) => r.at > now - this.health.windowMs));
-    for (const r of records) {
+    // 工具的记录（搜索按次计费）不算模型的成败与用量
+    const models = records.filter((r) => r.purpose !== 'tool');
+    this.health.seed(models.filter((r) => r.at > now - this.health.windowMs));
+    for (const r of models) {
       this.stats.record(r, this.rules(metaOf(r)).taskClass);
       if (r.billing === 'plan' && r.ok) for (let k = 0; k < r.calls; k++) this.quota.add(r.egress, r.at);
     }

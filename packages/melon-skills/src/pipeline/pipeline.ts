@@ -1,7 +1,7 @@
 import type {
   AdmissionOutcome, AgentId, ApprovalRequest, AuditDraft, AuditRecorder, ArtifactStore,
   Clock, GrantStore, Hasher, IdempotencyStore, LogField, Logger, PolicyMode, QuotaSnapshot,
-  ResolvedTool, RiskClass, SchemaValidator, Task, ToolCall, ToolContext, ToolResolver, ToolResult, Tracer,
+  ResolvedTool, RiskClass, SchemaValidator, Task, ToolCall, ToolContext, ToolResolver, ToolResult, Tracer, UsageLedger,
 } from '@melon-ai/core';
 import { computeScope, decide } from '../policy/index.js';
 import { CircuitBreaker } from './breaker.js';
@@ -29,6 +29,8 @@ export interface PipelineDeps {
   readonly sleep?: (ms: number) => Promise<void>;
   readonly execute?: Partial<ExecuteConfig>;
   readonly idempotencyTtlMs?: number;
+  /** 用量账本：声明了 `billing` 的工具每次执行记一笔。不给就不记。 */
+  readonly usage?: UsageLedger;
 }
 
 /**
@@ -249,6 +251,17 @@ export class ToolPipeline {
     if (rKey !== undefined && result.ok) {
       if (this.deps.idempotency) await this.deps.idempotency.put(rKey, result, this.deps.idempotencyTtlMs ?? 3_600_000);
       else this.rememberRepeat(rKey, result);
+    }
+
+    if (descriptor.billing && this.deps.usage) {
+      const b = descriptor.billing;
+      // 只有成功的按次计费；记账失败不影响这次调用
+      await this.deps.usage.record({
+        at: this.deps.clock.now(), calls: 1, taskId: task.id, agentId: task.agentId, taskKind: task.kind, trigger: task.trigger.type,
+        purpose: 'tool', egress: b.vendor, model: call.toolId, ok: result.ok, ...(result.error ? { errorCode: result.error.code } : {}),
+        inputTokens: 0, cachedInputTokens: 0, outputTokens: 0,
+        cost: result.ok && b.perCall ? b.perCall.amount : 0, currency: b.perCall?.currency ?? 'CNY', priced: !!b.perCall, ms: ex.ms,
+      }).catch((e) => this.deps.logger.log('warn', `用量记账失败：${e instanceof Error ? e.message : String(e)}`, { toolId: call.toolId }));
     }
 
     await this.recordAudit(task, call, 'tool.invoke', result.ok ? 'ok' : 'error', {

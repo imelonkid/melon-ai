@@ -31,6 +31,7 @@ async function harness(opts: {
   descriptor?: ToolDescriptor;
   enabled?: boolean;
   idempotency?: boolean;
+  usage?: { record: (r: never) => Promise<void>; list: () => Promise<never[]>; rollup: () => Promise<number> };
 } = {}) {
   const clock = new FakeClock(1000);
   const hasher = new NodeHasher();
@@ -50,6 +51,7 @@ async function harness(opts: {
     resolver, validator: new StructuralValidator(), grants, artifacts, audit,
     clock, hasher, tracer: new RecordingTracer(new SeqIdGen()), logger,
     ...(opts.idempotency ? { idempotency: idem } : {}),
+    ...(opts.usage ? { usage: opts.usage as never } : {}),
     sleep: async () => {},
     execute: { timeoutMs: 50, maxRetries: 2, backoffBaseMs: 0 },
   });
@@ -387,4 +389,24 @@ test('收件人一长串（授权范围超过审计维度上限）也能正常�
   const rec = (await h.sink.query({ limit: 10 })).find((r) => r.action === 'approval.decide');
   assert.equal(rec?.basis?.['scope'], `to=${to}`, '范围仍然可读，在依据里');
   assert.equal(rec?.dimensions?.['scope'], undefined);
+});
+
+test('按次收费的工具：每次真的执行记一笔（价格、厂商、任务信息）；重复调用命中缓存的不算', async () => {
+  const rows: Record<string, unknown>[] = [];
+  const usage = { record: async (r: never) => { rows.push(r); }, list: async () => [], rollup: async () => 0 };
+  const search = desc({
+    id: asToolId('web.search'), skillId: asSkillId('web'), name: 'search', risk: 'read', idempotent: true, scopeKeys: [],
+    input: { required: ['query'], properties: { query: { type: 'string' } } },
+    billing: { vendor: 'bocha', perCall: { amount: 0.036, currency: 'CNY' } },
+  });
+  const h = await harness({ descriptor: search, handler: async () => ({ summary: '搜到 3 条' }), usage });
+  const t = task();
+  const c = { ...toolCall('web.search', 'h1'), args: { query: 'AI' } };
+  await h.pipeline.execute(t, c);
+  await h.pipeline.execute(t, { ...c, callId: 'c2' as never });
+  assert.equal(rows.length, 1, '第二次参数一样，复用了上次的结果，没真的调用');
+  assert.deepEqual(
+    [rows[0]!.purpose, rows[0]!.egress, rows[0]!.model, rows[0]!.cost, rows[0]!.priced, rows[0]!.taskId],
+    ['tool', 'bocha', 'web.search', 0.036, true, t.id],
+  );
 });
