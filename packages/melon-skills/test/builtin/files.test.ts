@@ -146,7 +146,7 @@ test('附件：抽出文字和说明；图片读出字节；文件夹、受保�
     const a = await prepareAttachment(join(dir, '费用.xlsx'));
     assert.equal(a.name, '费用.xlsx');
     assert.match(a.note, /Excel，1 张表/);
-    assert.match(a.text, /产品部\t\t1280\.5/);
+    assert.match(a.text ?? '', /产品部\t\t1280\.5/);
     const img = await prepareAttachment(join(dir, 'a.png'));
     assert.deepEqual([img.note, img.image?.mime, [...(img.image?.data ?? [])]], ['图片', 'image/png', [0x89, 0x50]], '图片原样读出字节（尺寸由宿主压）');
     await assert.rejects(prepareAttachment(dir), /是文件夹/);
