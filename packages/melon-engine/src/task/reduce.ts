@@ -316,7 +316,11 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
 
     case 'Cancelled':
       return {
-        task: patch({ outcome: { status: 'CANCELLED', ...(event.reason !== undefined ? { reason: event.reason } : {}) } }, 'CANCELLED', true),
+        task: patch({ outcome: {
+          status: 'CANCELLED',
+          ...(event.reason !== undefined ? { reason: event.reason } : {}),
+          ...(event.partial ? { partial: event.partial } : {}),
+        } }, 'CANCELLED', true),
         effects: task.parentId !== undefined
           ? [{ k: 'NotifyParent', parentId: task.parentId, childId: task.id, outcome: { status: 'CANCELLED' } }]
           : [],

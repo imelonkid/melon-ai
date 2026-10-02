@@ -196,6 +196,10 @@ export interface Outcome {
   readonly status: 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
   readonly answer?: string;
   readonly reason?: string;
+  /**
+   * 回答写到一半被取消时，用户已经看到的那一截。没写完、没过核对 —— 不是回答，宿主照原样显示并标明「没写完」。
+   */
+  readonly partial?: string;
 }
 
 export type ApprovalDecision = 'allow' | 'always' | 'deny';
@@ -290,7 +294,7 @@ export type TaskEvent =
   | { readonly t: 'LoopDetected'; readonly argsHash: string; readonly times: number }
   /** 模型又请求了一个用户已经拒绝过的操作。不问用户、不执行，任务以「没有执行」收尾。 */
   | { readonly t: 'RepeatDenied'; readonly toolId: string; readonly times: number }
-  | { readonly t: 'Cancelled'; readonly reason?: string }
+  | { readonly t: 'Cancelled'; readonly reason?: string; readonly partial?: string }
   | { readonly t: 'Settled'; readonly outcome: Outcome };
 
 export type TaskEventType = TaskEvent['t'];

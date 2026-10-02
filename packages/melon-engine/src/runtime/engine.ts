@@ -1,5 +1,5 @@
 import type {
-  AgentEngine, ApprovalDecision, Effect, EpisodeStore, EventLog, Sequenced, Task, TaskEvent,
+  AgentEngine, AnswerDraft, ApprovalDecision, Effect, EpisodeStore, EventLog, Sequenced, Task, TaskEvent,
   TaskId, TaskSpec, TaskStore, ToolsetSnapshot,
 } from '@melon-ai/core';
 import { IllegalTransitionError, TERMINAL_STATES, asTaskId } from '@melon-ai/core';
@@ -46,6 +46,8 @@ export class Runtime implements AgentEngine {
    */
   private stopped = false;
   private readonly waking = new Set<() => void>();
+  /** 每个任务正在写的回答（已经显示给用户的那一截）。取消时随结果留下（`outcome.partial`）。 */
+  private readonly drafts = new Map<TaskId, string>();
   /** 每个任务进行中的模型请求、工具调用的中断开关。取消任务时全部触发。 */
   private readonly aborts = new Map<TaskId, Set<AbortController>>();
 
@@ -100,7 +102,9 @@ export class Runtime implements AgentEngine {
   async cancel(id: TaskId, reason?: string): Promise<void> {
     const task = await this.deps.tasks.get(id);
     if (!task || TERMINAL_STATES.includes(task.state)) return;
-    await this.advance(id, reason === undefined ? { t: 'Cancelled' } : { t: 'Cancelled', reason });
+    const partial = this.drafts.get(id);
+    this.drafts.delete(id);
+    await this.advance(id, { t: 'Cancelled', ...(reason !== undefined ? { reason } : {}), ...(partial ? { partial } : {}) });
     for (const ctl of this.aborts.get(id) ?? []) ctl.abort();
     this.aborts.delete(id);
   }
@@ -274,11 +278,21 @@ export class Runtime implements AgentEngine {
       },
       scheduleWake: (taskId, at) => this.wake(taskId, at),
       abortFor: (taskId) => this.abortFor(taskId),
+      // 记下正在写的回答：取消时用户已经看到的那一截要留下来
+      ...(this.deps.onDraft ? {
+        onDraft: (taskId: TaskId, d: AnswerDraft) => {
+          if (d.kind === 'text') this.drafts.set(taskId, d.text);
+          else if (d.kind === 'reset') this.drafts.delete(taskId);
+          this.deps.onDraft!(taskId, d);
+        },
+      } : {}),
     };
     for (const eff of effects) {
       let follows: readonly Follow[];
       try {
         follows = await runEffect(effectDeps, eff);
+        // 这一步想完了：草稿要么成了回答、要么作废（调工具前的过程话），都不再是「写到一半」
+        if (eff.k === 'CallPlanner') this.drafts.delete(eff.taskId);
       } catch (e) {
         this.deps.logger.log('error', `effect ${eff.k} 执行失败：${e instanceof Error ? e.message : String(e)}`, {
           taskId: id, effect: eff.k,

@@ -680,3 +680,24 @@ test('取消：模型正在想、工具正在跑时都能停 —— 任务立刻
     assert.equal((await agent.tasks.get(t2.id))!.state, 'CANCELLED');
   } finally { await agent.stop(); }
 });
+
+test('取消：回答写到一半停下 —— 已经显示出来的留在结果里（partial），不当成回答', async () => {
+  const model = new ScriptedModel([]);
+  model.generate = async (req) => new Promise((ok, fail) => {
+    req.onText?.('好的，我想一想。今天可以吃点清淡的，比如一碗面');
+    const t = setTimeout(() => ok({ text: '好的。', modelId: 'scripted', stopReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } }), 3000);
+    req.signal?.addEventListener('abort', () => { clearTimeout(t); fail(new Error('aborted')); }, { once: true });
+  });
+  const agent = await createAgent({ models: [{ model, quality: 1, costUSD: 1, egress: 'test', label: 'test' }], platform: quiet });
+  try {
+    let shown = '';
+    agent.on('draft', (d) => { if (d.kind === 'text') shown = d.text; });
+    const t = await agent.run('今天吃什么');
+    for (let i = 0; i < 40 && !shown; i++) await new Promise((r) => setTimeout(r, 25));
+    assert.ok(shown.startsWith('好的，我想一想'), `草稿：${shown}`);
+    await agent.cancel(t.id, '你停止了');
+    const done = (await agent.tasks.get(t.id))!;
+    assert.deepEqual(done.outcome, { status: 'CANCELLED', reason: '你停止了', partial: shown }, '留下的是用户已经看到的那一截');
+    assert.equal(done.outcome?.answer, undefined, '没写完、没核对：不是回答');
+  } finally { await agent.stop(); }
+});
