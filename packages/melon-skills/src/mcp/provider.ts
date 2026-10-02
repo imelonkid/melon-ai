@@ -99,11 +99,18 @@ interface RemoteTool {
 
 const LOG_MAX = 4000;
 
-/** 名字规整成工具 id 能用的：小写字母开头，只有小写字母、数字、- 和 _。 */
+/**
+ * 名字规整成工具 id 能用的：小写字母开头，只有小写字母、数字、- 和 _。
+ * 取不出英文的（「下载」「笔记」「123」）按原名算一个稳定的短码（`mcp_1a2b3c`）——
+ * 早先一律变成 `x`，两个中文名的服务器就撞成同一个前缀。同一个名字每次结果一样：授权、工具集快照按它记。
+ */
 export function slug(s: string, max: number): string {
-  let out = String(s ?? '').toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^[^a-z]+/, '').replace(/_+/g, '_').replace(/_$/, '');
-  if (!out) out = 'x';
-  return out.slice(0, max);
+  const raw = String(s ?? '').trim();
+  const out = raw.toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^[^a-z]+/, '').replace(/_+/g, '_').replace(/_$/, '');
+  if (out) return out.slice(0, max);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < raw.length; i++) h = Math.imul(h ^ raw.charCodeAt(i), 0x01000193) >>> 0;
+  return `mcp_${h.toString(16).padStart(8, '0').slice(0, 6)}`.slice(0, max);
 }
 
 /**

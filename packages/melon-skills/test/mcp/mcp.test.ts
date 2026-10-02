@@ -156,3 +156,14 @@ test('MCP：解析常见的 mcpServers 配置（本机命令 / 远程地址）�
   assert.match(parseMcpServers('{').errors[0]!, /不是合法的 JSON/);
   assert.equal(parseMcpServers(JSON.stringify({ x: { command: 'uvx', args: ['mcp-server-time'] } })).servers[0]!.name, 'x', '不带外层 mcpServers 也认');
 });
+
+test('MCP：名字规整 —— 中文名不会都变成同一个前缀（取不出英文的按名字算一个稳定的短码）；有英文的取英文部分', async () => {
+  const { mcpSlug } = await import('../../src/mcp/index.js');
+  const a = mcpSlug('下载', 32);
+  const b = mcpSlug('笔记', 32);
+  assert.notEqual(a, b, '两个中文名不能撞成同一个前缀');
+  assert.equal(mcpSlug('下载', 32), a, '同一个名字每次规整结果一样（授权、快照按它记）');
+  for (const x of [a, b]) assert.match(x, /^[a-z][a-z0-9_-]{0,31}$/);
+  assert.equal(mcpSlug('GitHub 工具', 32), 'github');
+  assert.notEqual(mcpSlug('123', 32), mcpSlug('456', 32));
+});
