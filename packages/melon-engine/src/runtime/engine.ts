@@ -2,7 +2,7 @@ import type {
   AgentEngine, ApprovalDecision, Effect, EpisodeStore, EventLog, Sequenced, Task, TaskEvent,
   TaskId, TaskSpec, TaskStore, ToolsetSnapshot,
 } from '@melon-ai/core';
-import { asTaskId } from '@melon-ai/core';
+import { IllegalTransitionError, TERMINAL_STATES, asTaskId } from '@melon-ai/core';
 import { createTask, deriveChildBudget, resumeEffects } from '../task/index.js';
 import { apply } from './apply.js';
 import type { ApplyDeps } from './apply.js';
@@ -46,6 +46,19 @@ export class Runtime implements AgentEngine {
    */
   private stopped = false;
   private readonly waking = new Set<() => void>();
+  /** 每个任务进行中的模型请求、工具调用的中断开关。取消任务时全部触发。 */
+  private readonly aborts = new Map<TaskId, Set<AbortController>>();
+
+  private abortFor(id: TaskId): { signal: AbortSignal; release(): void } {
+    const ctl = new AbortController();
+    const set = this.aborts.get(id) ?? new Set<AbortController>();
+    set.add(ctl);
+    this.aborts.set(id, set);
+    return {
+      signal: ctl.signal,
+      release: () => { set.delete(ctl); if (set.size === 0 && this.aborts.get(id) === set) this.aborts.delete(id); },
+    };
+  }
 
   constructor(private readonly deps: EngineDeps) {}
 
@@ -80,8 +93,16 @@ export class Runtime implements AgentEngine {
     return this.deps.tasks.get(id);
   }
 
+  /**
+   * 取消任务：立刻变成已取消，进行中的模型请求和工具调用随之中断（不再计费、不再产生后果）。
+   * 它们迟到的结果丢掉（`drive` 里对已结束的任务不再推进）。已经结束的任务再取消：什么都不做。
+   */
   async cancel(id: TaskId, reason?: string): Promise<void> {
+    const task = await this.deps.tasks.get(id);
+    if (!task || TERMINAL_STATES.includes(task.state)) return;
     await this.advance(id, reason === undefined ? { t: 'Cancelled' } : { t: 'Cancelled', reason });
+    for (const ctl of this.aborts.get(id) ?? []) ctl.abort();
+    this.aborts.delete(id);
   }
 
   async resolveApproval(id: TaskId, callId: string, decision: ApprovalDecision): Promise<void> {
@@ -252,6 +273,7 @@ export class Runtime implements AgentEngine {
         return child;
       },
       scheduleWake: (taskId, at) => this.wake(taskId, at),
+      abortFor: (taskId) => this.abortFor(taskId),
     };
     for (const eff of effects) {
       let follows: readonly Follow[];
@@ -268,7 +290,18 @@ export class Runtime implements AgentEngine {
         }] }];
       }
       for (const f of follows) {
-        if (f.events.length > 0) await this.advance(f.taskId, f.events);
+        if (f.events.length === 0) continue;
+        try {
+          await this.advance(f.taskId, f.events);
+        } catch (e) {
+          // 任务在这个 effect 进行中被取消了：迟到的结果丢掉（模型的回答、工具的结果都不再算数）
+          const now = await this.deps.tasks.get(f.taskId);
+          if (e instanceof IllegalTransitionError && now && TERMINAL_STATES.includes(now.state)) {
+            this.deps.logger.log('info', '任务已结束，丢掉迟到的结果', { taskId: f.taskId, effect: eff.k, state: now.state });
+            continue;
+          }
+          throw e;
+        }
       }
     }
   }

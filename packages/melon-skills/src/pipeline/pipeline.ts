@@ -175,7 +175,8 @@ export class ToolPipeline {
    * **不重判准入** —— 已经判过了，重判可能因配额变化得出不同结果，
    * 而用户刚刚批准的是当时那个判定。
    */
-  async execute(task: Task, call: ToolCall): Promise<ToolResult> {
+  /** `signal`：任务被取消时由运行时中断（工具收到 `cx.signal`）。 */
+  async execute(task: Task, call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
     const t0 = this.deps.clock.now();
     const resolved = await this.deps.resolver.resolve(call.toolId, task.toolset);
     if (!resolved) {
@@ -183,11 +184,11 @@ export class ToolPipeline {
         code: 'FATAL', message: `工具 ${call.toolId} 已不可解析（审批期间工具集可能变了）`, retriable: false,
       }, emptyMetrics(this.deps.clock.now() - t0));
     }
-    return this.run(task, call, resolved, t0);
+    return this.run(task, call, resolved, t0, signal);
   }
 
   // ── ④ 执行 → ⑤ 归一化 → ⑥ 记录 ──
-  private async run(task: Task, call: ToolCall, resolved: ResolvedTool, t0: number): Promise<ToolResult> {
+  private async run(task: Task, call: ToolCall, resolved: ResolvedTool, t0: number, signal?: AbortSignal): Promise<ToolResult> {
     const { descriptor, handler } = resolved;
     const key = descriptor.idempotent
       ? undefined
@@ -222,6 +223,11 @@ export class ToolPipeline {
     }
 
     const ctl = new AbortController();
+    // 任务取消：把中断传给工具（读网页、跑脚本、MCP 调用都看 cx.signal）
+    if (signal) {
+      if (signal.aborted) ctl.abort();
+      else signal.addEventListener('abort', () => ctl.abort(), { once: true });
+    }
     const cx: ToolContext = {
       taskId: task.id,
       callId: call.callId,

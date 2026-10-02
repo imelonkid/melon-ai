@@ -621,3 +621,62 @@ test('MCP：服务器的工具第一次先问、可以按工具始终允许；�
     await done3;
   } finally { await agent.stop(); await server.close(); }
 });
+
+test('取消：模型正在想、工具正在跑时都能停 —— 任务立刻变成已取消，进行中的模型请求和工具被中断，迟到的结果丢掉，不再问模型', async () => {
+  // 一个慢模型：第一次调用调慢工具；之后的调用一直等，直到被中断
+  const model = new ScriptedModel([]);
+  let modelAborted = 0;
+  let calls = 0;
+  model.generate = async (req) => {
+    calls += 1;
+    if (calls === 1) return call('slow.work', {});
+    return new Promise((ok, fail) => {
+      const t = setTimeout(() => ok({ text: '想完了', modelId: 'scripted', stopReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } }), 3000);
+      req.signal?.addEventListener('abort', () => { clearTimeout(t); modelAborted += 1; fail(new Error('aborted')); }, { once: true });
+    });
+  };
+  let toolAborted = false;
+  let toolStarted: () => void = () => {};
+  const started = new Promise<void>((r) => { toolStarted = r; });
+  const slow = defineTool({
+    id: 'slow.work', description: '做一件很慢的事', triggers: [],
+    run: (_a, cx) => new Promise((ok, fail) => {
+      toolStarted();
+      const t = setTimeout(() => ok('做完了'), 3000);
+      cx.signal.addEventListener('abort', () => { clearTimeout(t); toolAborted = true; fail(new Error('aborted')); }, { once: true });
+    }),
+  });
+  const agent = await createAgent({ models: [{ model, quality: 1, costUSD: 1, egress: 'test', label: 'test' }], tools: [slow], platform: quiet });
+  try {
+    // ① 工具正在跑时取消
+    const t1 = await agent.run('做那件很慢的事');
+    await started;
+    const t0 = Date.now();
+    await agent.cancel(t1.id);
+    const after1 = await agent.tasks.get(t1.id);
+    assert.equal(after1!.state, 'CANCELLED');
+    assert.ok(Date.now() - t0 < 1000, '立刻停');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(toolAborted, true, '正在跑的工具收到中断');
+    const ev1 = (await agent.tasks.history(t1.id)).map((r) => r.value.t);
+    assert.equal(ev1[ev1.length - 1], 'Cancelled', `取消之后不再有事件：${ev1.join(',')}`);
+
+    // ② 模型正在想时取消
+    const callsBefore = calls;
+    const thinking = until(agent, (t) => t.state === 'PLANNING' || t.state === 'RUNNING' as never, 2000).catch(() => null);
+    const t2 = await agent.run('再想想');
+    await thinking;
+    for (let i = 0; i < 40 && calls === callsBefore; i++) await new Promise((r) => setTimeout(r, 25));
+    await agent.cancel(t2.id, '用户停止');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(modelAborted, 1, '进行中的模型请求被中断（不再计费）');
+    const t2Done = await agent.tasks.get(t2.id);
+    assert.equal(t2Done!.state, 'CANCELLED');
+    assert.equal(t2Done!.outcome?.reason, '用户停止');
+    assert.equal(calls, callsBefore + 1, '取消后不再问模型');
+
+    // 已经结束的任务再取消：不报错、不改变结果
+    await agent.cancel(t2.id);
+    assert.equal((await agent.tasks.get(t2.id))!.state, 'CANCELLED');
+  } finally { await agent.stop(); }
+});

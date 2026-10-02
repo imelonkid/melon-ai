@@ -36,6 +36,11 @@ export interface EffectDeps {
   readonly audit?: AuditRecorder;
   /** 回答草稿（流式）交给宿主。不进事件日志；不传就不流式。 */
   readonly onDraft?: (taskId: Task['id'], d: AnswerDraft) => void;
+  /**
+   * 这个任务的中断信号：任务被取消时触发，进行中的模型请求、工具调用随之中断（不再计费、不再产生后果）。
+   * 用完调 `release`。不传就不能中断（测试）。
+   */
+  readonly abortFor?: (taskId: Task['id']) => { readonly signal: AbortSignal; release(): void };
 }
 
 /**
@@ -49,19 +54,20 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
     case 'CallPlanner': {
       const task = await load(deps, effect.taskId);
       const span = deps.tracer.startSpan('plan', 'step', task.trace);
+      // 任务被取消时中断这次模型请求（不再计费）
+      const ctl = deps.abortFor?.(task.id) ?? { signal: new AbortController().signal, release: () => {} };
       try {
         const [context, availableTools] = await Promise.all([
           deps.buildContext(task),
           deps.availableTools(task),
         ]);
-        const ctl = new AbortController();
         const step = await deps.planner.plan(
           {
             task, context, availableTools, trace: deps.tracer.child(task.trace),
             ...(deps.onDraft ? { draft: (d: AnswerDraft) => deps.onDraft!(task.id, d) } : {}),
           },
           ctl.signal,
-        );
+        ).finally(() => ctl.release());
         span.end({ ok: true });
         // 数据去向：这一轮的上下文（任务目标、对话、工具结果）发给了哪家。守卫直接给出的步骤没问模型，不记
         if (deps.audit && step.via?.modelId) {
@@ -100,6 +106,11 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
         // 而这恰恰是接真模型后最常见的一类失败（鉴权、参数、限流）。
         const detail = e instanceof Error ? e.message : String(e);
         const code = (e as { code?: string })?.code;
+        // 任务被取消、请求被中断：不是故障（这个结果反正会被丢掉）
+        if (ctl.signal.aborted) {
+          deps.logger.log('info', '规划被中断（任务已取消）', { taskId: effect.taskId });
+          return [];
+        }
         deps.logger.log('error', `规划失败：${detail}`, {
           taskId: effect.taskId,
           ...(code !== undefined ? { code } : {}),
@@ -148,7 +159,8 @@ export async function runEffect(deps: EffectDeps, effect: Effect): Promise<reado
 
     case 'InvokeTool': {
       const task = await load(deps, effect.taskId);
-      const result = await deps.pipeline.execute(task, effect.call);
+      const abort = deps.abortFor?.(task.id);
+      const result = await deps.pipeline.execute(task, effect.call, abort?.signal).finally(() => abort?.release());
       // artifactRef 必须一起进 L2：只写 summary 的话，大结果的句柄就丢了，
       // 模型看到「读取到 3 条」却没有任何办法拿到那 3 条的内容
       await appendEntry(deps, task, 'observation', result.summary, result.artifactRef);
