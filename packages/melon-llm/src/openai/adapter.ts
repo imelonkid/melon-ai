@@ -1,6 +1,7 @@
 import type {
   ChatModel, GenerateRequest, GenerateResult, ModelCapabilities, ModelToolCall, Usage,
 } from '@melon-ai/core';
+import { billingError } from '../shared/account.js';
 import { ToolError } from '@melon-ai/core';
 import { toolNameCodec } from '../shared/toolname.js';
 
@@ -276,6 +277,9 @@ function safeParse(s: string): unknown {
 }
 
 function httpError(status: number, message: string): ToolError {
+  // 余额不足：有的家用 429（智谱）、有的用 402（DeepSeek）、有的用 400 —— 先认出来，别报成限流
+  const billing = billingError(status, message);
+  if (billing) return billing;
   if (status === 401 || status === 403) {
     return new ToolError('FATAL', `鉴权失败（${status}）：${message}`, { hint: '检查 API key' });
   }

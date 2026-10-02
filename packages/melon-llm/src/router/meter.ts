@@ -78,7 +78,55 @@ export class HealthStats {
   }
 }
 
+import { isAccountError } from '../shared/account.js';
+export { isAccountError };
+
+/** 一家暂停多久：余额不足的人多半要过一会儿才去充值；到期后再试一次。 */
+const ACCOUNT_PAUSE_MS = 30 * 60_000;
+
+export interface AccountProblem {
+  readonly egress: string;
+  readonly reason: 'billing' | 'auth';
+  /** 厂商原话（宿主给用户看）。 */
+  readonly message: string;
+  readonly since: number;
+  /** 到这个时间再试。 */
+  readonly until: number;
+}
+
+/**
+ * 各家账户的状态：余额不足、key 失效的那家暂停使用（排序时跳过，除非只剩它），到期或宿主清除后恢复。
+ * 按厂商（egress）记 —— 同一个账户下的所有模型一起。
+ */
+export class AccountStatus {
+  private readonly problems = new Map<string, AccountProblem>();
+  constructor(private readonly now: () => number = () => Date.now()) {}
+
+  mark(egress: string, reason: 'billing' | 'auth', message: string): void {
+    const at = this.now();
+    this.problems.set(egress, { egress, reason, message: message.slice(0, 300), since: this.problems.get(egress)?.since ?? at, until: at + ACCOUNT_PAUSE_MS });
+  }
+
+  clear(egress?: string): void {
+    if (egress === undefined) this.problems.clear();
+    else this.problems.delete(egress);
+  }
+
+  down(egress: string): boolean {
+    const p = this.problems.get(egress);
+    if (!p) return false;
+    if (p.until <= this.now()) { this.problems.delete(egress); return false; }
+    return true;
+  }
+
+  list(): readonly AccountProblem[] {
+    return [...this.problems.values()].filter((p) => this.down(p.egress));
+  }
+}
+
 export interface MeterOptions {
+  /** 账户状态：余额不足、key 失效的记在这里，同一家的其余候选不再试。 */
+  readonly accounts?: AccountStatus;
   readonly ledger?: UsageLedger;
   readonly health: HealthStats;
   readonly now: () => number;
@@ -110,11 +158,18 @@ export class FailoverModel implements ChatModel {
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
-    const tries = this.candidates.slice(0, Math.max(1, this.opts.maxAttempts));
+    const max = Math.max(1, this.opts.maxAttempts);
     const failed: { egress: string; model: string; errorCode: string }[] = [];
-    for (let i = 0; i < tries.length; i++) {
+    // 账户出了问题的厂商（余额不足、key 失效）：它的其余模型不再试，名额留给别家
+    const deadVendors = new Set<string>();
+    const tries = this.candidates;
+    let attempt = 0;
+    let last: unknown;
+    for (let i = 0; i < tries.length && attempt < max; i++) {
       const entry = tries[i]!;
-      if (i > 0) req.onRetry?.();
+      if (deadVendors.has(entry.egress)) continue;
+      attempt += 1;
+      if (attempt > 1) req.onRetry?.();
       const started = this.opts.now();
       try {
         const res = await entry.model.generate(req);
@@ -132,17 +187,25 @@ export class FailoverModel implements ChatModel {
             : {}),
         };
         this.opts.health.record(entry.model.id, true, at);
-        await this.book(req.meta, entry, i + 1, { ok: true, usage: { ...usage, modelId: res.modelId }, at, ms: at - started });
+        // 答上来了：这家的账户没问题（充过值了）
+        this.opts.accounts?.clear(entry.egress);
+        await this.book(req.meta, entry, attempt, { ok: true, usage: { ...usage, modelId: res.modelId }, at, ms: at - started });
         return { ...res, usage, egress: entry.egress, ...(failed.length ? { failedAttempts: failed } : {}) };
       } catch (e) {
         const at = this.opts.now();
         this.opts.health.record(entry.model.id, false, at);
-        await this.book(req.meta, entry, i + 1, { ok: false, errorCode: errCode(e), at, ms: at - started });
-        if (req.signal?.aborted || i === tries.length - 1) throw e;
+        await this.book(req.meta, entry, attempt, { ok: false, errorCode: errCode(e), at, ms: at - started });
+        if (req.signal?.aborted) throw e;
+        const account = isAccountError(e);
+        if (account) {
+          deadVendors.add(entry.egress);
+          this.opts.accounts?.mark(entry.egress, account, e instanceof Error ? e.message : String(e));
+        }
+        last = e;
         failed.push({ egress: entry.egress, model: entry.model.id, errorCode: errCode(e) });
       }
     }
-    throw new Error('unreachable');
+    throw last ?? new Error('没有可用的模型');
   }
 
   private async book(

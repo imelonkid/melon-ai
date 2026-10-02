@@ -4,8 +4,8 @@ import type {
 import { ToolError } from '@melon-ai/core';
 import { HeuristicTokenizer, PolicyRouter } from './policy.js';
 import type { RouteStrategy } from './policy.js';
-import { FailoverModel, HealthStats } from './meter.js';
-import type { FxRates } from './meter.js';
+import { AccountStatus, FailoverModel, HealthStats } from './meter.js';
+import type { AccountProblem, FxRates } from './meter.js';
 import { QuotaCounter, UsageStats, rankAuto } from './auto.js';
 import type { PriceBook } from './prices.js';
 import type { RouteExplanation, RoutingRule, RoutingRules } from './auto.js';
@@ -53,6 +53,8 @@ export class ModelPool implements ModelRouter {
   readonly stats: UsageStats;
   /** 套餐额度：按厂商数近一个月成功的请求。 */
   readonly quota: QuotaCounter;
+  /** 各家账户：余额不足、key 失效的暂停使用。 */
+  private readonly account: AccountStatus;
   private rules: RoutingRules = NO_RULES;
   /** 同步来的官方价格。没有时用条目自带的（内置或手填）。 */
   private book: PriceBook | null = null;
@@ -64,7 +66,29 @@ export class ModelPool implements ModelRouter {
 
   /** 生效中的模型条目：套上同步来的价格。 */
   private live(): readonly ModelEntry[] {
-    return this.book ? this.entries.map((e) => this.book!.effective(e)) : this.entries;
+    const all = this.book ? this.entries.map((e) => this.book!.effective(e)) : this.entries;
+    return this.usable(all);
+  }
+
+  /** 去掉账户暂停的厂商；全都暂停了就都留着（总比没有模型强，也许已经充值了）。 */
+  private usable<T extends ModelEntry>(list: readonly T[]): readonly T[] {
+    const ok = list.filter((e) => !this.account.down(e.egress));
+    return ok.length > 0 ? ok : list;
+  }
+
+  /** 账户出了问题的厂商（余额不足、key 失效）：宿主的资源页据此提示用户去充值或换 key。 */
+  accounts(): readonly AccountProblem[] {
+    return this.account.list();
+  }
+
+  /** 宿主知道的账户问题（比如连接测试时发现的）。 */
+  markAccount(egress: string, reason: 'billing' | 'auth', message: string): void {
+    this.account.mark(egress, reason, message);
+  }
+
+  /** 用户改了配置、测试通过：立即恢复这一家（不传就全部恢复）。 */
+  clearAccount(egress?: string): void {
+    this.account.clear(egress);
   }
 
   constructor(entries: readonly ModelEntry[] = [], private strategy: RouteStrategy = 'balanced', metering: MeteringOptions = {}) {
@@ -72,6 +96,7 @@ export class ModelPool implements ModelRouter {
     this.health = new HealthStats(metering.now);
     this.stats = new UsageStats(metering.now);
     this.quota = new QuotaCounter(metering.now);
+    this.account = new AccountStatus(metering.now);
     this.set(entries, strategy);
   }
 
@@ -138,7 +163,7 @@ export class ModelPool implements ModelRouter {
           now: (m.now ?? (() => Date.now()))(), ...(m.fx ? { fx: m.fx } : {}),
         }).ranked
       // 旧的三档：要工具时同样只给支持工具的
-      : this.router.rank(intent).map((e) => (this.book ? this.book.effective(e) : e))
+      : this.usable(this.router.rank(intent)).map((e) => (this.book ? this.book.effective(e) : e))
         .filter((e, _i, all) => !ctx.needsTools || e.model.capabilities.tools || all.every((x) => !x.model.capabilities.tools));
     if (ranked.length === 0) {
       throw new ToolError('FATAL', ctx.needsTools ? '没有支持工具调用的模型' : '没有可用的模型', { retriable: false, hint: '在模型配置里启用一个模型' });
@@ -148,6 +173,7 @@ export class ModelPool implements ModelRouter {
       health: this.health,
       now: m.now ?? (() => Date.now()),
       maxAttempts: m.maxAttempts ?? 2,
+      accounts: this.account,
       ...(m.ledger ? { ledger: m.ledger } : {}),
       ...(m.fx ? { fx: m.fx } : {}),
       ...(m.onLedgerError ? { onLedgerError: m.onLedgerError } : {}),

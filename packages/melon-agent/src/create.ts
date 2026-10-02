@@ -8,9 +8,11 @@ import type {
 import { TERMINAL_STATES, asAgentId, asScheduleId, asToolId } from '@melon-ai/core';
 import { describeRule, whenToRule } from '@melon-ai/engine';
 import type { CreateScheduleInput, Scheduler, UpdateScheduleInput, When } from '@melon-ai/engine';
-import { DEFAULT_ACTION_WORDS, HeuristicTokenizer, KeywordIntentClassifier, ModelCatalog, ModelPool, PriceBook, ReActPlanner, summarizeUsage, testModel } from '@melon-ai/llm';
+import {
+  DEFAULT_ACTION_WORDS, HeuristicTokenizer, KeywordIntentClassifier, ModelCatalog, ModelPool, PriceBook, ReActPlanner, isAccountError, summarizeUsage, testModel,
+} from '@melon-ai/llm';
 import type {
-  FxRates, ModelTestResult, RouteExplanation, RouteStrategy, RoutingRule, RoutingRules, SummaryOptions, UsageSummary,
+  AccountProblem, FxRates, ModelTestResult, RouteExplanation, RouteStrategy, RoutingRule, RoutingRules, SummaryOptions, UsageSummary,
 } from '@melon-ai/llm';
 import { ToolRegistry, activeMemories, artifact, basicValidator, memory, schedule } from '@melon-ai/skills';
 import type { Tool } from '@melon-ai/skills';
@@ -221,6 +223,11 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     catalog(): readonly VendorCatalog[];
     /** 立即重新拉一家或全部的模型列表。生效中的模型随之更新。 */
     refresh(vendor?: string): Promise<readonly ModelListing[]>;
+    /**
+     * 账户出了问题的厂商（余额不足、key 失效）：这一家暂停使用（自动换别家），到期再试。
+     * 宿主据此提示用户去充值或换 key。改了这家的配置、连接测试通过时立即恢复。
+     */
+    accounts(): readonly AccountProblem[];
   };
   readonly tools: ToolRegistry;
   /**
@@ -671,7 +678,17 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     models: {
       get ready() { return pool.ready; },
       get entries() { return pool.current.entries; },
-      test: (entry) => testModel(entry),
+      // 测试也顺带更新账户状态：通过了就恢复这一家，余额不足就标上（用户点「测试」时最想知道的就是这个）
+      test: async (entry) => {
+        const r = await testModel(entry);
+        if (r.ok) pool.clearAccount(entry.egress);
+        else {
+          const kind = isAccountError(r.error ?? '');
+          if (kind) pool.markAccount(entry.egress, kind, r.error ?? '');
+        }
+        return r;
+      },
+      accounts: () => pool.accounts(),
       explain: (rule, ctx) => pool.explain(rule, ctx),
       discover: async (entry, signal) => (entry.model.listModels ? entry.model.listModels(signal) : null),
       catalog: () => catalog.expand(book).catalogs,
@@ -680,7 +697,12 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     async configure(patch) {
       if (patch.strategy !== undefined) pool.set(pool.current.entries, patch.strategy);
       if (patch.models !== undefined) fixedModels = patch.models;
-      if (patch.providers !== undefined) staleVendors = [...new Set([...staleVendors, ...catalog.setProviders(patch.providers)])];
+      if (patch.providers !== undefined) {
+        const changed = catalog.setProviders(patch.providers);
+        staleVendors = [...new Set([...staleVendors, ...changed])];
+        // 换了 key、改了配置的厂商：之前记的余额不足 / key 失效不作数了，重新试
+        for (const v of changed) pool.clearAccount(v);
+      }
       if (patch.models !== undefined || patch.providers !== undefined) rebuild();
       // 换了 key、新启用的厂商：后台去拉它的模型列表（启动前配置的，等 start 时再拉）
       if (patch.providers !== undefined && started) catalogDue();

@@ -244,3 +244,13 @@ test('模型发现：GET /models 列出这个账号能用的模型', async () =>
   assert.deepEqual(await model(f).listModels(), ['deepseek-flash', 'deepseek-v4-pro']);
   assert.equal(cap.url, 'http://x/v1/models');
 });
+
+test('余额不足不报成限流：智谱的 429「余额不足或无可用资源包」、DeepSeek 的 402 → FATAL「余额不足」，不重试', async () => {
+  for (const [status, message] of [[429, '余额不足或无可用资源包,请充值。'], [402, 'Insufficient Balance']] as const) {
+    const f = (async () => ({ ok: false, status, json: async () => ({ error: { message } }) })) as unknown as typeof fetch;
+    await assert.rejects(
+      () => model(f).generate({ messages: [{ role: 'user', content: 'x' }] }),
+      (e: any) => e.code === 'FATAL' && e.retriable === false && /^余额不足/.test(e.message) && /充值/.test(e.hint ?? ''),
+    );
+  }
+});

@@ -152,3 +152,48 @@ test('汇总：按次收费的工具单独成组，不混进模型组；费用�
   assert.deepEqual(s.groups.tool.map((g) => [g.key, g.calls]), [['bocha/web.search', 1]]);
   assert.ok(Math.abs(s.cost - 0.046) < 1e-12);
 });
+
+test('余额不足：同一家的其余模型不再试，直接换下一家；这一家暂停使用，状态给宿主看；测试通过或改配置后恢复', async () => {
+  const { isAccountError } = await import('../../src/index.js');
+  let zhipuCalls = 0;
+  // 智谱的余额不足是 429 + 「余额不足或无可用资源包」—— 看着像限流，其实是账户的事
+  const broke = (id: string) => model(id, () => { zhipuCalls += 1; throw new ToolError('RATE_LIMITED', '触发限流：余额不足或无可用资源包,请充值。'); });
+  const z1: ModelEntry = { model: broke('glm-5'), quality: 9, costUSD: 1, egress: 'zhipu' };
+  const z2: ModelEntry = { model: broke('glm-5.1'), quality: 8, costUSD: 1, egress: 'zhipu' };
+  const ds: ModelEntry = { model: model('deepseek-flash', () => {}), quality: 5, costUSD: 1, egress: 'deepseek' };
+  let now = FRI_13;
+  const pool = new ModelPool([z1, z2, ds], 'quality', { now: () => now, maxAttempts: 2 });
+
+  const res = await (await pool.select('plan')).primary.generate({ messages: [], meta });
+  assert.equal(res.egress, 'deepseek', '换到了另一家');
+  assert.equal(zhipuCalls, 1, '同一家的另一个模型不再试（同一个账户，一样没余额）');
+
+  const st = pool.accounts();
+  assert.equal(st.length, 1);
+  assert.equal(st[0]!.egress, 'zhipu');
+  assert.equal(st[0]!.reason, 'billing');
+  assert.match(st[0]!.message, /余额不足/);
+
+  // 暂停期间：排序时直接跳过这一家
+  await (await pool.select('plan')).primary.generate({ messages: [], meta });
+  assert.equal(zhipuCalls, 1, '暂停中的不再去碰');
+
+  // 只剩这一家时也照样试（不至于一个模型都没有）
+  const only = new ModelPool([z1], 'quality', { now: () => now });
+  only.markAccount('zhipu', 'billing', '余额不足');
+  await assert.rejects((await only.select('plan')).primary.generate({ messages: [], meta }), /余额不足/);
+
+  // 暂停到期后再试一次
+  now += 31 * 60_000;
+  assert.equal(pool.accounts().length, 0, '过了暂停期');
+  // 宿主改了配置 / 测试通过：立即恢复
+  pool.markAccount('zhipu', 'billing', '余额不足');
+  pool.clearAccount('zhipu');
+  assert.equal(pool.accounts().length, 0);
+
+  assert.equal(isAccountError(new ToolError('FATAL', 'HTTP 402：Insufficient Balance')), 'billing');
+  assert.equal(isAccountError(new ToolError('RATE_LIMITED', '触发限流：You exceeded your current quota, please check your plan and billing details')), 'billing');
+  assert.equal(isAccountError(new ToolError('FATAL', 'Anthropic 400：Your credit balance is too low to access the Anthropic API')), 'billing');
+  assert.equal(isAccountError(new ToolError('FATAL', '鉴权失败（401）：invalid api key')), 'auth');
+  assert.equal(isAccountError(new ToolError('RATE_LIMITED', '触发限流：Rate limit reached for requests')), null, '真正的限流不算');
+});

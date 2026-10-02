@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type {
   ChatModel, GenerateRequest, GenerateResult, Message, ModelCapabilities, ModelToolCall, Usage,
 } from '@melon-ai/core';
+import { billingError } from '../shared/account.js';
 import { ToolError } from '@melon-ai/core';
 import { toolNameCodec } from '../shared/toolname.js';
 
@@ -203,6 +204,11 @@ function toUsage(u: Anthropic.Usage, model: string): Usage {
 
 /** 把 SDK 的分类异常映射成对模型可操作的错误码。按最具体到最宽泛排。 */
 function toMelonError(e: unknown): ToolError {
+  // 余额不足（Anthropic 是 400「credit balance is too low」）：别报成「请求不合法」
+  if (e instanceof Anthropic.APIError) {
+    const billing = billingError(e.status ?? 0, e.message);
+    if (billing) return billing;
+  }
   if (e instanceof Anthropic.AuthenticationError) {
     return new ToolError('FATAL', 'Anthropic API key 无效或缺失', {
       hint: '检查 ANTHROPIC_API_KEY 或应用内的模型配置',

@@ -30,7 +30,7 @@ export {
 } from '@melon-ai/llm';
 export type {
   ProviderOptions, CompatibleOptions, RouteStrategy, ModelTestResult, FxRates, UsageSummary, UsageBucket, UsageGroup, UsageTotals,
-  SummaryOptions, RoutingRule, RoutingRules, RouteExplanation, RouteCandidate, RouteWhy, PinStatus,
+  SummaryOptions, RoutingRule, RoutingRules, RouteExplanation, RouteCandidate, RouteWhy, PinStatus, AccountProblem,
 } from '@melon-ai/llm';
 export { whenToRule, describeRule, hostTimeZone } from '@melon-ai/engine';
 export type { When } from '@melon-ai/engine';
