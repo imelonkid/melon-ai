@@ -30,6 +30,22 @@ interface Candidate {
   readonly source: string;
 }
 
+/**
+ * 工具定义的指纹：模型和准入看得到的部分（说明、参数、风险、授权与触发声明）。
+ * FNV-1a 两路拼成 16 位十六进制 —— 只用来比对是否变了，不防碰撞攻击（来源若能控制碰撞，它也能直接控制说明）。
+ */
+export function fingerprint(d: Tool['descriptor']): string {
+  const text = JSON.stringify([d.description, d.input, d.risk, d.scopeKeys ?? null, d.untrustedOutput ?? false, d.userSupplied ?? null, d.grantBy?.key ?? null]);
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ text.length;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ c, 0x5bd1e995) >>> 0;
+  }
+  return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
+}
+
 const RANK: Record<ToolOrigin, number> = { builtin: 0, host: 1, extension: 2 };
 
 /**
@@ -164,9 +180,13 @@ export class ToolRegistry implements ToolResolver {
     for (const cb of this.listeners) cb(this.lastReport);
   }
 
-  async resolve(toolId: ToolId): Promise<ResolvedTool | null> {
+  async resolve(toolId: ToolId, snapshot?: ToolsetSnapshot): Promise<ResolvedTool | null> {
     const t = this.effective.get(toolId);
-    return t ? { descriptor: t.descriptor, handler: t.handler } : null;
+    if (!t) return null;
+    // 任务开始时记下的定义和现在的对不上：含义变了，本任务不认（快照之后才出现的照常）
+    const was = snapshot?.tools?.[toolId];
+    if (was !== undefined && was !== fingerprint(t.descriptor)) return null;
+    return { descriptor: t.descriptor, handler: t.handler };
   }
 
   async isEnabledFor(toolId: ToolId): Promise<boolean> {
@@ -193,7 +213,9 @@ export class ToolRegistry implements ToolResolver {
 
   toolset(): ToolsetSnapshot {
     const skills = [...new Set([...this.effective.values()].map((t) => t.descriptor.skillId))];
-    return { takenAt: this.now(), skills: skills.map((id) => ({ id, version: '1' })) };
+    const tools: Record<string, string> = {};
+    for (const [id, t] of this.effective) tools[id] = fingerprint(t.descriptor);
+    return { takenAt: this.now(), skills: skills.map((id) => ({ id, version: '1' })), tools };
   }
 
   /** 列出全部生效工具的描述。宿主做工具开关、展示名时用。 */

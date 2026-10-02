@@ -11,6 +11,12 @@ import type { SpanId, TraceContext } from './trace.js';
 export interface ToolsetSnapshot {
   readonly takenAt: number;
   readonly skills: readonly { readonly id: SkillId; readonly version: string }[];
+  /**
+   * 任务开始时每个工具定义的指纹（说明、参数、风险……）。执行时对不上的不认 ——
+   * 扩展来源（MCP server）可能在任务进行中把同名工具换成另一个意思。快照之后才出现的工具不在这里，照常解析。
+   * 旧任务没有这一项：按当前注册的解析。
+   */
+  readonly tools?: Readonly<Record<string, string>>;
 }
 
 export type TaskState =

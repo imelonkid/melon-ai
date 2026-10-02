@@ -584,3 +584,40 @@ test('整理文件：允许查看不等于允许整理（单独问、单独「�
     assert.ok(existsSync(join(dl, 'a.pdf')));
   } finally { await agent.stop(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test('MCP：服务器的工具第一次先问、可以按工具始终允许；标了有破坏性的每次都问、不能始终允许；调用过的任务带污点', async () => {
+  const { mcp } = await import('../src/mcp.js');
+  const { fileURLToPath } = await import('node:url');
+  const fixture = fileURLToPath(new URL('../../melon-skills/test/mcp/fixture-server.mjs', import.meta.url));
+  const server = mcp({ name: 'fixture', transport: { kind: 'stdio', command: process.execPath, args: [fixture] }, sandbox: false });
+  await server.ready();
+  const { entry: e } = entry([
+    call('fixture.getweather', { city: '杭州' }), '杭州晴',
+    call('fixture.getweather', { city: '上海' }), '上海也晴',
+    call('fixture.delete_repo', { repo: 'a' }), '删了',
+  ]);
+  const agent = await createAgent({ models: [e], skills: [server], platform: quiet });
+  try {
+    const ask1 = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const t1 = await agent.run('杭州天气');
+    await ask1;
+    const done1 = until(agent, (t) => t.id === t1.id && t.state === 'SUCCEEDED');
+    await agent.approve(t1.id, 'always');
+    await done1;
+    assert.equal((await agent.tasks.get(t1.id))!.tainted, true, 'MCP 的输出不可信');
+
+    const done2 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === '上海也晴');
+    const t2 = await agent.run('上海天气');
+    await done2;
+    assert.ok(!(await agent.tasks.history(t2.id)).some((r) => r.value.t === 'ApprovalRequested'), '始终允许过这个工具：不再问');
+
+    const ask3 = until(agent, (t) => t.state === 'AWAITING_APPROVAL');
+    const t3 = await agent.run('删掉仓库 a');
+    await ask3;
+    const adm = (await agent.tasks.history(t3.id)).map((r) => r.value).find((v) => v.t === 'AdmissionResolved') as unknown as { decision: string; risk: string };
+    assert.deepEqual([adm.decision, adm.risk], ['ask', 'irreversible'], '有破坏性：按不可撤销，每次都问、不能始终允许');
+    const done3 = until(agent, (t) => t.id === t3.id && t.state === 'SUCCEEDED');
+    await agent.approve(t3.id, 'allow');
+    await done3;
+  } finally { await agent.stop(); await server.close(); }
+});

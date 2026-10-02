@@ -85,7 +85,7 @@ export class ToolPipeline {
         // 模型可能幻觉出一个不存在的工具名 —— 当成可修复错误回喂，而不是致命错误
         return this.fail(call, {
           code: 'INVALID_ARGS',
-          message: `工具 ${call.toolId} 不存在或未在本任务的工具集快照中`,
+          message: `工具 ${call.toolId} 不存在，或者在本任务开始之后它的定义变了（来源更新了这个工具）`,
           retriable: false,
           hint: '只能用本轮提供的工具，换一个或直接回答',
         }, t0);

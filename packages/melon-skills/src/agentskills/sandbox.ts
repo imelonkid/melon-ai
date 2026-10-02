@@ -19,11 +19,18 @@ function forms(p: string): string[] {
   return [...new Set([p, real])];
 }
 
+/** `p` 在 `dir` 里面（两边都按真实路径比）。 */
+function isUnder(p: string, dir: string): boolean {
+  const ps = forms(p);
+  return forms(dir).some((d) => ps.some((x) => x.startsWith(`${d}/`)));
+}
+
 const quote = (p: string): string => `"${p.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
 /**
  * 沙箱规则（Seatbelt 的 SBPL）。后面的规则优先：先拦敏感位置，再放行工作目录 ——
- * 工作目录即使在拦截的目录里（宿主把它放在自己的数据目录下）也能读写。
+ * 工作目录即使在拦截的目录里（宿主把它放在自己的数据目录下）也能读写；
+ * 反过来，可写的范围包住了敏感位置（家目录可写、~/.ssh 不行）时，再拦一次。
  */
 export function seatbeltProfile(policy: SandboxPolicy): string {
   const sub = (paths: readonly string[]) => paths.flatMap(forms).map((p) => `(subpath ${quote(p)})`).join(' ');
@@ -36,6 +43,14 @@ export function seatbeltProfile(policy: SandboxPolicy): string {
   ];
   if (policy.denyRead.length) lines.push(`(deny file-read* ${sub(policy.denyRead)})`);
   if (policy.writable.length) lines.push(`(allow file-read* file-write* ${sub(policy.writable)})`);
+  // 可写的范围很大（MCP 服务器可写家目录）时，里面的受保护位置要再拦一次 —— 否则上一条的放行把它们也放了；
+  // 受保护位置里面又有可写目录（工作目录在宿主数据目录里）的，最后再放行那个可写目录
+  const inner = policy.denyRead.filter((d) => policy.writable.some((w) => d !== w && isUnder(d, w)));
+  if (inner.length) {
+    lines.push(`(deny file-read* file-write* ${sub(inner)})`);
+    const reopen = policy.writable.filter((w) => inner.some((d) => isUnder(w, d)));
+    if (reopen.length) lines.push(`(allow file-read* file-write* ${sub(reopen)})`);
+  }
   // 联网：拦所有 IP 连接（含本机）；本机的 unix socket（域名解析走它）照常
   if (!policy.network) lines.push('(deny network-outbound (remote ip))', '(deny network-bind (local ip))');
   return lines.join('\n');

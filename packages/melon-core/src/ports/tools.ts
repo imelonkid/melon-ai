@@ -8,12 +8,11 @@ import type { ToolsetSnapshot } from '../task.js';
  * 管线（`skills/pipeline`）只认识这个端口，不认识技能注册表（`skills/registry`），
  * 两者在这里相遇。
  *
- * **契约：应当按任务的 toolset 快照解析**：任务执行期间 MCP server 可能更新，
+ * **契约：按任务的 toolset 快照解析**：任务执行期间 MCP server 可能更新，
  * 若不按快照解析，同一个 `toolId` 在不同时刻含义不同，事件日志就不可重放。
+ * 默认实现 `ToolRegistry`：快照里记着每个工具定义的指纹，对不上（含义变了）返回 null；快照之后才出现的照常解析。
  *
- * ⚠️ 现状（§10 第 68 条）：默认实现 `ToolRegistry` 还**没有**按快照解析（按当前注册的工具解析），
- * `isEnabledFor` 也还不区分 Agent（注册了就算开启）。宿主现在只有一个 Agent、工具集在任务内很少变，
- * 所以还没出问题；接 MCP 或做多 Agent 时必须补上。
+ * ⚠️ 现状：`isEnabledFor` 还不区分 Agent（注册了就算开启）。宿主现在只有一个 Agent；做多 Agent 时必须补上。
  */
 export interface ToolResolver {
   resolve(toolId: ToolId, snapshot: ToolsetSnapshot): Promise<ResolvedTool | null>;

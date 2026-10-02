@@ -327,3 +327,28 @@ test('沙箱（macOS Seatbelt）：只能写工作目录；受保护的位置不
     for (const d of [secret, outside]) rmSync(d, { recursive: true, force: true });
   }
 });
+
+test('沙箱：可写的范围很大（家目录）时，里面的受保护位置照样不能读写；受保护目录里的可写目录（工作目录）照样能读写', { skip: process.platform !== 'darwin' }, async () => {
+  const { seatbelt } = await import('../../src/agentskills/index.js');
+  const { execFileSync } = await import('node:child_process');
+  const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'sb-home-')));
+  try {
+    mkdirSync(join(home, '.ssh'));
+    writeFileSync(join(home, '.ssh', 'id'), 'KEY');
+    mkdirSync(join(home, 'app', 'work'), { recursive: true });
+    writeFileSync(join(home, 'app', 'k.json'), 'SECRET');
+    const sb = seatbelt();
+    const run = (script: string): string => {
+      const cmd = sb.wrap('/bin/sh', ['-c', script], { writable: [home, join(home, 'app', 'work')], denyRead: [join(home, '.ssh'), join(home, 'app')], network: true });
+      try { return execFileSync(cmd.file, [...cmd.args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch { return 'DENIED'; }
+    };
+    assert.equal(run(`echo hi > ${home}/note.txt && cat ${home}/note.txt`).trim(), 'hi', '家目录可写');
+    assert.equal(run(`cat ${home}/.ssh/id`), 'DENIED', '家目录可写，但 ~/.ssh 照样不能读');
+    assert.equal(run(`echo x > ${home}/.ssh/x`), 'DENIED', '也不能写');
+    assert.equal(run(`cat ${home}/app/k.json`), 'DENIED');
+    assert.equal(run(`echo w > ${home}/app/work/a && cat ${home}/app/work/a`).trim(), 'w', '受保护目录里的工作目录照样能读写');
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
