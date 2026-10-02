@@ -24,9 +24,29 @@ function render(e: Entry): string {
 /** 新给的附件带开头这么多字；全文按句柄取。 */
 const ATTACH_HEAD = 3000;
 
+/** 一轮最多带几张图（新给的优先，再是最近沿用的）：图片按张计费，追问时全带上太贵。 */
+const MAX_IMAGES = 4;
+
+/**
+ * 图片附件 → 一条带图片的消息（句柄；发给模型前 agent 读出内容）。超出的只列名字。
+ * 图片里也可能写着「指令」：和文字附件一样标成工具数据。
+ */
+function imageMessage(list: readonly Attachment[]): Message | null {
+  const imgs = list.filter((a) => a.image);
+  if (imgs.length === 0) return null;
+  const chosen = [...imgs.filter((a) => a.fresh), ...imgs.filter((a) => !a.fresh).reverse()].slice(0, MAX_IMAGES);
+  const left = imgs.filter((a) => !chosen.includes(a));
+  const names = chosen.map((a) => `${a.name}${a.fresh ? '' : '（之前给过的）'}`).join('、');
+  return {
+    role: 'user', from: 'tool',
+    content: `【图片】${names}${left.length ? `\n（更早的 ${left.length} 张图片没有带上：${left.map((a) => a.name).join('、')}。要看的话请用户再发一次）` : ''}`,
+    images: chosen.map((a) => ({ ref: a.textRef, mime: a.image!.mime })),
+  };
+}
+
 /** 附件进上下文的写法：句柄写在最前面（预算压缩截短时只保留开头，句柄不能丢）。 */
 function renderAttachments(list: readonly Attachment[]): string {
-  return list.map((a) => {
+  return list.filter((a) => !a.image).map((a) => {
     const head = `【附件】${a.name}（${a.note}，共 ${a.chars} 字；完整内容句柄：${a.textRef}，可用 ${BUILTIN_TOOLS.ARTIFACT_READ} 分段读）`;
     if (!a.fresh) return `${head}\n（之前给过的，需要时再读）`;
     const body = (a.head ?? '').slice(0, ATTACH_HEAD);
@@ -79,7 +99,8 @@ export function basicContext(episodes: EpisodeStore, opts: BasicContextOptions =
       ...(opts.history ? (await opts.history(task)).map((m) => ({ ...m, part: 'history' as const })) : []),
       // 附件：用户给的文件，但内容不是用户说的话（里面的邮箱、「指令」不算用户给的）—— 标成工具数据。
       // 放在用户这句话之前：问题留在最后、离回答最近（附件常常很长）
-      ...(task.attachments?.length ? [{ role: 'user' as const, from: 'tool' as const, part: 'result' as const, content: renderAttachments(task.attachments) }] : []),
+      ...(task.attachments?.some((a) => !a.image) ? [{ role: 'user' as const, from: 'tool' as const, part: 'result' as const, content: renderAttachments(task.attachments) }] : []),
+      ...(task.attachments ? [imageMessage(task.attachments)].filter((m): m is Message => m !== null) : []),
       { role: 'user', content: opts.goal ? opts.goal(task) : `任务目标：${task.goal}` },
       // 放在目标之后：前面的对话历史每轮不变，能吃到 prompt cache；时间每轮都变
       ...(opts.now === false ? [] : [{

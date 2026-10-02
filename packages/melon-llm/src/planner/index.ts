@@ -116,7 +116,9 @@ export class ReActPlanner implements Planner {
       purpose: intent === 'task' ? 'plan' as const : 'answer' as const,
     };
     // 带工具的一轮只给支持工具的模型
-    const decision = await this.opts.router.select(meta.purpose, signal, { needsTools: tools.length > 0, meta });
+    // 带图的一轮只给能看图的模型
+    const needsVision = input.context.messages.some((m) => (m.images?.length ?? 0) > 0);
+    const decision = await this.opts.router.select(meta.purpose, signal, { needsTools: tools.length > 0, ...(needsVision ? { needsVision } : {}), meta });
     const messages = this.assemble(input.context, tools.length > 0);
     const acted = succeeded.some((id) => {
       const t = input.availableTools.find((x) => x.name === id);

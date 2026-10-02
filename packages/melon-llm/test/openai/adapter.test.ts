@@ -254,3 +254,22 @@ test('余额不足不报成限流：智谱的 429「余额不足或无可用资�
     );
   }
 });
+
+test('看图：图片发成 image_url（data URL）；按模型名判断能不能看图（路由据此决定谁收到图）', async () => {
+  const { visionByName } = await import('../../src/shared/vision.js');
+  for (const id of ['glm-5.3-flash', 'glm-5.3-flashx', 'glm-5v-turbo', 'glm-4.5v', 'qwen-vl-max', 'qwen3-vl-plus', 'gpt-4o-mini', 'gpt-5', 'claude-sonnet-5']) assert.equal(visionByName(id), true, id);
+  for (const id of ['deepseek-flash', 'deepseek-v4-pro', 'glm-5.3', 'glm-5.2', 'qwen-max', 'moonshot-v1-128k']) assert.equal(visionByName(id), false, id);
+  let body: any = null;
+  const f = (async (_u: string, init: any) => {
+    body = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '看到了' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) };
+  }) as unknown as typeof fetch;
+  const msg = { role: 'user' as const, content: '【图片】截图.png', images: [{ ref: 'a' as never, mime: 'image/png', data: 'AAAA' }] };
+  const { OpenAICompatibleChatModel } = await import('../../src/openai/adapter.js');
+  const vis = new OpenAICompatibleChatModel({ baseURL: 'http://x/v1', apiKey: 'k', model: 'glm-5.3-flash', fetchImpl: f });
+  assert.equal(vis.capabilities.vision, true);
+  await vis.generate({ messages: [msg] });
+  assert.deepEqual(body.messages[0].content, [{ type: 'text', text: '【图片】截图.png' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }]);
+  const blind = new OpenAICompatibleChatModel({ baseURL: 'http://x/v1', apiKey: 'k', model: 'deepseek-flash', fetchImpl: f });
+  assert.equal(blind.capabilities.vision, false, '看不了图：路由不会把带图的一轮给它');
+});

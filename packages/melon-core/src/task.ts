@@ -119,6 +119,11 @@ export interface Attachment {
   readonly fresh: boolean;
   /** 开头一段文字（新给的才有）：直接进上下文，不用先读一次句柄。 */
   readonly head?: string;
+  /**
+   * 图片附件：`textRef` 存的是图片本身（不是文字，`chars` 为 0），这里写类型。
+   * 进上下文时作为图片发给能看图的模型；不当文字读。
+   */
+  readonly image?: { readonly mime: string };
 }
 
 export interface TaskSpec {

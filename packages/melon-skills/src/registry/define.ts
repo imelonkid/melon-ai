@@ -55,6 +55,8 @@ export interface ToolSpec<A = Record<string, unknown>> {
   readonly triggers?: readonly string[];
   /** 结果摘要进上下文的上限（字符）。只有「结果就是给模型的指令」的工具需要调大。 */
   readonly outputLimit?: number;
+  /** 按次收费的外部服务（搜索、生图）：每次真的执行都记进用量账本。见 core 的 `ToolDescriptor.billing`。 */
+  readonly billing?: ToolDescriptor['billing'];
   /** 只在满足条件的任务里提供给模型，例如「只在对话里」。 */
   readonly when?: (task: Task) => boolean;
   run(args: A, ctx: ToolContext): Promise<string | ToolOutput> | string | ToolOutput;
@@ -100,6 +102,7 @@ export function defineTool<A = Record<string, unknown>>(spec: ToolSpec<A>): Tool
     ...(spec.untrustedOutput ? { untrustedOutput: true } : {}),
     ...(spec.triggers !== undefined ? { triggers: spec.triggers } : {}),
     ...(spec.outputLimit ? { outputLimit: spec.outputLimit } : {}),
+    ...(spec.billing ? { billing: spec.billing } : {}),
     ...(userSuppliedOf(spec.input) ? { userSupplied: userSuppliedOf(spec.input)! } : {}),
   };
   const handler: ToolHandler = async (args, ctx) => {

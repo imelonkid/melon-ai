@@ -1,3 +1,4 @@
+import type { ArtifactRef } from './ids.js';
 import type { JSONSchema, RiskClass } from './tool.js';
 import type { CallMeta, Currency, ModelPrice, PlanPricing } from './usage.js';
 
@@ -37,6 +38,18 @@ export interface Message {
    * 不标的（宿主的说明、任务目标、当前时间、记忆）不压缩。适配器不发这个字段。
    */
   readonly part?: 'history' | 'step' | 'result';
+  /**
+   * 随这条消息的图片（用户给的截图、照片）。装配器只写句柄；发给模型前由 agent 读出内容（`data`，base64），
+   * 适配器转成各家的格式。模型看不了图（`capabilities.vision` 不为 true）时路由不会选它。
+   */
+  readonly images?: readonly MessageImage[];
+}
+
+export interface MessageImage {
+  readonly ref: ArtifactRef;
+  readonly mime: string;
+  /** base64。发给模型前才填。 */
+  readonly data?: string;
 }
 
 /**
@@ -123,6 +136,8 @@ export interface ModelCapabilities {
   readonly jsonSchema: boolean;
   /** 支持前缀缓存。装配器据此决定值不值得为缓存做排序优化。 */
   readonly promptCache: boolean;
+  /** 能看图（消息里可以带图片）。不填按看不了算。 */
+  readonly vision?: boolean;
 }
 
 export interface ChatModel {
@@ -208,6 +223,8 @@ export const TIER_RANK: Readonly<Record<ModelTier, number>> = { basic: 1, standa
 /** 这次要模型做什么：路由据此筛选（要工具的只给支持工具的模型）、按任务类别套规则。 */
 export interface RouteContext {
   readonly needsTools?: boolean;
+  /** 这一轮带图片：只在能看图的模型里选。 */
+  readonly needsVision?: boolean;
   readonly meta?: CallMeta;
 }
 

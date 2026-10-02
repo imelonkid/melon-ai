@@ -1,7 +1,7 @@
 {
   "name": "@melon-ai/skills",
   "version": "0.0.1",
-  "description": "技能：工具调用管线、准入策略、工具注册与审查（defineTool / defineSkill）；内置技能；Agent Skills 加载（./agentskills）。联网（./web）、发邮件（./mail）、本地文件（./files）、MCP 服务器（./mcp）需要 Node。",
+  "description": "技能：工具调用管线、准入策略、工具注册与审查（defineTool / defineSkill）；内置技能；Agent Skills 加载（./agentskills）。联网（./web）、发邮件（./mail）、本地文件（./files）、MCP 服务器（./mcp）、生成图片（./images）需要 Node。",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -36,13 +36,18 @@
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js",
       "require": "./dist/mcp.cjs"
+    },
+    "./images": {
+      "types": "./dist/images.d.ts",
+      "import": "./dist/images.js",
+      "require": "./dist/images.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup --entry.index src/index.ts --entry.web src/builtin/web/index.ts --entry.mail src/builtin/mail/index.ts --entry.agentskills src/agentskills/index.ts --entry.files src/builtin/files/index.ts --entry.mcp src/mcp/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.index src/index.ts --entry.web src/builtin/web/index.ts --entry.mail src/builtin/mail/index.ts --entry.agentskills src/agentskills/index.ts --entry.files src/builtin/files/index.ts --entry.mcp src/mcp/index.ts --entry.images src/builtin/images/index.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*/*.test.ts"
   },
   "dependencies": {

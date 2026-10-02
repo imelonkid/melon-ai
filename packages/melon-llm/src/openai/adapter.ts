@@ -1,7 +1,8 @@
 import type {
-  ChatModel, GenerateRequest, GenerateResult, ModelCapabilities, ModelToolCall, Usage,
+  ChatModel, GenerateRequest, GenerateResult, Message, ModelCapabilities, ModelToolCall, Usage,
 } from '@melon-ai/core';
 import { billingError } from '../shared/account.js';
+import { imagesOf, visionByName } from '../shared/vision.js';
 import { ToolError } from '@melon-ai/core';
 import { toolNameCodec } from '../shared/toolname.js';
 
@@ -30,6 +31,8 @@ export interface OpenAICompatibleOptions {
   readonly preset?: OpenAICompatiblePreset;
   readonly contextWindow?: number;
   readonly maxTokens?: number;
+  /** 能看图。不填按模型名判断（`visionByName`）。 */
+  readonly vision?: boolean;
   /** 每百万 token 的价格，用于成本归因。不填则不计费用。 */
   readonly pricing?: { readonly inUSD: number; readonly outUSD: number };
   readonly timeoutMs?: number;
@@ -81,7 +84,21 @@ export class OpenAICompatibleChatModel implements ChatModel {
       jsonSchema: true,
       // 多数兼容服务有自动前缀缓存，但不保证；按没有算，装配器的排序依然有益无害
       promptCache: false,
+      vision: opts.vision ?? visionByName(opts.model),
     };
+  }
+
+  /**
+   * 带图片的消息发成「文字 + 图片」的数组（OpenAI 的 image_url，data URL）。
+   * 谁能收到图由路由决定（`capabilities.vision`，价格页写了输入模态的以它为准）—— 这里不再按名字二次判断。
+   */
+  private contentOf(m: Message): string | readonly Record<string, unknown>[] {
+    const imgs = imagesOf(m);
+    if (imgs.length === 0) return m.content;
+    return [
+      { type: 'text', text: m.content },
+      ...imgs.map((i) => ({ type: 'image_url', image_url: { url: `data:${i.mime};base64,${i.data}` } })),
+    ];
   }
 
   async listModels(signal?: AbortSignal): Promise<readonly string[]> {
@@ -122,7 +139,7 @@ export class OpenAICompatibleChatModel implements ChatModel {
           max_tokens: req.maxOutputTokens ?? this.opts.maxTokens ?? 8_192,
           messages: req.messages.map((m) => ({
             role: m.role === 'tool' ? 'user' : m.role,
-            content: m.content,
+            content: this.contentOf(m),
           })),
           ...(codec.tools.length > 0
             ? {

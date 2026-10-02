@@ -211,6 +211,8 @@ export function rankAuto(i: AutoRankInput): { readonly ranked: readonly ModelEnt
     let reason: string | undefined;
     if (e.enabled === false) reason = '未启用';
     else if (i.ctx?.needsTools && !e.model.capabilities.tools) reason = '不支持工具';
+    // 这一轮带图：看不了图的连固定的、退回的都不选 —— 对着「附了一张图」的说明瞎猜比直接说做不了更糟
+    else if (i.ctx?.needsVision && !e.model.capabilities.vision) reason = '看不了图';
     else if (!pinned && !e.tier) reason = '未定档';
     else if (!pinned && TIER_RANK[e.tier!] < min) reason = '档次不够';
     const cache = i.stats.cacheRate(key);
@@ -238,7 +240,10 @@ export function rankAuto(i: AutoRankInput): { readonly ranked: readonly ModelEnt
   let pool = all.filter((c) => c.eligible);
   // 一个够档的都没有（都没定档、档次都不够）：退回到能用的里挑，不让任务直接失败 —— 路由页会把这个情况标出来
   const fellBack = pool.length === 0;
-  if (fellBack) pool = all.filter((c) => c.entry.enabled !== false && !(i.ctx?.needsTools && !c.entry.model.capabilities.tools));
+  if (fellBack) {
+    pool = all.filter((c) => c.entry.enabled !== false && !(i.ctx?.needsTools && !c.entry.model.capabilities.tools)
+      && !(i.ctx?.needsVision && !c.entry.model.capabilities.vision));
+  }
 
   const order = (a: (typeof all)[number], b: (typeof all)[number]): number => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;

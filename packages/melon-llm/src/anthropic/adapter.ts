@@ -3,6 +3,7 @@ import type {
   ChatModel, GenerateRequest, GenerateResult, Message, ModelCapabilities, ModelToolCall, Usage,
 } from '@melon-ai/core';
 import { billingError } from '../shared/account.js';
+import { imagesOf } from '../shared/vision.js';
 import { ToolError } from '@melon-ai/core';
 import { toolNameCodec } from '../shared/toolname.js';
 
@@ -81,6 +82,7 @@ export class AnthropicChatModel implements ChatModel {
       tools: true,
       jsonSchema: true,
       promptCache: true,
+      vision: true,
     };
     this.client = new Anthropic({
       // 不传则由 SDK 从 ANTHROPIC_API_KEY / ant auth 配置解析
@@ -116,7 +118,16 @@ export class AnthropicChatModel implements ChatModel {
               system: [{ type: 'text' as const, text: system, cache_control: { type: 'ephemeral' as const } }],
             }
           : {}),
-        messages: rest.map((m) => ({ role: roleOf(m), content: m.content })),
+        messages: rest.map((m) => {
+          const imgs = imagesOf(m);
+          // 图片：base64 块在前、文字在后（Anthropic 建议的顺序）
+          return imgs.length === 0
+            ? { role: roleOf(m), content: m.content }
+            : { role: roleOf(m), content: [
+              ...imgs.map((i) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: i.mime as 'image/png', data: i.data } })),
+              { type: 'text' as const, text: m.content },
+            ] };
+        }),
         ...(codec.tools.length > 0
           ? {
               tools: codec.tools.map((t) => ({

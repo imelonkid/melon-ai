@@ -1346,6 +1346,19 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     - 换模型时同一家的其余模型不再试（同一个账户），名额留给别家。
     - 这一家暂停 30 分钟（`AccountStatus`，排序时跳过；全都暂停了就都留着）。到期再试；答上来了、宿主改了这家的配置、连接测试通过 —— 立即恢复。
       连接测试遇到余额不足也标上。宿主用 `agent.models.accounts()` 提示用户。
+93. **看图、生图。**
+    - **看图**：消息可以带图片（`Message.images`，装配器只写句柄，发给模型前 agent 读出 base64、同一张图缓存着）；
+      适配器转成各家格式（OpenAI 兼容的 `image_url` data URL、Anthropic 的 `image` 块）。图片附件（`NewAttachment.image`）存成 artifact，
+      `Attachment.image` 标明类型、不当文字读（`artifact_read` 读不到它）；一轮最多带 4 张（新给的优先，再是最近沿用的），其余只列名字。
+      图片里也可能写着「指令」：和文字附件一样标成工具数据、新给就带污点。
+    - **能不能看图**（`ModelCapabilities.vision`）：价格页写了「输入模态」的以它为准（智谱的价格表有这一列，「视觉理解」一节的也算；
+      `ModelPrice.inputs` 随价格同步存下来，`PriceBook.effective` 套到模型上）；没写的按模型名判断（`visionByName`，宁可漏判不可错判）。
+    - **路由**：带图的一轮只在能看图的模型里选（自动路由的「看不了图」不进候选，固定的也不行）；一个都没有时直接说
+      「当前启用的模型都看不了图」，能看图的那家暂停着（余额不足）时说那家用不了 —— 不让看不了图的模型对着「附了一张图」瞎猜。
+    - **生图**：core 的 `ImageGenerator` 端口（和搜索一样，各家接口不同，厂商实现在 plugins：智谱 `zhipuImages`，CogView-3-Flash 免费、
+      GLM-Image 0.1 元/张）；内置技能 `images({ generator, dir })`（`@melon-ai/agent/images`），工具 `image.generate`：对外操作（描述发给厂商），
+      按次计费（免费的记 0 元），图片存进输出目录，作为 `ToolOutput.files` 交给宿主显示。临时链接由插件下载好。
+    - 顺带：`defineTool` 支持 `billing`（之前只有联网搜索手工拼描述）。
 
 #### 包结构合并（14 → 8）
 

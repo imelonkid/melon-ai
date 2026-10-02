@@ -1,4 +1,4 @@
-import type { ModelEntry, ModelPrice, PriceChange, PriceSource, PriceStore, PriceSync } from '@melon-ai/core';
+import type { ChatModel, ModelEntry, ModelPrice, PriceChange, PriceSource, PriceStore, PriceSync } from '@melon-ai/core';
 
 /**
  * 价格簿：从各家官方文档同步来的价格。引擎只管机制（拉取、校验、存档、生效），怎么读文档在插件里。
@@ -11,6 +11,17 @@ import type { ModelEntry, ModelPrice, PriceChange, PriceSource, PriceStore, Pric
  *
  * 优先级：用户手填 > 同步来的 > 内置。手填的模型同步不覆盖（见 `effective`）。
  */
+/** 换掉模型的能力描述（其余原样转给原模型）。 */
+function withCapabilities(m: ChatModel, patch: Partial<ChatModel['capabilities']>): ChatModel {
+  return {
+    id: m.id,
+    capabilities: { ...m.capabilities, ...patch },
+    generate: (req) => m.generate(req),
+    ...(m.stream ? { stream: (req: Parameters<NonNullable<ChatModel['stream']>>[0]) => m.stream!(req) } : {}),
+    ...(m.listModels ? { listModels: (signal?: AbortSignal) => m.listModels!(signal) } : {}),
+  };
+}
+
 export class PriceBook {
   private readonly current = new Map<string, PriceSync>();
   private sources: readonly PriceSource[] = [];
@@ -47,7 +58,11 @@ export class PriceBook {
   effective(e: ModelEntry): ModelEntry {
     if (e.priceSource === 'manual') return e;
     const p = this.price(e.egress, e.model.id);
-    return p ? { ...e, price: p, priceSource: 'synced' } : e;
+    if (!p) return e;
+    // 价格页写了输入模态：能不能看图以它为准（按模型名猜的可能漏）
+    const vision = p.inputs ? p.inputs.includes('image') : undefined;
+    const model = vision === undefined || vision === !!e.model.capabilities.vision ? e.model : withCapabilities(e.model, { vision });
+    return { ...e, model, price: p, priceSource: 'synced' };
   }
 
   /** 每家最新的同步结果（只列当前配置的来源）。 */

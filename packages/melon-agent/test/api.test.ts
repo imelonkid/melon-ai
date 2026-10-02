@@ -701,3 +701,52 @@ test('取消：回答写到一半停下 —— 已经显示出来的留在结果
     assert.equal(done.outcome?.answer, undefined, '没写完、没核对：不是回答');
   } finally { await agent.stop(); }
 });
+
+test('看图：图片附件发给能看图的模型（带上内容）；只启用了看不了图的模型时直接说明，不让它瞎猜；追问时沿用最近的图，最多 4 张', async () => {
+  const seen: { model: string; images: number; data: boolean }[] = [];
+  const mk = (id: string, vision: boolean) => {
+    const m = new ScriptedModel([]);
+    (m as { id: string }).id = id;
+    (m as unknown as { capabilities: object }).capabilities = { ...m.capabilities, vision };
+    m.generate = async (req) => {
+      const imgs = req.messages.flatMap((x) => x.images ?? []);
+      seen.push({ model: id, images: imgs.length, data: imgs.every((i) => typeof i.data === 'string' && i.data.length > 0) });
+      return { text: `${id} 看完了`, modelId: id, stopReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } };
+    };
+    return m;
+  };
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+  // 看不了图的排在前面（更便宜、质量更高）—— 带图时也不能选它
+  const blind = { model: mk('deepseek-flash', false), quality: 9, costUSD: 0.1, egress: 'deepseek', label: 'd' };
+  const eyes = { model: mk('glm-5.3-flash', true), quality: 5, costUSD: 1, egress: 'zhipu', label: 'z' };
+  const agent = await createAgent({ models: [blind, eyes], platform: quiet });
+  try {
+    const done1 = until(agent, (t) => t.state === 'SUCCEEDED');
+    const t1 = await agent.run('这张截图里写了什么', { attachments: [{ name: '截图.png', size: png.length, note: '图片', image: { data: png, mime: 'image/png' } }] });
+    await done1;
+    assert.deepEqual(seen.at(-1), { model: 'glm-5.3-flash', images: 1, data: true }, '选能看图的，图片带上内容');
+    assert.equal(t1.attachments![0]!.image?.mime, 'image/png');
+    assert.equal((await agent.tasks.get(t1.id))!.tainted, true, '图片里也可能写着指令');
+
+    // 不带图：照常选更合适的
+    const done2 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === 'deepseek-flash 看完了');
+    await agent.run('你好');
+    await done2;
+
+    // 追问：沿用之前的 5 张图 + 新给 1 张，只带最近的 4 张
+    const many = Array.from({ length: 5 }, (_, i) => ({ ...t1.attachments![0]!, name: `旧${i}.png` }));
+    const done3 = until(agent, (t) => t.state === 'SUCCEEDED' && t.outcome?.answer === 'glm-5.3-flash 看完了' && t.id !== t1.id);
+    await agent.run('再看看', { attachments: [...many, { name: '新.png', size: png.length, note: '图片', image: { data: png, mime: 'image/png' } }] });
+    await done3;
+    assert.equal(seen.at(-1)!.images, 4);
+  } finally { await agent.stop(); }
+
+  // 只有看不了图的：说明白
+  const only = await createAgent({ models: [{ model: mk('deepseek-flash', false), quality: 9, costUSD: 0.1, egress: 'deepseek', label: 'd' }], platform: quiet });
+  try {
+    const failed = until(only, (t) => t.state === 'FAILED');
+    await only.run('看图', { attachments: [{ name: 'a.png', size: 3, note: '图片', image: { data: png, mime: 'image/png' } }] });
+    const t = await failed;
+    assert.match(t.outcome!.reason!, /当前启用的模型都看不了图/);
+  } finally { await only.stop(); }
+});

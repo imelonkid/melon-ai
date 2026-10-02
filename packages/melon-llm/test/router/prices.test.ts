@@ -62,3 +62,17 @@ test('价格同步：模型池选模型和记账都用同步来的价格；手�
   const res = await (await pool.select('plan', undefined, { meta: { purpose: 'plan' } })).primary.generate({ messages: [] });
   assert.equal(res.usage.cost?.amount, 0.5, '记账用同步来的价格');
 });
+
+test('价格页写了输入模态：带图片的按能看图算（模型名猜不出的也认），纯文本的按看不了算', async () => {
+  const book = new PriceBook({ store: store(), now: () => 1000 });
+  book.setSources([source([{ prices: { 'glm-new-omni': { ...P(1, 2), inputs: ['text', 'image'] }, 'glm-5.3': { ...P(8, 28), inputs: ['text'] } } }])]);
+  await book.sync();
+  const mk = (id: string, vision: boolean): ModelEntry => ({
+    model: { id, capabilities: { contextWindow: 1, maxOutputTokens: 1, tools: true, jsonSchema: true, promptCache: false, vision }, generate: async () => ({ text: id, modelId: id, stopReason: 'stop', usage: { inputTokens: 0, outputTokens: 0 } }) },
+    quality: 5, costUSD: 1, egress: 'deepseek',
+  });
+  const omni = book.effective(mk('glm-new-omni', false));
+  assert.equal(omni.model.capabilities.vision, true);
+  assert.equal((await omni.model.generate({ messages: [] })).text, 'glm-new-omni', '其余照原样转给原模型');
+  assert.equal(book.effective(mk('glm-5.3', true)).model.capabilities.vision, false);
+});

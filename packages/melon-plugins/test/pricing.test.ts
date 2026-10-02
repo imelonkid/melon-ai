@@ -50,6 +50,14 @@ test('智谱：文本 / 视觉模型的表，展示名转小写 id；分档的�
   assert.equal(s.prices['glm-ocr']!.cachedInput, undefined, '「不支持」缓存的不填缓存价');
 });
 
+test('智谱：读出输入模态 —— 「输入模态」列；「视觉理解」一节里的算能看图；纯文本的写 text', () => {
+  const s = parseZhipuPricing(fx('zhipu-pricing.md'));
+  assert.deepEqual(s.prices['glm-5.3-flash']!.inputs, ['image', 'video', 'file', 'text']);
+  assert.deepEqual(s.prices['glm-5.3']!.inputs, ['text']);
+  assert.deepEqual(s.prices['glm-5v-turbo']!.inputs, ['text', 'image'], '视觉理解一节');
+  assert.equal(s.prices['glm-5.1']!.inputs, undefined, '没写的不猜');
+});
+
 test('Kimi：DocTable 组件里的表，按列名取缓存命中 / 未命中 / 输出', () => {
   const s = parseKimiPricing(fx('kimi-pricing.md'));
   const k3 = s.prices['kimi-k3']!;
@@ -71,4 +79,28 @@ test('DeepSeek：高峰倍数取各格里出现最多的 —— 一格读错（�
   const s = parseDeepseekPricing(html.slice(0, j) + '>12元<' + html.slice(j + '>1元<'.length));
   assert.equal(s.prices['deepseek-flash']!.input, 12);
   assert.equal(s.prices['deepseek-flash']!.peak!.multiplier, 2);
+});
+
+test('智谱生图：POST images/generations（模型、描述、尺寸），下载临时链接；余额不足、key 不对、内容审核分别给码', async () => {
+  const { zhipuImages } = await import('../src/zhipu/index.js');
+  const calls: { url: string; body?: unknown }[] = [];
+  const ok = (async (url: string, init?: { body?: string }) => {
+    calls.push({ url, ...(init?.body ? { body: JSON.parse(init.body) } : {}) });
+    if (url.endsWith('/images/generations')) return new Response(JSON.stringify({ data: [{ url: 'https://cdn.example/x.png' }] }), { status: 200 });
+    return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'image/png' } });
+  }) as unknown as typeof fetch;
+  const g = zhipuImages({ apiKey: 'k', baseURL: 'http://stub/v4', fetchImpl: ok });
+  assert.equal(g.model, 'cogview-3-flash', '默认免费的');
+  assert.equal(g.label, 'CogView-3-Flash（免费）');
+  assert.deepEqual(g.price, { amount: 0, currency: 'CNY' });
+  const out = await g.generate({ prompt: '橘猫', size: '1024x1024' });
+  assert.deepEqual(calls[0], { url: 'http://stub/v4/images/generations', body: { model: 'cogview-3-flash', prompt: '橘猫', size: '1024x1024' } });
+  assert.equal(calls[1]!.url, 'https://cdn.example/x.png');
+  assert.deepEqual([...out[0]!.data], [1, 2, 3]);
+  assert.deepEqual(zhipuImages({ apiKey: 'k', model: 'glm-image' }).price, { amount: 0.1, currency: 'CNY' });
+
+  const fail = (status: number, message: string) => zhipuImages({ apiKey: 'k', fetchImpl: (async () => new Response(JSON.stringify({ error: { message } }), { status })) as unknown as typeof fetch });
+  await assert.rejects(fail(429, '余额不足或无可用资源包,请充值。').generate({ prompt: 'x' }), (e: any) => e.code === 'FATAL' && /^余额不足/.test(e.message));
+  await assert.rejects(fail(401, 'invalid api key').generate({ prompt: 'x' }), (e: any) => e.code === 'DENIED');
+  await assert.rejects(fail(400, '内容不合规').generate({ prompt: 'x' }), (e: any) => e.code === 'INVALID_ARGS' && /换个说法/.test(e.hint));
 });

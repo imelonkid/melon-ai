@@ -31,6 +31,10 @@ export interface ModelPrice {
   readonly peak?: PeakPricing;
   /** 价格的出处（官方文档地址），给人核对用。 */
   readonly source?: string;
+  /**
+   * 能输入什么（厂商价格页写了「输入模态」的才有）。带 `image` 的按能看图算，比按模型名猜靠谱。
+   */
+  readonly inputs?: readonly ('text' | 'image' | 'video' | 'file' | 'audio')[];
 }
 
 export interface PeakPricing {

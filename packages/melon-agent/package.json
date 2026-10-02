@@ -51,13 +51,18 @@
       "types": "./dist/mcp.d.ts",
       "import": "./dist/mcp.js",
       "require": "./dist/mcp.cjs"
+    },
+    "./images": {
+      "types": "./dist/images.d.ts",
+      "import": "./dist/images.js",
+      "require": "./dist/images.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup --entry.index src/index.ts --entry.sqlite src/sqlite.ts --entry.anthropic src/anthropic.ts --entry.web src/web.ts --entry.mail src/mail.ts --entry.files src/files.ts --entry.agentskills src/agentskills.ts --entry.mcp src/mcp.ts --entry.node src/node.ts --format esm,cjs --dts --clean",
+    "build": "tsup --entry.index src/index.ts --entry.sqlite src/sqlite.ts --entry.anthropic src/anthropic.ts --entry.web src/web.ts --entry.mail src/mail.ts --entry.files src/files.ts --entry.agentskills src/agentskills.ts --entry.mcp src/mcp.ts --entry.images src/images.ts --entry.node src/node.ts --format esm,cjs --dts --clean",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

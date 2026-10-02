@@ -142,12 +142,14 @@ export interface RunOptions {
   readonly attachments?: readonly (NewAttachment | Attachment)[];
 }
 
-/** 一个新附件：名字、大小、说明、抽出的文字。 */
+/** 一个新附件：名字、大小、说明，加上抽出的文字或图片本身（二选一）。 */
 export interface NewAttachment {
   readonly name: string;
   readonly size: number;
   readonly note: string;
-  readonly text: string;
+  readonly text?: string;
+  /** 图片：发给能看图的模型。宿主先压好尺寸（长边 2048 以内）。 */
+  readonly image?: { readonly data: Uint8Array; readonly mime: string };
 }
 
 /** `schedules.create` 的友好写法：写目标和「什么时候」，其余有默认值。 */
@@ -285,6 +287,13 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
   }): Promise<void>;
   /** 底层调度器。一般用 `schedules` 就够了。 */
   readonly scheduler: Scheduler;
+}
+
+/** 字节 → base64。根入口不能用 Node 的 Buffer：分段转成二进制串再 btoa。 */
+function toBase64(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
 }
 
 /** 附件文字的 artifact 记在这个名下（任务还没创建；读的权限由 task.attachments 给）。 */
@@ -463,11 +472,32 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     if (summaries.size > 200) summaries.delete(summaries.keys().next().value as string);
     return p;
   };
-  const buildContext = budget === null ? rawContext : async (task: Task): Promise<ContextBundle> => {
+  // 图片：装配器只写句柄，发给模型前读出内容（base64）。同一张图每一步都在，读过的留着（最多 16 张）
+  const imageData = new Map<string, Promise<string>>();
+  const withImages = async (bundle: ContextBundle): Promise<ContextBundle> => {
+    if (!bundle.messages.some((m) => m.images?.length)) return bundle;
+    const messages = await Promise.all(bundle.messages.map(async (m) => {
+      if (!m.images?.length) return m;
+      const images = await Promise.all(m.images.map(async (i) => {
+        if (i.data) return i;
+        let p = imageData.get(i.ref);
+        if (!p) {
+          p = stores.artifacts.read(i.ref).then(toBase64);
+          p.catch(() => imageData.delete(i.ref));
+          imageData.set(i.ref, p);
+          if (imageData.size > 16) imageData.delete(imageData.keys().next().value as string);
+        }
+        try { return { ...i, data: await p }; } catch { return i; }
+      }));
+      return { ...m, images };
+    }));
+    return { ...bundle, messages };
+  };
+  const buildContext = budget === null ? async (task: Task) => withImages(await rawContext(task)) : async (task: Task): Promise<ContextBundle> => {
     const ctx = await rawContext(task);
     const { bundle, report } = await fitContext(ctx, { budget, tokenizer, summarize: summarizeFor(task) });
     if (report.actions.length) logger.log('info', '上下文超出预算，已压缩', { taskId: task.id, before: report.before, after: report.after, actions: report.actions.join(',') });
-    return bundle;
+    return withImages(bundle);
   };
 
   const base = await assemble({
@@ -595,8 +625,14 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       const attachments: Attachment[] = [];
       for (const a of o.attachments ?? []) {
         if ('textRef' in a) { attachments.push({ ...a, fresh: false }); continue; }
-        const textRef = await stores.artifacts.put(ATTACHMENT_OWNER, a.text, { mime: 'text/plain', summary: `附件：${a.name}` });
-        attachments.push({ name: a.name, size: a.size, note: a.note, textRef, chars: a.text.length, fresh: true, head: a.text.slice(0, 3000) });
+        if (a.image) {
+          const textRef = await stores.artifacts.put(ATTACHMENT_OWNER, a.image.data, { mime: a.image.mime, summary: `图片：${a.name}` });
+          attachments.push({ name: a.name, size: a.size, note: a.note, textRef, chars: 0, fresh: true, image: { mime: a.image.mime } });
+          continue;
+        }
+        const text = a.text ?? '';
+        const textRef = await stores.artifacts.put(ATTACHMENT_OWNER, text, { mime: 'text/plain', summary: `附件：${a.name}` });
+        attachments.push({ name: a.name, size: a.size, note: a.note, textRef, chars: text.length, fresh: true, head: text.slice(0, 3000) });
       }
       return base.submit({
         agentId: asAgentId(o.agentId ?? defaultAgent),

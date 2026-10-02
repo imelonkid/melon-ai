@@ -164,7 +164,15 @@ export class ModelPool implements ModelRouter {
         }).ranked
       // 旧的三档：要工具时同样只给支持工具的
       : this.usable(this.router.rank(intent)).map((e) => (this.book ? this.book.effective(e) : e))
-        .filter((e, _i, all) => !ctx.needsTools || e.model.capabilities.tools || all.every((x) => !x.model.capabilities.tools));
+        .filter((e, _i, all) => !ctx.needsTools || e.model.capabilities.tools || all.every((x) => !x.model.capabilities.tools))
+        .filter((e) => !ctx.needsVision || e.model.capabilities.vision);
+    if (ranked.length === 0 && ctx.needsVision) {
+      // 能看图的都没启用，或者都暂停了（余额不足）：说清楚，别让看不了图的模型去猜
+      const paused = this.account.list().length > 0 && this.entries.some((e) => e.model.capabilities.vision && this.account.down(e.egress));
+      throw new ToolError('FATAL', paused
+        ? '能看图的模型现在用不了（账户余额不足或 key 失效），这次没法看图'
+        : '当前启用的模型都看不了图', { retriable: false, hint: paused ? '去模型设置里给这家充值，或启用另一家能看图的' : '启用一个能看图的模型（如智谱 GLM-5.3-Flash、通义 Qwen-VL、Claude、GPT-4o）' });
+    }
     if (ranked.length === 0) {
       throw new ToolError('FATAL', ctx.needsTools ? '没有支持工具调用的模型' : '没有可用的模型', { retriable: false, hint: '在模型配置里启用一个模型' });
     }
