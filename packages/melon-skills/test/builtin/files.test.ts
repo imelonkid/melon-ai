@@ -135,7 +135,7 @@ test('本地文件：数据出境 —— 三个工具都是对外操作、输出
   assert.equal(folderCovers(s, 'folder=/Users/me'), false);
 });
 
-test('附件：抽出文字和说明；图片、文件夹、受保护的位置给出原因', async () => {
+test('附件：抽出文字和说明；图片读出字节；文件夹、受保护的位置给出原因', async () => {
   const { prepareAttachment } = await import('../../src/builtin/files/index.js');
   const dir = mkdtempSync(join(tmpdir(), 'attach-'));
   try {
@@ -147,7 +147,8 @@ test('附件：抽出文字和说明；图片、文件夹、受保护的位置�
     assert.equal(a.name, '费用.xlsx');
     assert.match(a.note, /Excel，1 张表/);
     assert.match(a.text, /产品部\t\t1280\.5/);
-    await assert.rejects(prepareAttachment(join(dir, 'a.png')), /当前模型看不了图片/);
+    const img = await prepareAttachment(join(dir, 'a.png'));
+    assert.deepEqual([img.note, img.image?.mime, [...(img.image?.data ?? [])]], ['图片', 'image/png', [0x89, 0x50]], '图片原样读出字节（尺寸由宿主压）');
     await assert.rejects(prepareAttachment(dir), /是文件夹/);
     await assert.rejects(prepareAttachment(join(dir, 'secret', 'k.txt'), { denyRead: [join(dir, 'secret')] }), /受保护的位置/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
