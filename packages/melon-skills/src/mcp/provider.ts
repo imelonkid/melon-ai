@@ -139,8 +139,10 @@ export class McpServerProvider implements SkillProvider {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private closing = false;
   private generation = 0;
+  private enabled: boolean;
 
   constructor(private readonly config: McpServerConfig, private readonly opts: McpOptions = {}) {
+    this.enabled = config.enabled !== false;
     this.skillId = slug(config.name, 32);
     this.id = `mcp:${this.skillId}`;
     this.sandbox = config.transport.kind !== 'stdio' || config.sandbox === false || opts.sandbox === false
@@ -155,7 +157,7 @@ export class McpServerProvider implements SkillProvider {
       name: this.config.name,
       skillId: this.skillId,
       state: this.state,
-      enabled: this.config.enabled !== false,
+      enabled: this.enabled,
       ...(this.error ? { error: this.error } : {}),
       log: this.log,
       ...(this.server ? { server: this.server } : {}),
@@ -182,7 +184,7 @@ export class McpServerProvider implements SkillProvider {
   }
 
   async list(): Promise<readonly SkillBundle[]> {
-    if (this.config.enabled === false || this.state !== 'ready' || this.accepted.length === 0) return [];
+    if (!this.enabled || this.state !== 'ready' || this.accepted.length === 0) return [];
     const skill: Skill = {
       id: asSkillId(this.skillId),
       name: this.config.name,
@@ -193,6 +195,14 @@ export class McpServerProvider implements SkillProvider {
     };
     const handlers = new Map<string, ToolHandler>(this.accepted.map((a) => [String(a.descriptor.id), this.handler(a.remoteName)]));
     return [{ skill, handlers }];
+  }
+
+  /** 启用 / 停用：不断开连接，只改给不给 Agent（用户看过工具列表后打开）。 */
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+    this.setState(this.state, this.error);
+    this.fireChange();
   }
 
   /** 断开重连（用户点「重新连接」、改了 key 之后）。 */

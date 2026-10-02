@@ -13,5 +13,5 @@
  * 标了「有破坏性」的每次都问；说明过审查；本机命令跑在沙箱里（密钥、钥匙串、宿主数据不能读写）。
  * `enabled: false`：照样连接、列出工具给用户过目，但不提供给 Agent —— 新加的服务器先这样。
  */
-export { mcp, McpServerProvider, parseMcpServers } from '@melon-ai/skills/mcp';
+export { mcp, McpServerProvider, parseMcpServers, mcpSlug } from '@melon-ai/skills/mcp';
 export type { McpServerConfig, McpTransportConfig, McpOptions, McpStatus, McpState, McpToolView } from '@melon-ai/skills/mcp';

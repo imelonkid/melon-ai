@@ -71,6 +71,11 @@ test('MCP：没启用的服务器照样连接、列出工具给用户过目，�
     assert.equal(st.enabled, false);
     assert.ok(st.tools.length > 0);
     assert.deepEqual(await off.list(), []);
+    let changed = 0;
+    off.onChange(() => { changed += 1; });
+    off.setEnabled(true);
+    assert.equal(changed, 1, '启用不用重连，通知注册表');
+    assert.ok((await off.list()).length === 1);
   } finally { await off.close(); }
 
   const bad = mcp({ name: 'nope', transport: { kind: 'stdio', command: '/no/such/command' }, sandbox: false }, { connectTimeoutMs: 5000 });
@@ -111,9 +116,10 @@ test('MCP：远程地址（Streamable HTTP）带上请求头里的 key；key 不
     const server = new Server({ name: 'remote', version: '1' }, { capabilities: { tools: {} } });
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: 'ping', description: '测连通', inputSchema: { type: 'object', properties: {} } }] }));
     server.setRequestHandler(CallToolRequestSchema, async () => ({ content: [{ type: 'text', text: 'pong' }] }));
-    const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    // 无会话模式。SDK 的类型在 exactOptionalPropertyTypes 下对不上，运行时没问题
+    const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined } as never);
     res.on('close', () => { void t.close(); void server.close(); });
-    await server.connect(t);
+    await server.connect(t as never);
     let body = '';
     for await (const c of req) body += c;
     await t.handleRequest(req, res, body ? JSON.parse(body) : undefined);
