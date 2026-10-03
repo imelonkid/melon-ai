@@ -767,6 +767,7 @@ test('定制 Agent：各自的说明书进上下文；只能用勾选的技能�
   const agent = await createAgent({
     models: [{ model, quality: 1, costUSD: 1, egress: 'test', label: 'test' }], tools: [note, mail], platform: quiet,
     agents: [{ id: 'writer', name: '创作助手', instructions: '你是聊天记录风格的创作助手，只写虚构的人物和场景。', skills: ['note'] }],
+    memory: true,
   });
   try {
     const done = until(agent, (t) => t.state === 'SUCCEEDED');
@@ -774,6 +775,9 @@ test('定制 Agent：各自的说明书进上下文；只能用勾选的技能�
     await done;
     assert.match(seen[0]!.text, /你是聊天记录风格的创作助手/, '说明书进上下文');
     assert.ok(seen[0]!.tools.includes('note.add') && !seen[0]!.tools.includes('mail.send'), `只给勾选的：${seen[0]!.tools.join(',')}`);
+    // 记忆也是一个技能（工具 id 虽是 builtin. 开头）：没勾就没有；读完整内容总在
+    assert.ok(!seen[0]!.tools.some((x) => x.includes('memory')), `没勾记忆：${seen[0]!.tools.join(',')}`);
+    assert.ok(seen[0]!.tools.includes('builtin.artifact_read'));
     const adm = (await agent.tasks.history(t.id)).map((r) => r.value).find((v) => v.t === 'AdmissionResolved') as unknown as { decision: string };
     assert.equal(adm.decision, 'deny', '模型硬调没勾选的工具：拒绝');
 
@@ -782,7 +786,7 @@ test('定制 Agent：各自的说明书进上下文；只能用勾选的技能�
     const done2 = until(agent, (x) => x.state === 'SUCCEEDED' && x.id !== t.id);
     await agent.run('随便聊聊');
     await done2;
-    assert.ok(seen[before]!.tools.includes('mail.send'));
+    assert.ok(seen[before]!.tools.includes('mail.send') && seen[before]!.tools.includes('builtin.memory_write'));
     assert.doesNotMatch(seen[before]!.text, /创作助手/);
   } finally { await agent.stop(); }
 });
@@ -802,8 +806,10 @@ test('画布：Agent 按格式生成、局部改；用户在界面上改的进�
     call('canvas.update', { ops: [{ op: 'add', path: '/items/-', value: '结尾' }], note: '加结尾' }),
     { text: '加好了', modelId: 'scripted', stopReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } },
   ];
+  const lasts: string[] = [];
   model.generate = async (req) => {
     seen.push({ tools: (req.tools ?? []).map((t) => t.name), text: req.messages.map((m) => m.content).join('\n') });
+    lasts.push(String(req.messages.at(-1)?.content ?? ''));
     return plan.shift()!;
   };
   const events: number[] = [];
@@ -817,6 +823,8 @@ test('画布：Agent 按格式生成、局部改；用户在界面上改的进�
     assert.ok(seen[0]!.tools.includes('canvas.update'), '绑定了画布才有画布工具');
     assert.match(seen[0]!.text, /大纲是 \{ title/, '这种画布的写法进上下文');
     assert.deepEqual((await agent.canvas.get('conv-1'))?.doc, { title: '第一章', items: ['开头'] });
+    // 画布的状态放在前面：工具刚返回时，最后一条仍是工具结果（模型按它接着做）
+    assert.match(lasts[1]!, /画布已更新到 v1/, `最后一条：${lasts[1]!.slice(0, 80)}`);
 
     // 用户在界面上改：基于 v1；之后再拿旧的 v1 改就冲突
     const e1 = await agent.canvas.edit('conv-1', 'outline', { ops: [{ op: 'replace', path: '/title', value: '序章' }], note: '标题改成序章', base: 1 });

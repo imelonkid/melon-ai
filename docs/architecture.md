@@ -1363,7 +1363,9 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     - `AgentProfile { id, name, instructions?, skills? }`，`createAgent({ agents })` / `configure({ agents })`；任务按 `run(goal, { agentId })` 归属。
     - 说明书放在上下文最前面（宿主的说明之前，不压缩）。
     - `skills` 是白名单：没勾的工具不给模型看，模型硬调也拒（`registry.isEnabledFor(toolId, agentId)`，准入时查）。
-      内置的基础能力（`builtin`、`artifact`、`canvas`）总在 —— 它们本身有 `when` 或不对外。没定义的 Agent（含默认的）不受限。
+      白名单按**提供工具的技能**算（技能来源的 bundle id），不按工具 id 的前缀：记忆和读完整内容的工具都叫 `builtin.*`，
+      但记忆是单独的技能 `memory` —— 写小说的 Agent 不该把人物设定记成用户的偏好，没勾就没有。
+      总会给的只有读完整内容（`builtin`）和画布（`canvas`，本身有 `when`）。没定义的 Agent（含默认的）不受限。
     - 引擎不认识任何具体的 Agent：都是宿主给的数据。
 95. **画布：Agent 和用户共同编辑的一份结构化内容。** 有些产品要的不是一段回答，而是一个能反复调整的「成品」（一页排版、一份表格、一个模拟界面）：
     Agent 生成，用户在界面上直接改，再让 Agent 接着改 —— 双方改的是同一份数据。
@@ -1373,7 +1375,8 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     - **局部改**：`canvas.update` 是 JSON Patch 的子集（add / replace / remove / move + JSON Pointer），改完按 schema 校验，不符合退回给模型、不生效。
       不让模型整份重写 —— 那样用户手改过的地方会被盖掉。本地写、可撤销，不问用户。
     - **用户改的进上下文**：每轮带上这种画布的写法、当前内容（太长只给开头，要改用 `canvas.read` 读全），以及 Agent 上一版之后用户改了哪里
-      （用户写的说明，或 `diffPaths` 算出的位置），并说明以用户改的为准。
+      （用户写的说明，或 `diffPaths` 算出的位置），并说明以用户改的为准。这条放在上下文前面（说明书之后），每一步重新取：
+      起初放在最后，压在刚返回的工具结果后面，模型（桩模型在 Jolly 的冒烟测试里）认不出工具已经返回，反复改画布。
     - 宿主接口 `agent.canvas`：`get` / `history` / `edit(id, kind, { doc | ops, note, base })`（同样校验；`base` 不是最新版就返回冲突 ——
       用户改的时候 Agent 刚改过）/ `revert(id, version)`（追加一个内容同旧版的新版本，历史不丢）。每个新版本发 `canvas` 事件。
 

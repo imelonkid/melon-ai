@@ -117,8 +117,9 @@ export function memory(opts: MemorySkillOptions): SkillProvider {
     },
   });
 
+  // 技能 id 单独一个（工具 id 仍是 builtin.memory_*）：定制 Agent 可以不给记忆 —— 比如写小说的 Agent 不该把人物设定记成用户的偏好
   return defineBuiltinSkill({
-    id: 'builtin',
+    id: 'memory',
     name: '记忆',
     purpose: '用户让你记住某件事、或提到之前说过的偏好时使用',
     tools: [write, recall, forget],

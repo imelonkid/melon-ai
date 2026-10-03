@@ -541,7 +541,8 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     if (!p?.instructions?.trim()) return bundle;
     return { ...bundle, messages: [{ role: 'user', from: 'host', content: `【你是「${p.name}」】\n${p.instructions.trim()}` }, ...bundle.messages] };
   };
-  // 绑定了画布：这种画布的写法、当前内容、用户上次之后在界面上改了哪里 —— 放在最后（最新的状态）
+  // 绑定了画布：这种画布的写法、当前内容、用户上次之后在界面上改了哪里。放在前面（说明书之后）：
+  // 放最后会压在刚返回的工具结果后面，模型就不知道该接着处理工具结果了。每一步都重新取，所以总是最新的
   const withCanvas = async (task: Task, bundle: ContextBundle): Promise<ContextBundle> => {
     if (!task.canvas) return bundle;
     const kind = canvasKinds.get(task.canvas.kind);
@@ -563,9 +564,9 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
         text += `\n\n用户在界面上改过（以用户改的为准，不要改回去）：${notes.length ? notes.join('；') : ''}${paths.length ? `${notes.length ? '；' : ''}改动位置 ${paths.join('、')}` : ''}`;
       }
     }
-    return { ...bundle, messages: [...bundle.messages, { role: 'user', from: 'host', content: text }] };
+    return { ...bundle, messages: [{ role: 'user', from: 'host', content: text }, ...bundle.messages] };
   };
-  const rawWithExtras = async (task: Task) => withCanvas(task, withProfile(task, await rawContext(task)));
+  const rawWithExtras = async (task: Task) => withProfile(task, await withCanvas(task, await rawContext(task)));
   const buildContext = budget === null ? async (task: Task) => withImages(await rawWithExtras(task)) : async (task: Task): Promise<ContextBundle> => {
     const ctx = await rawWithExtras(task);
     const { bundle, report } = await fitContext(ctx, { budget, tokenizer, summarize: summarizeFor(task) });

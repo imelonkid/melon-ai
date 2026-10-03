@@ -28,6 +28,8 @@ interface Candidate {
   readonly tool: Tool;
   readonly origin: ToolOrigin;
   readonly source: string;
+  /** 由哪个技能提供（技能来源的 bundle id）。宿主直接给的工具没有，按工具 id 的前缀算。 */
+  readonly skill?: string;
 }
 
 /**
@@ -47,8 +49,8 @@ export function fingerprint(d: Tool['descriptor']): string {
 }
 
 /** 引擎自己的基础工具（读完整内容、技能查找、记忆、历史）：定制 Agent 限技能时也总在。 */
-// 画布只在绑定了画布的任务里出现（`when`），不用每个 Agent 单独勾
-const ALWAYS_SKILLS = new Set(['builtin', 'artifact', 'canvas']);
+// 定制 Agent 的技能白名单之外总会给的：读完整内容（`builtin`）、画布（只在绑定了画布的任务里出现，`when`）
+const ALWAYS_SKILLS = new Set(['builtin', 'canvas']);
 
 const RANK: Record<ToolOrigin, number> = { builtin: 0, host: 1, extension: 2 };
 
@@ -84,6 +86,8 @@ export class ToolRegistry implements ToolResolver {
   private readonly listeners = new Set<(r: RegistrationReport) => void>();
   /** 定制 Agent：各自能用哪些技能。 */
   private profiles = new Map<string, AgentProfile>();
+  /** 每个生效的工具由哪个技能提供（白名单按它算：同是 builtin. 开头，记忆和读完整内容是两个技能）。 */
+  private skillOf = new Map<string, string>();
 
   private readonly now: () => number;
 
@@ -137,7 +141,7 @@ export class ToolRegistry implements ToolResolver {
           for (const d of b.skill.tools) {
             const handler = b.handlers.get(d.id);
             const when = b.when?.get(d.id);
-            if (handler) next.push({ tool: { descriptor: d, handler, ...(when ? { when } : {}) }, origin, source: p.id });
+            if (handler) next.push({ tool: { descriptor: d, handler, ...(when ? { when } : {}) }, origin, source: p.id, skill: String(b.skill.id) });
           }
         }
       }
@@ -155,6 +159,7 @@ export class ToolRegistry implements ToolResolver {
     ].sort((a, b) => RANK[a.origin] - RANK[b.origin]);
 
     const effective = new Map<string, Tool>();
+    const skillOf = new Map<string, string>();
     const holders = new Map<string, Candidate>();
     const rejected: RejectedTool[] = [];
     const warnings: { id: string; message: string }[] = [];
@@ -178,10 +183,12 @@ export class ToolRegistry implements ToolResolver {
       }
       for (const w of review.issues) if (w.level === 'warn') warnings.push({ id, message: w.message });
       effective.set(id, { ...c.tool, descriptor: review.descriptor });
+      skillOf.set(id, c.skill ?? String(review.descriptor.skillId));
       holders.set(id, c);
     }
 
     this.effective = effective;
+    this.skillOf = skillOf;
     this.lastReport = { accepted: [...effective.keys()], rejected, warnings };
     for (const cb of this.listeners) cb(this.lastReport);
   }
@@ -204,7 +211,7 @@ export class ToolRegistry implements ToolResolver {
   private allowed(d: Tool['descriptor'], agentId: string | undefined): boolean {
     const p = agentId === undefined ? undefined : this.profiles.get(agentId);
     if (!p?.skills) return true;
-    const skill = String(d.skillId);
+    const skill = this.skillOf.get(String(d.id)) ?? String(d.skillId);
     return ALWAYS_SKILLS.has(skill) || p.skills.includes(skill);
   }
 
