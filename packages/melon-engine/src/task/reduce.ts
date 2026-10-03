@@ -129,7 +129,7 @@ export function reduce(task: Task, event: TaskEvent, opts: ReduceOptions): Reduc
           // 没做成就是没做成：记 FAILED，原因原样给用户，不能显示成「已完成」
           return {
             task: patch({ usage: withUsage }, 'PLANNING', true),
-            effects: [settle(task.id, { status: 'FAILED', reason: step.reason })],
+            effects: [settle(task.id, { status: 'FAILED', reason: step.reason, ...(step.code ? { code: step.code } : {}) })],
           };
       }
     }

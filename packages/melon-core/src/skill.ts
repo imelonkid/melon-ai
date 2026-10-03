@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from './model.js';
 import type { AgentId, SkillId } from './ids.js';
 import type { ToolDescriptor, ToolHandler } from './tool.js';
 import type { Task } from './task.js';
@@ -77,6 +78,6 @@ export interface AgentProfile {
   readonly name: string;
   readonly instructions?: string;
   readonly skills?: readonly string[];
-  /** 思考：`off` 这个 Agent 每次问模型都不要思考（写作类的通常不需要）；不填用模型的默认。 */
-  readonly thinking?: 'off' | 'auto';
+  /** 思考力度：这个 Agent 默认想多少（写作类的通常 `off`）；任务自己给了的以任务为准；不填用模型的默认。 */
+  readonly thinking?: ThinkingLevel | 'auto';
 }

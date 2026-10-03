@@ -358,3 +358,25 @@ test('思考开关：宿主按任务给（定制 Agent 可以关思考），每�
   await new ReActPlanner({ router: router(m2) }).plan(input(), sig);
   assert.equal(m2.requests[0]!.thinking, undefined);
 });
+
+test('这一轮不带工具（宿主的「聊天」）：不给工具、不问分类器、按「回答」路由；要做事就停下并标明「需要工具」；任务的思考力度优先于 Agent 的', async () => {
+  const m = new StubModel([{ text: '量子计算是……' }]);
+  let asked = false;
+  const purposes: string[] = [];
+  const r = { ...router(m), select: async (purpose: string) => { purposes.push(purpose); return { primary: m, fallbacks: [], reason: 'stub', egress: [m.id] }; } };
+  const p = new ReActPlanner({ router: r as never, classifier: { classify: async () => { asked = true; return 'task' as const; } }, thinkingOf: () => 'high' });
+  const base = input();
+  const chat = (goal: string) => input({ task: { ...base.task, goal, toolsOff: true, thinking: 'off' } });
+  const step = await p.plan(chat('什么是量子计算'), sig);
+  assert.equal(step.kind, 'final');
+  assert.equal(m.requests[0]!.tools, undefined, '不带工具');
+  assert.equal(asked, false, '不问分类器');
+  assert.equal(purposes[0], 'answer');
+  assert.equal(m.requests[0]!.thinking, 'off', '任务的力度优先于 Agent 的');
+
+  const m2 = new StubModel([{ text: '好的' }]);
+  const step2 = await new ReActPlanner({ router: router(m2) }).plan(chat('帮我发邮件给产品组'), sig);
+  assert.equal(step2.kind, 'abort');
+  assert.equal(step2.kind === 'abort' ? step2.code : '', 'needs-tools');
+  assert.equal(m2.requests.length, 0, '不用问模型');
+});

@@ -147,6 +147,9 @@ export class OpenAICompatibleChatModel implements ChatModel {
           model: this.id,
           max_tokens: req.maxOutputTokens ?? this.opts.maxTokens ?? 8_192,
           ...(req.thinking === 'off' && this.opts.preset && THINKING_OFF[this.opts.preset]?.(this.id) ? { thinking: { type: 'disabled' } } : {}),
+          // 力度：DeepSeek 只有 low / high / max（默认 high，什么都先想很久）—— 低、中取 low，高取 high。智谱没有力度
+          ...(this.opts.preset === 'deepseek' && (req.thinking === 'low' || req.thinking === 'medium' || req.thinking === 'high')
+            ? { reasoning_effort: req.thinking === 'high' ? 'high' : 'low' } : {}),
           messages: req.messages.map((m) => ({
             role: m.role === 'tool' ? 'user' : m.role,
             content: this.contentOf(m),

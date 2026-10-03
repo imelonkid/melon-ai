@@ -863,3 +863,33 @@ test('画布：Agent 按格式生成、局部改；用户在界面上改的进�
     assert.ok(!seen[n]!.tools.some((x) => x.startsWith('canvas.')));
   } finally { await agent.stop(); }
 });
+
+test('这一轮不带工具（run 的 tools: false）+ 思考力度：模型拿不到工具、带上力度；要做事 → 任务没做成，结果带 code: needs-tools', async () => {
+  const reqs: { tools: number; thinking: string | undefined }[] = [];
+  const model = new ScriptedModel([]);
+  model.generate = async (req) => {
+    reqs.push({ tools: (req.tools ?? []).length, thinking: req.thinking });
+    return { text: '这是回答', modelId: 'scripted', stopReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } };
+  };
+  const mail = defineTool({ id: 'mail.send', description: '发邮件', input: { to: 'string' }, risk: 'external', triggers: ['发邮件'], run: () => '已发送' });
+  const agent = await createAgent({ models: [{ model, quality: 1, costUSD: 1, egress: 'test', label: 'test' }], tools: [mail], platform: quiet });
+  try {
+    let done = until(agent, (t) => t.state === 'SUCCEEDED');
+    const t1 = await agent.run('什么是量子计算', { tools: false, thinking: 'off' });
+    await done;
+    assert.equal(t1.toolsOff, true);
+    assert.deepEqual(reqs[0], { tools: 0, thinking: 'off' });
+
+    done = until(agent, (t) => t.state === 'FAILED');
+    await agent.run('帮我发邮件给 a@example.com', { tools: false });
+    const failed = await done;
+    assert.equal(failed.outcome?.code, 'needs-tools');
+    assert.equal(reqs.length, 1, '要做事的不问模型');
+
+    done = until(agent, (t) => t.state === 'SUCCEEDED' && t.id !== t1.id);
+    await agent.run('解释一下这句话', { thinking: 'medium' });
+    await done;
+    assert.equal(reqs[1]!.thinking, 'medium');
+    assert.ok(reqs[1]!.tools > 0, '没说 tools: false 照常带工具');
+  } finally { await agent.stop(); }
+});

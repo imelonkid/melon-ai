@@ -44,5 +44,7 @@ export function createTask(input: CreateTaskInput): Task {
     ...(spec.deadline !== undefined ? { deadline: spec.deadline } : {}),
     ...(spec.attachments?.length ? { attachments: spec.attachments } : {}),
     ...(spec.canvas ? { canvas: spec.canvas } : {}),
+    ...(spec.toolsOff ? { toolsOff: true } : {}),
+    ...(spec.thinking ? { thinking: spec.thinking } : {}),
   };
 }

@@ -83,6 +83,9 @@ export interface ModelToolCall {
   readonly args: unknown;
 }
 
+/** 思考力度。 */
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high';
+
 export interface GenerateRequest {
   readonly messages: readonly Message[];
   readonly tools?: readonly ModelTool[];
@@ -92,10 +95,10 @@ export interface GenerateRequest {
   readonly responseSchema?: JSONSchema;
   readonly maxOutputTokens?: number;
   /**
-   * 思考：`off` 不要思考（写东西这类不需要推理的事，思考只是又慢又贵）；`auto` 或不填用模型 / 厂商的默认。
-   * 关不掉的（强制思考的模型、没有这个开关的厂商）适配器忽略它，照常调用。
+   * 思考力度：`off` 不思考（写东西、闲聊这类不需要推理的事，思考只是又慢又贵）；`low` / `medium` / `high` 想得少到多；
+   * `auto` 或不填用模型 / 厂商的默认。各家只有其中几档的，适配器就近取；关不掉、没有力度的忽略，照常调用。
    */
-  readonly thinking?: 'off' | 'auto';
+  readonly thinking?: ThinkingLevel | 'auto';
   readonly temperature?: number;
   readonly signal?: AbortSignal;
   /**

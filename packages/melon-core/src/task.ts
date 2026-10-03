@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from './model.js';
 import type { AgentId, ArtifactRef, CallId, EpisodeId, SkillId, TaskId } from './ids.js';
 import type { ToolCall, ToolResultMeta, RiskClass } from './tool.js';
 import type { Usage } from './model.js';
@@ -134,6 +135,10 @@ export interface TaskSpec {
   readonly attachments?: readonly Attachment[];
   /** 绑定的画布（对话里的那块）。Agent 用 `canvas.read` / `canvas.update` 读改它。 */
   readonly canvas?: { readonly id: string; readonly kind: string };
+  /** 这个任务不带工具（宿主的「聊天」：直接问答）。要做事时以 `needs-tools` 结束，由宿主引导。 */
+  readonly toolsOff?: boolean;
+  /** 思考力度（优先于定制 Agent 的默认）。 */
+  readonly thinking?: ThinkingLevel;
   readonly parentId?: TaskId;
   readonly budget?: Partial<Budget>;
   readonly deadline?: number;
@@ -150,6 +155,8 @@ export interface Task {
   readonly attachments?: readonly Attachment[];
   /** 绑定的画布（对话里的那块）。Agent 用 `canvas.read` / `canvas.update` 读改它。 */
   readonly canvas?: { readonly id: string; readonly kind: string };
+  readonly toolsOff?: boolean;
+  readonly thinking?: ThinkingLevel;
   readonly state: TaskState;
   readonly trigger: Trigger;
   readonly budget: Budget;
@@ -209,6 +216,8 @@ export interface Outcome {
    * 回答写到一半被取消时，用户已经看到的那一截。没写完、没过核对 —— 不是回答，宿主照原样显示并标明「没写完」。
    */
   readonly partial?: string;
+  /** 没做成的原因（机器可读）。`needs-tools`：这一轮不带工具，但用户要做的事得用工具 —— 宿主可以引导切换。 */
+  readonly code?: 'needs-tools';
 }
 
 export type ApprovalDecision = 'allow' | 'always' | 'deny';
@@ -261,7 +270,7 @@ export type PlanStep = (
    * 和 `final` 分开：「没有合适的工具」「模型没执行却说做了」这类结果如果走 `final`，
    * 任务会记成成功，界面上就是「已完成」—— 用户会以为邮件已经发出去了。
    */
-  | { readonly kind: 'abort'; readonly thought: string; readonly reason: string }
+  | { readonly kind: 'abort'; readonly thought: string; readonly reason: string; readonly code?: 'needs-tools' }
 ) & { readonly via?: PlanVia };
 
 // ─────────────────────────────  事件  ─────────────────────────────

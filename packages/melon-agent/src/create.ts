@@ -1,5 +1,5 @@
 import type {
-  CanvasKind, CanvasVersion,
+  CanvasKind, CanvasVersion, ThinkingLevel,
   AgentProfile,
   AgentId, AnswerDraft, ApprovalDecision, AuditSink, Grant, Memory, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
@@ -154,6 +154,10 @@ export interface RunOptions {
   readonly attachments?: readonly (NewAttachment | Attachment)[];
   /** 绑定一块画布（宿主给 id，同一个对话用同一个 id）。种类要在 `canvasKinds` 里。 */
   readonly canvas?: { readonly id: string; readonly kind: string };
+  /** `false`：这一轮不带工具（直接问答）。要做事时任务以 `outcome.code: 'needs-tools'` 结束，宿主引导用户换个方式。 */
+  readonly tools?: boolean;
+  /** 思考力度：关 / 低 / 中 / 高。优先于定制 Agent 的默认；不给用 Agent 的或模型的默认。 */
+  readonly thinking?: ThinkingLevel;
 }
 
 /** 一个新附件：名字、大小、说明，加上抽出的文字或图片本身（二选一）。 */
@@ -718,6 +722,8 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
         ...(o.budget ? { budget: o.budget } : {}),
         ...(attachments.length ? { attachments } : {}),
         ...(o.canvas ? { canvas: o.canvas } : {}),
+        ...(o.tools === false ? { toolsOff: true } : {}),
+        ...(o.thinking ? { thinking: o.thinking } : {}),
       });
     },
     async approve(taskId, decision) {

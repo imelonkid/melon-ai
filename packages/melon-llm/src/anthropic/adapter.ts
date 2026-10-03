@@ -141,7 +141,8 @@ export class AnthropicChatModel implements ChatModel {
           : {}),
         // 自适应思考。budget_tokens 在 Opus 5 上已移除，传了会 400
         ...(this.opts.thinking === false || req.thinking === 'off' ? {} : { thinking: { type: 'adaptive' as const } }),
-        output_config: { effort: this.opts.effort ?? 'high' as const },
+        // 力度：请求给了低 / 中 / 高就用它（自适应思考在这个力度里自己决定想多少），否则用接入时定的
+        output_config: { effort: req.thinking === 'low' || req.thinking === 'medium' || req.thinking === 'high' ? req.thinking : this.opts.effort ?? 'high' as const },
       };
       // 流式：只把正文（text 块）交出去；思考块、工具调用不算回答。一次响应里可能有好几个正文块，拼起来交全文
       let res: Anthropic.Message;

@@ -84,3 +84,26 @@ test('模型发现与新模型：/v1/models 列出模型；目录里没有的模
   assert.equal(claude({ apiKey: 'k' }).priceSource, 'builtin');
   assert.equal(claude({ apiKey: 'k', price: { input: 1, output: 1, currency: 'USD' } }).priceSource, 'manual');
 });
+
+test('思考力度：关 → 不开思考；低 / 中 / 高 → 自适应思考 + 对应的 effort；不说 → 自适应 + high（原来的默认）', async () => {
+  const run = async (thinking?: 'off' | 'low' | 'medium' | 'high') => {
+    const srv = await fakeServer([
+      ['message_start', { type: 'message_start', message: { id: 'm1', type: 'message', role: 'assistant', model: 'claude-opus-5', content: [], stop_reason: null, stop_sequence: null, usage } }],
+      ['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } }],
+      ['message_stop', { type: 'message_stop' }],
+    ]);
+    try {
+      await new AnthropicChatModel({ apiKey: 'k', baseURL: srv.url, model: 'claude-opus-5' }).generate({
+        messages: [{ role: 'user', content: 'x' }], onText: () => {}, ...(thinking ? { thinking } : {}),
+      });
+      return srv.seen.body;
+    } finally { await srv.close(); }
+  };
+  const off = await run('off');
+  assert.equal(off.thinking, undefined);
+  const mid = await run('medium');
+  assert.deepEqual(mid.thinking, { type: 'adaptive' });
+  assert.equal(mid.output_config.effort, 'medium');
+  assert.equal((await run('low')).output_config.effort, 'low');
+  assert.equal((await run()).output_config.effort, 'high');
+});

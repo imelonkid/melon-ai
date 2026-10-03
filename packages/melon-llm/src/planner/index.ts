@@ -1,5 +1,5 @@
 import type { PromptRef,
-  ContextBundle, GenerateResult, Intent, IntentClassifier, Message, ModelRouter, ModelTool, ModelToolCall,
+  ContextBundle, GenerateResult, Intent, ThinkingLevel, IntentClassifier, Message, ModelRouter, ModelTool, ModelToolCall,
   PlanInput, PlanStep, Planner, ToolCall, Usage,
 } from '@melon-ai/core';
 import { MAX_REASONING_CHARS, asCallId, asToolId } from '@melon-ai/core';
@@ -24,7 +24,7 @@ export interface ReActOptions {
   /** 动作词表（「没有合适的工具」的判定依据）。默认 `DEFAULT_ACTION_WORDS`，宿主可扩充。 */
   readonly actionWords?: readonly string[];
   /** 这个任务要不要思考（宿主按定制 Agent 给）。不传、返回空都用模型的默认。 */
-  readonly thinkingOf?: (task: PlanInput['task']) => 'off' | 'auto' | undefined;
+  readonly thinkingOf?: (task: PlanInput['task']) => ThinkingLevel | 'auto' | undefined;
 }
 
 /**
@@ -93,6 +93,19 @@ export class ReActPlanner implements Planner {
     const called = task.toolsCalled ?? [];
     const succeeded = task.toolsSucceeded ?? [];
 
+    // 不带工具的一轮（宿主的「聊天」）：要做事（动作词、工具的触发词）就不问模型，停下并标明需要工具 —— 宿主引导用户切换
+    if (task.toolsOff) {
+      const verb = mentionsAction(task.goal, this.opts.actionWords ?? DEFAULT_ACTION_WORDS)
+        ?? matchActionTools(task.goal, input.availableTools)[0]?.name ?? null;
+      if (verb) {
+        return {
+          kind: 'abort', code: 'needs-tools',
+          thought: `这一轮不带工具，但要做的事（${verb}）需要工具`,
+          reason: '这件事要动手做（用工具），这一轮没有工具，所以没有做。',
+        };
+      }
+    }
+
     // ── 动作守卫①：命中了有副作用工具的触发词，而且还没尝试过 → 必须调用工具 ──
     const matched = matchActionTools(task.goal, tools);
     const mustAct = matched.some((t) => !called.includes(t.name));
@@ -143,7 +156,8 @@ export class ReActPlanner implements Planner {
       return (task.denied ?? []).length > 0
         || matchActionTools(`${task.goal}\n${text}`, tools).some((t) => !called.includes(t.name));
     };
-    const thinking = this.opts.thinkingOf?.(task);
+    // 任务自己给的力度优先，其次宿主按 Agent 给的
+    const thinking = task.thinking ?? this.opts.thinkingOf?.(task);
     const generate = async (msgs: readonly Message[], required: boolean, maxOutputTokens?: number) => {
       // 必须调工具的一轮不会有回答，不流式
       let held = false;
@@ -304,6 +318,8 @@ export class ReActPlanner implements Planner {
 
   private async classify(input: PlanInput, signal: AbortSignal): Promise<Intent> {
     // 已经动过手（跑过工具）的任务不再重新分类 —— 中途判成闲聊会把工具收走
+    // 宿主说了这一轮不带工具：就是问答，不用分类
+    if (input.task.toolsOff) return 'chat';
     if (input.task.usage.steps > 0) return 'task';
     if (!this.opts.classifier) return 'task';
     try {

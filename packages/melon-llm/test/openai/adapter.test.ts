@@ -275,7 +275,7 @@ test('看图：图片发成 image_url（data URL）；按模型名判断能不�
 });
 
 test('关思考：DeepSeek、智谱带 thinking: { type: "disabled" }；强制思考的 GLM-5.3 / 5.3-Flash 和不认识这个参数的厂商不带', async () => {
-  const body = async (preset: 'deepseek' | 'zhipu' | 'openai', m: string, thinking?: 'off' | 'auto') => {
+  const body = async (preset: 'deepseek' | 'zhipu' | 'openai', m: string, thinking?: 'off' | 'auto' | 'low' | 'medium' | 'high') => {
     const cap: { body?: any } = {};
     await new OpenAICompatibleChatModel({ model: m, preset, apiKey: 'k', baseURL: 'http://x/v1', fetchImpl: fakeFetch({ choices: [{ message: { content: 'ok' } }] }, cap) })
       .generate({ messages: [{ role: 'user', content: 'x' }], ...(thinking ? { thinking } : {}) });
@@ -287,4 +287,20 @@ test('关思考：DeepSeek、智谱带 thinking: { type: "disabled" }；强制�
   assert.equal((await body('openai', 'gpt-4o', 'off')).thinking, undefined);
   assert.equal((await body('deepseek', 'deepseek-flash')).thinking, undefined, '没说就不管（用厂商的默认）');
   assert.equal((await body('deepseek', 'deepseek-flash', 'auto')).thinking, undefined);
+});
+
+test('思考力度：DeepSeek 只有 low / high / max —— 低、中用 low，高用 high；智谱没有力度（照默认思考）；别家不带', async () => {
+  const body = async (preset: 'deepseek' | 'zhipu' | 'openai', m: string, thinking: 'low' | 'medium' | 'high') => {
+    const cap: { body?: any } = {};
+    await new OpenAICompatibleChatModel({ model: m, preset, apiKey: 'k', baseURL: 'http://x/v1', fetchImpl: fakeFetch({ choices: [{ message: { content: 'ok' } }] }, cap) })
+      .generate({ messages: [{ role: 'user', content: 'x' }], thinking });
+    return cap.body;
+  };
+  assert.equal((await body('deepseek', 'deepseek-flash', 'low')).reasoning_effort, 'low');
+  assert.equal((await body('deepseek', 'deepseek-flash', 'medium')).reasoning_effort, 'low');
+  assert.equal((await body('deepseek', 'deepseek-flash', 'high')).reasoning_effort, 'high');
+  assert.equal((await body('deepseek', 'deepseek-flash', 'high')).thinking, undefined, '开着思考就用默认的开关');
+  const z = await body('zhipu', 'glm-4.7', 'high');
+  assert.equal(z.reasoning_effort, undefined); assert.equal(z.thinking, undefined);
+  assert.equal((await body('openai', 'gpt-4o', 'medium')).reasoning_effort, undefined);
 });
