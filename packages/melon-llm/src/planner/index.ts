@@ -141,7 +141,7 @@ export class ReActPlanner implements Planner {
       return (task.denied ?? []).length > 0
         || matchActionTools(`${task.goal}\n${text}`, tools).some((t) => !called.includes(t.name));
     };
-    const generate = async (msgs: readonly Message[], required: boolean) => {
+    const generate = async (msgs: readonly Message[], required: boolean, maxOutputTokens?: number) => {
       // 必须调工具的一轮不会有回答，不流式
       let held = false;
       const onText = draft && !required
@@ -158,6 +158,7 @@ export class ReActPlanner implements Planner {
         : undefined;
       const res = await decision.primary.generate({
         messages: msgs,
+        ...(maxOutputTokens ? { maxOutputTokens } : {}),
         ...(tools.length > 0 ? { tools, toolChoice: required ? 'required' as const : 'auto' as const } : {}),
         signal,
         ...(onText ? { onText } : {}),
@@ -202,7 +203,27 @@ export class ReActPlanner implements Planner {
       return { kind: 'final', thought: '参数不是用户给的，改为向用户询问', answer };
     };
 
-    const res = await generate(messages, mustAct);
+    let res = await generate(messages, mustAct);
+    // 输出到了上限还没写完（多半是思考太长，或者一次要写的内容太多）：加大上限再试一次。
+    // 不试的话，什么都没写出来的会被当成「（模型没有返回内容）」的回答、任务还算完成
+    if (res.stopReason === 'length' && !res.toolCalls?.length) {
+      const was = decision.primary.capabilities.maxOutputTokens;
+      retract('retry');
+      const tooLong = {
+        kind: 'abort' as const,
+        thought: '输出到了上限，没有写出回答或调用',
+        reason: '这次没有做成：模型的输出到了上限还没写完（思考太长，或者一次要写的内容太多）。可以把要求拆小一点再说一次，或者换一个模型。',
+      };
+      // 有的模型不接受更大的上限（直接报错）：同样说清楚，不让任务以一个莫名的错误结束
+      try { res = await generate(messages, mustAct, Math.max(32_000, was * 4)); } catch (e) {
+        if (signal.aborted) throw e;
+        return tooLong;
+      }
+      if (res.stopReason === 'length' && !res.toolCalls?.length) {
+        if (!res.text.trim()) return tooLong;
+        return { kind: 'final', thought: '回答到了输出上限，没写完', answer: `${res.text.trim()}\n\n（回答太长，到了输出上限，后面没写完）` };
+      }
+    }
     if (res.stopReason === 'filtered') {
       return { kind: 'final', thought: '被安全策略拦截', answer: res.text };
     }

@@ -29,6 +29,8 @@ interface Preset {
   readonly costUSD: number;
   readonly egress: string;
   readonly contextWindow?: number;
+  /** 默认的输出上限（不填用适配器的 8K）。 */
+  readonly maxTokens?: number;
 }
 
 /**
@@ -71,7 +73,9 @@ export const TIERS: Readonly<Record<string, ModelTier>> = {
 };
 
 const PRESETS = {
-  deepseek: { preset: 'deepseek', label: 'DeepSeek', model: 'deepseek-flash', quality: 6, costUSD: 0.3, egress: 'deepseek', contextWindow: 64_000 },
+  // 官方文档（2026-10）：deepseek-flash / deepseek-v4-pro 上下文 1M、输出最多 384K。默认输出给 32K：
+  // 思考模式的思考也算在输出里，8K 常常想完就没了（Jolly 里重写一整段聊天记录时，想了 37 秒、一个字没写出来）
+  deepseek: { preset: 'deepseek', label: 'DeepSeek', model: 'deepseek-flash', quality: 6, costUSD: 0.3, egress: 'deepseek', contextWindow: 1_000_000, maxTokens: 32_000 },
   qwen: { preset: 'qwen', label: '通义千问', model: 'qwen-max', quality: 6, costUSD: 0.4, egress: 'aliyun', contextWindow: 32_000 },
   openai: { preset: 'openai', label: 'GPT', model: 'gpt-4o', quality: 8, costUSD: 2.5, egress: 'openai' },
   kimi: { preset: 'moonshot', label: 'Kimi', model: 'moonshot-v1-128k', quality: 6, costUSD: 1.7, egress: 'moonshot', contextWindow: 128_000 },
@@ -94,6 +98,7 @@ function entry(p: Preset, o: ProviderOptions): ModelEntry {
       ...(o.apiKey !== undefined ? { apiKey: o.apiKey } : {}),
       ...(o.baseURL ? { baseURL: o.baseURL } : {}),
       ...(p.contextWindow ? { contextWindow: p.contextWindow } : {}),
+      ...('maxTokens' in p ? { maxTokens: p.maxTokens } : {}),
     }),
     quality: o.quality ?? p.quality,
     costUSD: o.costUSD ?? sortCost(price, p.costUSD),

@@ -325,3 +325,27 @@ test('动作守卫⑤：拒绝之后如实说明没发 → 用模型自己的话
     withTask({ goal: '发邮件给 a@x.com', toolsCalled: ['mail.send'], denied: ['mail.send'], usage: { steps: 3, tokens: 0, costUSD: 0, startedAt: 0 } }), sig);
   assert.deepEqual([step.kind, step.kind === 'final' ? step.answer : ''], ['final', '好的，这封邮件没有发送。']);
 });
+
+test('输出到了上限还没写出东西（思考太长）：加大输出上限再试一次；还不行就说清楚没做成，不当成「已完成」', async () => {
+  // 第一次截断、什么都没给 → 第二次加大上限后调了工具
+  const m = new StubModel([
+    { text: '', stopReason: 'length' },
+    { stopReason: 'tool', toolCalls: [{ id: 'tu', name: 'mail.send', args: { to: 'a@b.c' } }] },
+  ]);
+  const step = await new ReActPlanner({ router: router(m) }).plan(input(), sig);
+  assert.equal(step.kind, 'tool_call');
+  assert.equal(m.requests.length, 2);
+  assert.ok((m.requests[1]!.maxOutputTokens ?? 0) > 8000, `第二次加大了上限：${m.requests[1]!.maxOutputTokens}`);
+
+  // 两次都截断、没有内容 → abort，原因说清楚
+  const m2 = new StubModel([{ text: '', stopReason: 'length' }, { text: '', stopReason: 'length' }]);
+  const step2 = await new ReActPlanner({ router: router(m2) }).plan(input(), sig);
+  assert.equal(step2.kind, 'abort');
+  assert.match(step2.kind === 'abort' ? step2.reason : '', /上限/);
+
+  // 写了一半的回答被截断 → 照样给出来，但标明没写完
+  const m3 = new StubModel([{ text: '第一段', stopReason: 'length' }, { text: '第一段第二段', stopReason: 'length' }]);
+  const step3 = await new ReActPlanner({ router: router(m3) }).plan(input(), sig);
+  assert.equal(step3.kind, 'final');
+  assert.match(step3.kind === 'final' ? step3.answer : '', /^第一段第二段[\s\S]*没写完/);
+});
