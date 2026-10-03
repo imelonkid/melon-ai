@@ -8,7 +8,7 @@ import {
 import { SqliteArtifactStore } from './artifacts.js';
 import { SqliteMemoryStore, SqliteVectorIndex } from './memories.js';
 import { SqliteAuditSink } from './audit.js';
-import { SqliteCatalogStore, SqlitePriceStore, SqliteUsageLedger } from './usage.js';
+import { SqliteCanvasStore, SqliteCatalogStore, SqlitePriceStore, SqliteUsageLedger } from './usage.js';
 import { SqliteArchive, SqlitePurger, SqliteResolver } from './deletion.js';
 
 export interface SqliteBundle extends StoreBundle {
@@ -51,6 +51,7 @@ export function openSqliteStores(opts: OpenStoresOptions): SqliteBundle {
     usage: new SqliteUsageLedger(cx),
     prices: new SqlitePriceStore(cx),
     catalog: new SqliteCatalogStore(cx),
+    canvases: new SqliteCanvasStore(cx),
     transaction: (fn) => cx.transaction(fn),
     close: async () => { cx.close(); },
   };

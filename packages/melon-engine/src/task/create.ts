@@ -43,5 +43,6 @@ export function createTask(input: CreateTaskInput): Task {
     ...(spec.parentId !== undefined ? { parentId: spec.parentId } : {}),
     ...(spec.deadline !== undefined ? { deadline: spec.deadline } : {}),
     ...(spec.attachments?.length ? { attachments: spec.attachments } : {}),
+    ...(spec.canvas ? { canvas: spec.canvas } : {}),
   };
 }

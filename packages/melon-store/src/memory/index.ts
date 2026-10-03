@@ -1,7 +1,7 @@
 import type { StoreBundle } from '@melon-ai/core';
 import {
   InMemoryEpisodeStore, InMemoryEventLog, InMemoryGrantStore, InMemoryIdempotencyStore,
-  InMemoryScheduleStore, InMemoryTaskStore, InMemoryUsageLedger, InMemoryPriceStore, InMemoryCatalogStore,
+  InMemoryScheduleStore, InMemoryTaskStore, InMemoryUsageLedger, InMemoryPriceStore, InMemoryCatalogStore, InMemoryCanvasStore,
 } from './stores.js';
 import {
   InMemoryArtifactStore, InMemoryAuditSink, InMemoryDeletion, InMemoryMemoryStore, InMemoryVectorIndex,
@@ -54,6 +54,7 @@ export function memoryStorage(opts: MemoryStorageOptions = {}): MemoryBundle {
     usage: new InMemoryUsageLedger(),
     prices: new InMemoryPriceStore(),
     catalog: new InMemoryCatalogStore(),
+    canvases: new InMemoryCanvasStore(),
     transaction: <T>(fn: () => Promise<T>): Promise<T> => {
       const run = chain.then(fn, fn);
       chain = run.catch(() => undefined);

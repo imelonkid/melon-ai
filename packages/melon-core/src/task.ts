@@ -132,6 +132,8 @@ export interface TaskSpec {
   readonly goal: string;
   readonly trigger: Trigger;
   readonly attachments?: readonly Attachment[];
+  /** 绑定的画布（对话里的那块）。Agent 用 `canvas.read` / `canvas.update` 读改它。 */
+  readonly canvas?: { readonly id: string; readonly kind: string };
   readonly parentId?: TaskId;
   readonly budget?: Partial<Budget>;
   readonly deadline?: number;
@@ -146,6 +148,8 @@ export interface Task {
   readonly kind: TaskKind;
   readonly goal: string;
   readonly attachments?: readonly Attachment[];
+  /** 绑定的画布（对话里的那块）。Agent 用 `canvas.read` / `canvas.update` 读改它。 */
+  readonly canvas?: { readonly id: string; readonly kind: string };
   readonly state: TaskState;
   readonly trigger: Trigger;
   readonly budget: Budget;

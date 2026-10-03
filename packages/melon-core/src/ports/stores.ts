@@ -1,3 +1,4 @@
+import type { CanvasStore } from '../canvas.js';
 import type {
   AgentId, ArtifactRef, EpisodeId, MemoryId, Scored, Sequenced, TaskId,
 } from '../ids.js';
@@ -155,6 +156,7 @@ export interface StoreBundle {
   readonly usage: UsageLedger;
   readonly prices: PriceStore;
   readonly catalog: CatalogStore;
+  readonly canvases: CanvasStore;
   /** 跨多个 store 的原子写。单机 SQLite 下就是一个事务。 */
   transaction<T>(fn: () => Promise<T>): Promise<T>;
   close(): Promise<void>;

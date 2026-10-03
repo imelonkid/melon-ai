@@ -2,7 +2,7 @@ import type {
   AgentId, Entry, Episode, EpisodeId, EpisodeStore, EpisodeSummary, EventLog, Grant, GrantStore,
   IdempotencyStore, Schedule, ScheduleId, ScheduleStatus, ScheduleStore, Sequenced, Task, TaskEvent,
   TaskId, TaskState, TaskStore, ToolResult, UsageLedger, UsageQuery, UsageRecord, PriceStore, PriceSync,
-  CatalogStore, ModelListing,
+  CatalogStore, ModelListing, CanvasStore, CanvasVersion,
 } from '@melon-ai/core';
 import { ConflictError, asEpisodeId } from '@melon-ai/core';
 import { rollupRecords } from '../usage.js';
@@ -234,4 +234,19 @@ export class InMemoryCatalogStore implements CatalogStore {
   private readonly byVendor = new Map<string, ModelListing>();
   async put(l: ModelListing): Promise<void> { this.byVendor.set(l.vendor, l); }
   async list(): Promise<readonly ModelListing[]> { return [...this.byVendor.values()]; }
+}
+
+/** 画布的版本（内存）。 */
+export class InMemoryCanvasStore implements CanvasStore {
+  private readonly byId = new Map<string, CanvasVersion[]>();
+  async append(v: CanvasVersion): Promise<void> {
+    const list = this.byId.get(v.canvasId) ?? [];
+    const last = list[list.length - 1]?.version ?? 0;
+    if (v.version !== last + 1) throw new ConflictError(last + 1, v.version);
+    list.push(structuredClone(v));
+    this.byId.set(v.canvasId, list);
+  }
+  async latest(id: string): Promise<CanvasVersion | null> { const l = this.byId.get(id); return l?.length ? structuredClone(l[l.length - 1]!) : null; }
+  async get(id: string, version: number): Promise<CanvasVersion | null> { const v = this.byId.get(id)?.find((x) => x.version === version); return v ? structuredClone(v) : null; }
+  async history(id: string, limit = 50): Promise<readonly CanvasVersion[]> { return [...(this.byId.get(id) ?? [])].reverse().slice(0, limit).map((v) => structuredClone(v)); }
 }

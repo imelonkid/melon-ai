@@ -1,4 +1,5 @@
-import type { CatalogStore, Currency, ModelListing, PriceStore, PriceSync, TaskId, UsageLedger, UsageQuery, UsageRecord } from '@melon-ai/core';
+import type { CanvasStore, CanvasVersion, CatalogStore, Currency, ModelListing, PriceStore, PriceSync, TaskId, UsageLedger, UsageQuery, UsageRecord } from '@melon-ai/core';
+import { ConflictError } from '@melon-ai/core';
 import type { SqliteContext } from './db.js';
 import { rollupRecords } from '../usage.js';
 
@@ -87,5 +88,35 @@ export class SqliteCatalogStore implements CatalogStore {
 
   async list(): Promise<readonly ModelListing[]> {
     return (this.cx.db.prepare('SELECT payload FROM model_catalog ORDER BY vendor').all() as { payload: string }[]).map((r) => JSON.parse(r.payload) as ModelListing);
+  }
+}
+
+/** 画布的版本。版本号冲突（两边同时改）由主键挡住，转成 `ConflictError`。 */
+export class SqliteCanvasStore implements CanvasStore {
+  constructor(private readonly cx: SqliteContext) {}
+
+  async append(v: CanvasVersion): Promise<void> {
+    const last = (this.cx.db.prepare('SELECT MAX(version) AS v FROM canvas_versions WHERE canvas_id = ?').get(v.canvasId) as { v: number | null }).v ?? 0;
+    if (v.version !== last + 1) throw new ConflictError(last + 1, v.version);
+    try {
+      this.cx.db.prepare('INSERT INTO canvas_versions (canvas_id, version, at, payload) VALUES (?,?,?,?)').run(v.canvasId, v.version, v.at, JSON.stringify(v));
+    } catch (e) {
+      if (/UNIQUE|PRIMARY KEY/i.test(String((e as Error).message))) throw new ConflictError(v.version + 1, v.version);
+      throw e;
+    }
+  }
+
+  async latest(id: string): Promise<CanvasVersion | null> {
+    const r = this.cx.db.prepare('SELECT payload FROM canvas_versions WHERE canvas_id = ? ORDER BY version DESC LIMIT 1').get(id) as { payload: string } | undefined;
+    return r ? JSON.parse(r.payload) as CanvasVersion : null;
+  }
+
+  async get(id: string, version: number): Promise<CanvasVersion | null> {
+    const r = this.cx.db.prepare('SELECT payload FROM canvas_versions WHERE canvas_id = ? AND version = ?').get(id, version) as { payload: string } | undefined;
+    return r ? JSON.parse(r.payload) as CanvasVersion : null;
+  }
+
+  async history(id: string, limit = 50): Promise<readonly CanvasVersion[]> {
+    return (this.cx.db.prepare('SELECT payload FROM canvas_versions WHERE canvas_id = ? ORDER BY version DESC LIMIT ?').all(id, limit) as { payload: string }[]).map((r) => JSON.parse(r.payload) as CanvasVersion);
   }
 }

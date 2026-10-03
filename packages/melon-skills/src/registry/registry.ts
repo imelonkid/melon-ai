@@ -1,5 +1,5 @@
 import type {
-  ModelTool, ResolvedTool, SkillBundle, SkillProvider, Task, ToolId, ToolResolver, ToolsetSnapshot,
+  AgentProfile, ModelTool, ResolvedTool, SkillBundle, SkillProvider, Task, ToolId, ToolResolver, ToolsetSnapshot,
 } from '@melon-ai/core';
 import type { Tool } from './define.js';
 import { reviewTool } from './review.js';
@@ -46,6 +46,10 @@ export function fingerprint(d: Tool['descriptor']): string {
   return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
 }
 
+/** 引擎自己的基础工具（读完整内容、技能查找、记忆、历史）：定制 Agent 限技能时也总在。 */
+// 画布只在绑定了画布的任务里出现（`when`），不用每个 Agent 单独勾
+const ALWAYS_SKILLS = new Set(['builtin', 'artifact', 'canvas']);
+
 const RANK: Record<ToolOrigin, number> = { builtin: 0, host: 1, extension: 2 };
 
 /**
@@ -78,6 +82,8 @@ export class ToolRegistry implements ToolResolver {
   private unsubs: (() => void)[] = [];
   private refreshing: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(r: RegistrationReport) => void>();
+  /** 定制 Agent：各自能用哪些技能。 */
+  private profiles = new Map<string, AgentProfile>();
 
   private readonly now: () => number;
 
@@ -189,8 +195,22 @@ export class ToolRegistry implements ToolResolver {
     return { descriptor: t.descriptor, handler: t.handler };
   }
 
-  async isEnabledFor(toolId: ToolId): Promise<boolean> {
-    return this.effective.has(toolId);
+  /** 换定制 Agent 的定义（能用哪些技能）。 */
+  setAgents(profiles: readonly AgentProfile[]): void {
+    this.profiles = new Map(profiles.map((p) => [p.id, p]));
+  }
+
+  /** 这个 Agent 能不能用这个工具：没定义的、没限技能的都能；引擎的基础工具总能。 */
+  private allowed(d: Tool['descriptor'], agentId: string | undefined): boolean {
+    const p = agentId === undefined ? undefined : this.profiles.get(agentId);
+    if (!p?.skills) return true;
+    const skill = String(d.skillId);
+    return ALWAYS_SKILLS.has(skill) || p.skills.includes(skill);
+  }
+
+  async isEnabledFor(toolId: ToolId, agentId?: string): Promise<boolean> {
+    const t = this.effective.get(toolId);
+    return !!t && this.allowed(t.descriptor, agentId);
   }
 
   /**
@@ -199,7 +219,7 @@ export class ToolRegistry implements ToolResolver {
    */
   modelTools(task: Task): readonly ModelTool[] {
     return [...this.effective.values()]
-      .filter((t) => !t.when || t.when(task))
+      .filter((t) => (!t.when || t.when(task)) && this.allowed(t.descriptor, String(task.agentId)))
       .map((t) => ({
         name: t.descriptor.id,
         description: t.descriptor.description,

@@ -14,3 +14,5 @@ export * from './registry/index.js';
 export * from './builtin/artifact/index.js';
 export * from './builtin/schedule/index.js';
 export * from './builtin/memory/index.js';
+export { canvas, applyPatch, diffPaths } from './builtin/canvas.js';
+export type { CanvasOptions, PatchOp } from './builtin/canvas.js';

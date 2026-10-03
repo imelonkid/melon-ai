@@ -1359,6 +1359,23 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
       GLM-Image 0.1 元/张）；内置技能 `images({ generator, dir })`（`@melon-ai/agent/images`），工具 `image.generate`：对外操作（描述发给厂商），
       按次计费（免费的记 0 元），图片存进输出目录，作为 `ToolOutput.files` 交给宿主显示。临时链接由插件下载好。
     - 顺带：`defineTool` 支持 `billing`（之前只有联网搜索手工拼描述）。
+94. **定制 Agent。** 宿主想要「专门干一件事」的 Agent（写作助手、某种模板的生成器）：同一个引擎、同一套任务机制，只是说明书和能用的技能不同。
+    - `AgentProfile { id, name, instructions?, skills? }`，`createAgent({ agents })` / `configure({ agents })`；任务按 `run(goal, { agentId })` 归属。
+    - 说明书放在上下文最前面（宿主的说明之前，不压缩）。
+    - `skills` 是白名单：没勾的工具不给模型看，模型硬调也拒（`registry.isEnabledFor(toolId, agentId)`，准入时查）。
+      内置的基础能力（`builtin`、`artifact`、`canvas`）总在 —— 它们本身有 `when` 或不对外。没定义的 Agent（含默认的）不受限。
+    - 引擎不认识任何具体的 Agent：都是宿主给的数据。
+95. **画布：Agent 和用户共同编辑的一份结构化内容。** 有些产品要的不是一段回答，而是一个能反复调整的「成品」（一页排版、一份表格、一个模拟界面）：
+    Agent 生成，用户在界面上直接改，再让 Agent 接着改 —— 双方改的是同一份数据。
+    - **引擎只管数据，不管长什么样**：画布是一份 JSON（`CanvasVersion`，每次改追加一个版本，`by: 'agent' | 'user'`，`CanvasStore` 内存 / SQLite 两种）。
+      渲染、编辑控件全在宿主。种类（`CanvasKind { kind, name, schema, instructions }`）也是宿主给的：数据形状（JSON Schema）和给模型的写法说明。
+    - 对话绑定画布：`run(goal, { canvas: { id, kind } })`（`task.canvas`）。绑定了才有内置工具 `canvas.read` / `canvas.update`（`when`）。
+    - **局部改**：`canvas.update` 是 JSON Patch 的子集（add / replace / remove / move + JSON Pointer），改完按 schema 校验，不符合退回给模型、不生效。
+      不让模型整份重写 —— 那样用户手改过的地方会被盖掉。本地写、可撤销，不问用户。
+    - **用户改的进上下文**：每轮带上这种画布的写法、当前内容（太长只给开头，要改用 `canvas.read` 读全），以及 Agent 上一版之后用户改了哪里
+      （用户写的说明，或 `diffPaths` 算出的位置），并说明以用户改的为准。
+    - 宿主接口 `agent.canvas`：`get` / `history` / `edit(id, kind, { doc | ops, note, base })`（同样校验；`base` 不是最新版就返回冲突 ——
+      用户改的时候 Agent 刚改过）/ `revert(id, version)`（追加一个内容同旧版的新版本，历史不丢）。每个新版本发 `canvas` 事件。
 
 #### 包结构合并（14 → 8）
 

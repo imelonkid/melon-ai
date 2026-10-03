@@ -223,6 +223,15 @@ CREATE TABLE IF NOT EXISTS model_catalog (
   at      INTEGER NOT NULL,
   payload TEXT NOT NULL
 );
+
+-- 画布的版本：每改一次一行（内容是 JSON）
+CREATE TABLE IF NOT EXISTS canvas_versions (
+  canvas_id TEXT NOT NULL,
+  version   INTEGER NOT NULL,
+  at        INTEGER NOT NULL,
+  payload   TEXT NOT NULL,
+  PRIMARY KEY (canvas_id, version)
+);
 `;
 
 /**

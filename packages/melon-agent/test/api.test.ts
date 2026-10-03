@@ -750,3 +750,106 @@ test('看图：图片附件发给能看图的模型（带上内容）；只启�
     assert.match(t.outcome!.reason!, /当前启用的模型都看不了图/);
   } finally { await only.stop(); }
 });
+
+test('定制 Agent：各自的说明书进上下文；只能用勾选的技能（看不到、也调不了别的）；没定义的 Agent 不受限', async () => {
+  const seen: { agent: string; tools: string[]; text: string }[] = [];
+  const model = new ScriptedModel([]);
+  let step = 0;
+  model.generate = async (req) => {
+    seen.push({ agent: String(req.meta?.agentId), tools: (req.tools ?? []).map((t) => t.name), text: req.messages.map((m) => m.content).join('\n') });
+    step += 1;
+    // 第一次：「创作助手」想偷偷调发邮件（没勾选）→ 应被拒
+    if (step === 1) return call('mail.send', { to: 'a@example.com', subject: 's', body: 'b' });
+    return { text: '好的', modelId: 'scripted', stopReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } };
+  };
+  const note = defineTool({ id: 'note.add', description: '记一条笔记', input: { text: 'string' }, risk: 'write', triggers: [], run: () => '记好了' });
+  const mail = defineTool({ id: 'mail.send', description: '发邮件', input: { to: 'string', subject: 'string', body: 'string' }, risk: 'external', triggers: [], run: () => '已发送' });
+  const agent = await createAgent({
+    models: [{ model, quality: 1, costUSD: 1, egress: 'test', label: 'test' }], tools: [note, mail], platform: quiet,
+    agents: [{ id: 'writer', name: '创作助手', instructions: '你是聊天记录风格的创作助手，只写虚构的人物和场景。', skills: ['note'] }],
+  });
+  try {
+    const done = until(agent, (t) => t.state === 'SUCCEEDED');
+    const t = await agent.run('写一段对话', { agentId: 'writer' });
+    await done;
+    assert.match(seen[0]!.text, /你是聊天记录风格的创作助手/, '说明书进上下文');
+    assert.ok(seen[0]!.tools.includes('note.add') && !seen[0]!.tools.includes('mail.send'), `只给勾选的：${seen[0]!.tools.join(',')}`);
+    const adm = (await agent.tasks.history(t.id)).map((r) => r.value).find((v) => v.t === 'AdmissionResolved') as unknown as { decision: string };
+    assert.equal(adm.decision, 'deny', '模型硬调没勾选的工具：拒绝');
+
+    // 默认 Agent（没定义）：不受限，也没有别人的说明书
+    const before = seen.length;
+    const done2 = until(agent, (x) => x.state === 'SUCCEEDED' && x.id !== t.id);
+    await agent.run('随便聊聊');
+    await done2;
+    assert.ok(seen[before]!.tools.includes('mail.send'));
+    assert.doesNotMatch(seen[before]!.text, /创作助手/);
+  } finally { await agent.stop(); }
+});
+
+test('画布：Agent 按格式生成、局部改；用户在界面上改的进下一轮上下文（以用户为准）；版本冲突、格式不对、回到旧版本', async () => {
+  const kind = {
+    kind: 'outline', name: '大纲', instructions: '大纲是 { title, items: string[] }。',
+    schema: { type: 'object', required: ['title', 'items'], properties: { title: { type: 'string' }, items: { type: 'array', items: { type: 'string' } } } },
+  };
+  const seen: { tools: string[]; text: string }[] = [];
+  const model = new ScriptedModel([]);
+  const plan: GenerateResult[] = [
+    call('canvas.update', { ops: [{ op: 'replace', path: '', value: { title: '第一章', items: ['开头'] } }], note: '生成大纲' }),
+    { text: '好了', modelId: 'scripted', stopReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } },
+    // 第二轮：格式不对的先被退回，再局部追加
+    call('canvas.update', { ops: [{ op: 'replace', path: '/items', value: 'x' }], note: '错的' }),
+    call('canvas.update', { ops: [{ op: 'add', path: '/items/-', value: '结尾' }], note: '加结尾' }),
+    { text: '加好了', modelId: 'scripted', stopReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } },
+  ];
+  model.generate = async (req) => {
+    seen.push({ tools: (req.tools ?? []).map((t) => t.name), text: req.messages.map((m) => m.content).join('\n') });
+    return plan.shift()!;
+  };
+  const events: number[] = [];
+  const agent = await createAgent({ models: [{ model, quality: 1, costUSD: 1, egress: 'test', label: 'test' }], platform: quiet, canvasKinds: [kind] });
+  agent.on('canvas', (v) => events.push(v.version));
+  try {
+    const c = { id: 'conv-1', kind: 'outline' };
+    let done = until(agent, (t) => t.state === 'SUCCEEDED');
+    const t1 = await agent.run('写个大纲', { canvas: c });
+    await done;
+    assert.ok(seen[0]!.tools.includes('canvas.update'), '绑定了画布才有画布工具');
+    assert.match(seen[0]!.text, /大纲是 \{ title/, '这种画布的写法进上下文');
+    assert.deepEqual((await agent.canvas.get('conv-1'))?.doc, { title: '第一章', items: ['开头'] });
+
+    // 用户在界面上改：基于 v1；之后再拿旧的 v1 改就冲突
+    const e1 = await agent.canvas.edit('conv-1', 'outline', { ops: [{ op: 'replace', path: '/title', value: '序章' }], note: '标题改成序章', base: 1 });
+    assert.equal(e1.ok, true);
+    const stale = await agent.canvas.edit('conv-1', 'outline', { doc: { title: 'y', items: [] }, base: 1 });
+    assert.equal(stale.ok, false);
+    assert.equal(!stale.ok && stale.conflict, true);
+    const bad = await agent.canvas.edit('conv-1', 'outline', { doc: { title: 1 } });
+    assert.equal(bad.ok, false, '格式不对不收');
+
+    done = until(agent, (t) => t.state === 'SUCCEEDED' && t.id !== t1.id);
+    await agent.run('再加个结尾', { canvas: c });
+    await done;
+    const ctx2 = seen[2]!.text;
+    assert.match(ctx2, /"title":"序章"/, '当前内容是用户改过的');
+    assert.match(ctx2, /用户在界面上改过.*标题改成序章/, '告诉 Agent 用户改了什么');
+    assert.match(seen[3]!.text, /不符合「大纲」的格式/, '格式不对退回给模型');
+    const v = await agent.canvas.get('conv-1');
+    assert.deepEqual(v?.doc, { title: '序章', items: ['开头', '结尾'] }, '局部改，用户改的标题还在');
+    assert.equal(v?.by, 'agent');
+
+    const r = await agent.canvas.revert('conv-1', 1);
+    assert.deepEqual(r?.doc, { title: '第一章', items: ['开头'] });
+    assert.equal(r?.note, '回到 v1');
+    assert.deepEqual(events, [1, 2, 3, 4], '每个新版本都发事件');
+    assert.equal((await agent.canvas.history('conv-1')).length, 4);
+
+    // 没绑画布的对话看不到画布工具
+    plan.push({ text: 'hi', modelId: 'scripted', stopReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } });
+    const n = seen.length;
+    done = until(agent, (t) => t.state === 'SUCCEEDED' && !t.canvas);
+    await agent.run('随便聊聊');
+    await done;
+    assert.ok(!seen[n]!.tools.some((x) => x.startsWith('canvas.')));
+  } finally { await agent.stop(); }
+});

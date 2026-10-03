@@ -8,6 +8,7 @@ export * from './model.js';
 export * from './usage.js';
 export * from './search.js';
 export * from './image.js';
+export * from './canvas.js';
 export * from './task.js';
 export * from './policy.js';
 export * from './builtin.js';

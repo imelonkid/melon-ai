@@ -62,3 +62,19 @@ export interface SkillGrant {
   readonly skillId: SkillId;
   readonly enabled: boolean;
 }
+
+/**
+ * 一个定制 Agent：自己的说明书（人设与做事规则）、能用哪些技能。宿主按用户的配置给（Agent 编辑页、导入的 Agent 包）。
+ *
+ * - `instructions` 进这个 Agent 每个任务的上下文（在宿主的说明之前、不压缩）。
+ * - `skills`：能用的技能 id（工具 id 点号前那段，如 `web`、`image`）；不给表示不限。
+ *   引擎自己的基础工具（读完整内容、技能查找、记忆……，技能 id 为 `builtin` / `artifact`）总是在。
+ *   不在名单里的工具：模型看不到，硬调也在准入第一道闸被拒。
+ * 没有定义的 Agent（默认的那个）不受限。
+ */
+export interface AgentProfile {
+  readonly id: string;
+  readonly name: string;
+  readonly instructions?: string;
+  readonly skills?: readonly string[];
+}

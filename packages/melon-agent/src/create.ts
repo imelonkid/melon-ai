@@ -1,4 +1,6 @@
 import type {
+  CanvasKind, CanvasVersion,
+  AgentProfile,
   AgentId, AnswerDraft, ApprovalDecision, AuditSink, Grant, Memory, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
   ScheduleStatus, SchemaValidator, Sequenced, SkillProvider, StoreBundle, Task, TaskEvent, TaskId,
@@ -14,8 +16,9 @@ import {
 import type {
   AccountProblem, FxRates, ModelTestResult, RouteExplanation, RouteStrategy, RoutingRule, RoutingRules, SummaryOptions, UsageSummary,
 } from '@melon-ai/llm';
-import { ToolRegistry, activeMemories, artifact, basicValidator, memory, schedule } from '@melon-ai/skills';
-import type { Tool } from '@melon-ai/skills';
+import {
+  applyPatch, canvas, diffPaths, ToolRegistry, activeMemories, artifact, basicValidator, memory, schedule } from '@melon-ai/skills';
+import type { PatchOp, Tool } from '@melon-ai/skills';
 import { memoryStorage } from '@melon-ai/store';
 import { assemble } from './assemble.js';
 import type { AssembledAgent } from './assemble.js';
@@ -66,6 +69,15 @@ export interface AgentOptions {
    * 「读取完整内容」是内置的，总是在，不用传。
    */
   readonly skills?: readonly SkillProvider[];
+  /**
+   * 定制 Agent：各自的说明书、能用哪些技能（`run(goal, { agentId })` 选用哪个）。没有定义的 Agent 不受限。
+   */
+  readonly agents?: readonly AgentProfile[];
+  /**
+   * 画布的种类：每种的数据形状（JSON Schema）和写法说明。对话绑定画布（`run(goal, { canvas })`）时，
+   * Agent 拿到 `canvas.read` / `canvas.update`，当前内容和用户在界面上改过的地方进上下文。
+   */
+  readonly canvasKinds?: readonly CanvasKind[];
   /**
    * 让 Agent 可以拟定时任务草稿（内置工具 `schedule.propose`）。默认关 ——
    * 草稿要宿主画成卡片给用户确认，不支持的宿主开了，模型会以为草稿已经给用户看了。
@@ -140,6 +152,8 @@ export interface RunOptions {
    * 沿用之前轮次的：直接传那一轮 `task.attachments` 里的项（追问「这个表第三行是什么」时模型还读得到）。
    */
   readonly attachments?: readonly (NewAttachment | Attachment)[];
+  /** 绑定一块画布（宿主给 id，同一个对话用同一个 id）。种类要在 `canvasKinds` 里。 */
+  readonly canvas?: { readonly id: string; readonly kind: string };
 }
 
 /** 一个新附件：名字、大小、说明，加上抽出的文字或图片本身（二选一）。 */
@@ -192,6 +206,8 @@ export interface AgentEvents {
   draft: (draft: TaskDraft) => void;
   /** 模型目录变了（拉到了新的模型列表）。生效中的模型已经换好，宿主刷新界面即可。 */
   models: (catalogs: readonly VendorCatalog[]) => void;
+  /** 画布有了新版本（Agent 改的或用户改的）。 */
+  canvas: (version: CanvasVersion) => void;
 }
 
 /** 某个任务正在生成的回答。 */
@@ -236,6 +252,16 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
    * 「始终允许」过的操作。宿主做授权清单用：列出来给用户看，让用户能撤销。
    * `scope` 是人可读的范围（如 `to=a@b.com`，`*` 表示不限）。
    */
+  /**
+   * 画布：取当前内容、历史版本；用户在界面上改（`edit`，按格式校验，记成用户改的版本）、回到某个版本（`revert`，追加一个新版本）。
+   */
+  readonly canvas: {
+    get(id: string): Promise<CanvasVersion | null>;
+    history(id: string, limit?: number): Promise<readonly CanvasVersion[]>;
+    /** 用户改：给整份新内容（`doc`）或一组修改（`ops`）。`base` 是用户改之前看到的版本 —— 期间 Agent 改过就冲突（返回 conflict）。 */
+    edit(id: string, kind: string, change: { doc?: unknown; ops?: readonly PatchOp[]; note?: string; base?: number }): Promise<{ ok: true; version: CanvasVersion } | { ok: false; error: string; conflict?: boolean }>;
+    revert(id: string, version: number): Promise<CanvasVersion | null>;
+  };
   /**
    * 用户的长期记忆。宿主做「记忆」管理用：列出来给用户看，让用户删。
    * 删除是物理删除（privacy），并记审计。
@@ -284,6 +310,10 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     pricing?: { sources: readonly PriceSource[] };
     /** 换跟随官方的厂商（及用户的改动）。连接配置变了的会在后台重新拉模型列表，拉完发 `models` 事件。 */
     providers?: readonly ModelProvider[];
+    /** 换定制 Agent 的定义。 */
+    agents?: readonly AgentProfile[];
+    /** 换画布的种类。 */
+    canvasKinds?: readonly CanvasKind[];
   }): Promise<void>;
   /** 底层调度器。一般用 `schedules` 就够了。 */
   readonly scheduler: Scheduler;
@@ -295,6 +325,9 @@ function toBase64(bytes: Uint8Array): string {
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(s);
 }
+
+/** 画布内容直接放进上下文的上限（字）；再长的只给开头，Agent 用 canvas.read 读全。 */
+const CANVAS_INLINE = 12_000;
 
 /** 附件文字的 artifact 记在这个名下（任务还没创建；读的权限由 task.attachments 给）。 */
 const ATTACHMENT_OWNER = 'attachments' as TaskId;
@@ -381,8 +414,15 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   const memoryOn = (): boolean => (typeof opts.memory === 'object' ? (opts.memory.enabled?.() ?? true) : !!opts.memory);
   // 内置技能总在最前：注册表按来源定先后，宿主和用户装的技能不能顶替它们
   const drafts = opts.scheduleDrafts;
+  let canvasKinds = new Map((opts.canvasKinds ?? []).map((k) => [k.kind, k]));
+  const validator = opts.validator ?? basicValidator;
   const builtins: SkillProvider[] = [
     artifact(),
+    canvas({
+      store: stores.canvases, kinds: () => canvasKinds, validator, now: platform.clock.now,
+      canvasOf: async (id) => (await stores.tasks.get(id))?.canvas ?? null,
+      onChange: (v) => emit('canvas', v),
+    }),
     ...(opts.memory ? [memory({
       store: stores.memories, purger: stores.purger, ids: platform.ids, now: platform.clock.now,
       enabled: () => memoryOn(),
@@ -397,6 +437,8 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     })] : []),
   ];
   const registry = new ToolRegistry({ tools: opts.tools ?? [], providers: [...builtins, ...(opts.skills ?? [])], now: platform.clock.now });
+  let profiles = new Map((opts.agents ?? []).map((p) => [p.id, p]));
+  registry.setAgents(opts.agents ?? []);
   await registry.ready();
 
   let policy = opts.policy ?? 'low-risk-auto';
@@ -413,7 +455,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
   // ── 事件：宿主不必自己给每个任务挂 watch ──
   const listeners = {
     task: new Set<AgentEvents['task']>(), schedule: new Set<AgentEvents['schedule']>(), draft: new Set<AgentEvents['draft']>(),
-    models: new Set<AgentEvents['models']>(),
+    models: new Set<AgentEvents['models']>(), canvas: new Set<AgentEvents['canvas']>(),
   };
   const emit = <E extends keyof AgentEvents>(event: E, value: Parameters<AgentEvents[E]>[0]): void => {
     for (const cb of listeners[event]) {
@@ -493,8 +535,39 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     }));
     return { ...bundle, messages };
   };
-  const buildContext = budget === null ? async (task: Task) => withImages(await rawContext(task)) : async (task: Task): Promise<ContextBundle> => {
-    const ctx = await rawContext(task);
+  // 定制 Agent 的说明书：放在最前面（宿主的说明之前），不压缩
+  const withProfile = (task: Task, bundle: ContextBundle): ContextBundle => {
+    const p = profiles.get(String(task.agentId));
+    if (!p?.instructions?.trim()) return bundle;
+    return { ...bundle, messages: [{ role: 'user', from: 'host', content: `【你是「${p.name}」】\n${p.instructions.trim()}` }, ...bundle.messages] };
+  };
+  // 绑定了画布：这种画布的写法、当前内容、用户上次之后在界面上改了哪里 —— 放在最后（最新的状态）
+  const withCanvas = async (task: Task, bundle: ContextBundle): Promise<ContextBundle> => {
+    if (!task.canvas) return bundle;
+    const kind = canvasKinds.get(task.canvas.kind);
+    if (!kind) return bundle;
+    const rows = await stores.canvases.history(task.canvas.id, 50);
+    const cur = rows[0] ?? null;
+    let text = `【画布：${kind.name}】\n${kind.instructions.trim()}\n\n`;
+    if (!cur) text += '画布现在是空的。第一次生成用 canvas.update：[{ op: "replace", path: "", value: 完整内容 }]。';
+    else {
+      const json = JSON.stringify(cur.doc);
+      text += `当前内容 v${cur.version}${json.length > CANVAS_INLINE ? `（太长，只给开头，要改的地方用 canvas.read 读全）` : ''}：\n${json.slice(0, CANVAS_INLINE)}`;
+      // 用户在界面上改的：从最新往回数到 Agent 的上一版
+      const edits: CanvasVersion[] = [];
+      for (const r of rows) { if (r.by !== 'user') break; edits.push(r); }
+      if (edits.length) {
+        const before = rows[edits.length];
+        const notes = edits.reverse().map((e) => e.note).filter(Boolean);
+        const paths = before ? diffPaths(before.doc, cur.doc) : [];
+        text += `\n\n用户在界面上改过（以用户改的为准，不要改回去）：${notes.length ? notes.join('；') : ''}${paths.length ? `${notes.length ? '；' : ''}改动位置 ${paths.join('、')}` : ''}`;
+      }
+    }
+    return { ...bundle, messages: [...bundle.messages, { role: 'user', from: 'host', content: text }] };
+  };
+  const rawWithExtras = async (task: Task) => withCanvas(task, withProfile(task, await rawContext(task)));
+  const buildContext = budget === null ? async (task: Task) => withImages(await rawWithExtras(task)) : async (task: Task): Promise<ContextBundle> => {
+    const ctx = await rawWithExtras(task);
     const { bundle, report } = await fitContext(ctx, { budget, tokenizer, summarize: summarizeFor(task) });
     if (report.actions.length) logger.log('info', '上下文超出预算，已压缩', { taskId: task.id, before: report.before, after: report.after, actions: report.actions.join(',') });
     return withImages(bundle);
@@ -504,7 +577,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     stores,
     planner,
     resolver: opts.resolver ?? registry,
-    validator: opts.validator ?? basicValidator,
+    validator,
     platform,
     policy: policyMode,
     buildContext,
@@ -641,6 +714,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
         trigger: o.ref !== undefined ? { type: 'manual', ref: o.ref } : { type: 'manual' },
         ...(o.budget ? { budget: o.budget } : {}),
         ...(attachments.length ? { attachments } : {}),
+        ...(o.canvas ? { canvas: o.canvas } : {}),
       });
     },
     async approve(taskId, decision) {
@@ -659,6 +733,42 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
         const rows: Sequenced<TaskEvent>[] = [];
         for await (const r of stores.events.read(id as TaskId)) rows.push(r);
         return rows;
+      },
+    },
+    canvas: {
+      get: (id) => stores.canvases.latest(id),
+      history: (id, limit) => stores.canvases.history(id, limit),
+      async edit(id, kind, change) {
+        const k = canvasKinds.get(kind);
+        if (!k) return { ok: false, error: `不认识的画布类型：${kind}` };
+        const cur = await stores.canvases.latest(id);
+        if (change.base !== undefined && (cur?.version ?? 0) !== change.base) {
+          return { ok: false, conflict: true, error: `画布已经更新到 v${cur?.version ?? 0}（你改的是 v${change.base}）` };
+        }
+        let doc: unknown;
+        try { doc = change.ops ? applyPatch(cur?.doc ?? null, change.ops) : change.doc; } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+        const issues = validator.validate(k.schema, doc);
+        if (issues.length) return { ok: false, error: issues.slice(0, 5).map((i) => `${i.path} ${i.message}`).join('；') };
+        const v: CanvasVersion = {
+          canvasId: id, kind, version: (cur?.version ?? 0) + 1, doc, by: 'user', at: platform.clock.now(),
+          ...(change.note ? { note: String(change.note).slice(0, 200) } : {}),
+        };
+        try { await stores.canvases.append(v); } catch (e) {
+          return { ok: false, conflict: true, error: e instanceof Error ? e.message : String(e) };
+        }
+        emit('canvas', v);
+        return { ok: true, version: v };
+      },
+      async revert(id, version) {
+        const old = await stores.canvases.get(id, version);
+        const cur = await stores.canvases.latest(id);
+        if (!old || !cur) return null;
+        const v: CanvasVersion = { canvasId: id, kind: cur.kind, version: cur.version + 1, doc: old.doc, by: 'user', at: platform.clock.now(), note: `回到 v${version}` };
+        await stores.canvases.append(v);
+        emit('canvas', v);
+        return v;
       },
     },
     memories: {
@@ -743,6 +853,8 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
       // 换了 key、新启用的厂商：后台去拉它的模型列表（启动前配置的，等 start 时再拉）
       if (patch.providers !== undefined && started) catalogDue();
       if (patch.tools !== undefined) registry.setTools(patch.tools);
+      if (patch.canvasKinds !== undefined) canvasKinds = new Map(patch.canvasKinds.map((k) => [k.kind, k]));
+      if (patch.agents !== undefined) { profiles = new Map(patch.agents.map((p) => [p.id, p])); registry.setAgents(patch.agents); }
       // 换技能来源时内置的保留 —— 宿主只管自己那一份
       if (patch.skills !== undefined) await registry.setProviders([...builtins, ...patch.skills]);
       if (patch.policy !== undefined) policy = patch.policy;

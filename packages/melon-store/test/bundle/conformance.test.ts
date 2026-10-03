@@ -63,6 +63,19 @@ for (const impl of IMPLS) {
     assert.deepEqual(all.map((l) => [l.vendor, l.at, l.error ?? null]), [['deepseek', 2, 'HTTP 401'], ['zhipu', 3, null]]);
   });
 
+  test(`[${impl.name}] 画布：按版本追加（版本号必须接着上一个，两边同时改会冲突）、取最新 / 指定版本、历史最新的在前`, async () => {
+    const b = impl.make(() => 0);
+    assert.equal(await b.canvases.latest('c1'), null);
+    await b.canvases.append({ canvasId: 'c1', kind: 'k', version: 1, doc: { msgs: ['a'] }, by: 'agent', at: 1, note: '初稿' });
+    await b.canvases.append({ canvasId: 'c1', kind: 'k', version: 2, doc: { msgs: ['a', 'b'] }, by: 'user', at: 2 });
+    await assert.rejects(b.canvases.append({ canvasId: 'c1', kind: 'k', version: 2, doc: {}, by: 'agent', at: 3 }), /conflict/);
+    await assert.rejects(b.canvases.append({ canvasId: 'c1', kind: 'k', version: 9, doc: {}, by: 'agent', at: 3 }), /conflict/);
+    assert.deepEqual((await b.canvases.latest('c1'))!.doc, { msgs: ['a', 'b'] });
+    assert.equal((await b.canvases.get('c1', 1))!.note, '初稿');
+    assert.deepEqual((await b.canvases.history('c1')).map((v) => [v.version, v.by]), [[2, 'user'], [1, 'agent']]);
+    assert.equal((await b.canvases.history('other')).length, 0);
+  });
+
   test(`[${impl.name}] 用量账本：按时间范围列出；过保留期的明细按天汇总（维度保留、任务 id 丢掉），只汇总一次`, async () => {
     const b = impl.make(() => 0);
     const DAY = 86_400_000;
