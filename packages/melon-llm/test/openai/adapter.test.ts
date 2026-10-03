@@ -273,3 +273,18 @@ test('看图：图片发成 image_url（data URL）；按模型名判断能不�
   const blind = new OpenAICompatibleChatModel({ baseURL: 'http://x/v1', apiKey: 'k', model: 'deepseek-flash', fetchImpl: f });
   assert.equal(blind.capabilities.vision, false, '看不了图：路由不会把带图的一轮给它');
 });
+
+test('关思考：DeepSeek、智谱带 thinking: { type: "disabled" }；强制思考的 GLM-5.3 / 5.3-Flash 和不认识这个参数的厂商不带', async () => {
+  const body = async (preset: 'deepseek' | 'zhipu' | 'openai', m: string, thinking?: 'off' | 'auto') => {
+    const cap: { body?: any } = {};
+    await new OpenAICompatibleChatModel({ model: m, preset, apiKey: 'k', baseURL: 'http://x/v1', fetchImpl: fakeFetch({ choices: [{ message: { content: 'ok' } }] }, cap) })
+      .generate({ messages: [{ role: 'user', content: 'x' }], ...(thinking ? { thinking } : {}) });
+    return cap.body;
+  };
+  assert.deepEqual((await body('deepseek', 'deepseek-flash', 'off')).thinking, { type: 'disabled' });
+  assert.deepEqual((await body('zhipu', 'glm-4.7', 'off')).thinking, { type: 'disabled' });
+  assert.equal((await body('zhipu', 'glm-5.3-flash', 'off')).thinking, undefined, '强制思考的不带（带了也关不掉）');
+  assert.equal((await body('openai', 'gpt-4o', 'off')).thinking, undefined);
+  assert.equal((await body('deepseek', 'deepseek-flash')).thinking, undefined, '没说就不管（用厂商的默认）');
+  assert.equal((await body('deepseek', 'deepseek-flash', 'auto')).thinking, undefined);
+});

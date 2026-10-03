@@ -752,11 +752,11 @@ test('看图：图片附件发给能看图的模型（带上内容）；只启�
 });
 
 test('定制 Agent：各自的说明书进上下文；只能用勾选的技能（看不到、也调不了别的）；没定义的 Agent 不受限', async () => {
-  const seen: { agent: string; tools: string[]; text: string }[] = [];
+  const seen: { agent: string; tools: string[]; text: string; thinking: string | undefined }[] = [];
   const model = new ScriptedModel([]);
   let step = 0;
   model.generate = async (req) => {
-    seen.push({ agent: String(req.meta?.agentId), tools: (req.tools ?? []).map((t) => t.name), text: req.messages.map((m) => m.content).join('\n') });
+    seen.push({ agent: String(req.meta?.agentId), tools: (req.tools ?? []).map((t) => t.name), text: req.messages.map((m) => m.content).join('\n'), thinking: req.thinking });
     step += 1;
     // 第一次：「创作助手」想偷偷调发邮件（没勾选）→ 应被拒
     if (step === 1) return call('mail.send', { to: 'a@example.com', subject: 's', body: 'b' });
@@ -766,7 +766,7 @@ test('定制 Agent：各自的说明书进上下文；只能用勾选的技能�
   const mail = defineTool({ id: 'mail.send', description: '发邮件', input: { to: 'string', subject: 'string', body: 'string' }, risk: 'external', triggers: [], run: () => '已发送' });
   const agent = await createAgent({
     models: [{ model, quality: 1, costUSD: 1, egress: 'test', label: 'test' }], tools: [note, mail], platform: quiet,
-    agents: [{ id: 'writer', name: '创作助手', instructions: '你是聊天记录风格的创作助手，只写虚构的人物和场景。', skills: ['note'] }],
+    agents: [{ id: 'writer', name: '创作助手', instructions: '你是聊天记录风格的创作助手，只写虚构的人物和场景。', skills: ['note'], thinking: 'off' }],
     memory: true,
   });
   try {
@@ -774,6 +774,7 @@ test('定制 Agent：各自的说明书进上下文；只能用勾选的技能�
     const t = await agent.run('写一段对话', { agentId: 'writer' });
     await done;
     assert.match(seen[0]!.text, /你是聊天记录风格的创作助手/, '说明书进上下文');
+    assert.equal(seen[0]!.thinking, 'off', '这个 Agent 关了思考');
     assert.ok(seen[0]!.tools.includes('note.add') && !seen[0]!.tools.includes('mail.send'), `只给勾选的：${seen[0]!.tools.join(',')}`);
     // 记忆也是一个技能（工具 id 虽是 builtin. 开头）：没勾就没有；读完整内容总在
     assert.ok(!seen[0]!.tools.some((x) => x.includes('memory')), `没勾记忆：${seen[0]!.tools.join(',')}`);
@@ -788,6 +789,7 @@ test('定制 Agent：各自的说明书进上下文；只能用勾选的技能�
     await done2;
     assert.ok(seen[before]!.tools.includes('mail.send') && seen[before]!.tools.includes('builtin.memory_write'));
     assert.doesNotMatch(seen[before]!.text, /创作助手/);
+    assert.equal(seen[before]!.thinking, undefined, '默认 Agent 不管思考');
   } finally { await agent.stop(); }
 });
 

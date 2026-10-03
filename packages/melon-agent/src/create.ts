@@ -450,6 +450,8 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     ids: platform.ids,
     hash: (x) => platform.hasher.sha256(x).slice(0, 16),
     ...(opts.actionWords?.length ? { actionWords: [...DEFAULT_ACTION_WORDS, ...opts.actionWords] } : {}),
+    // 定制 Agent 可以关思考（写作类的不需要推理，思考只是又慢又贵）
+    thinkingOf: (task) => profiles.get(String(task.agentId))?.thinking,
   });
 
   // ── 事件：宿主不必自己给每个任务挂 watch ──

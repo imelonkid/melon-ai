@@ -23,6 +23,8 @@ export interface ReActOptions {
   readonly hash?: (s: string) => string;
   /** 动作词表（「没有合适的工具」的判定依据）。默认 `DEFAULT_ACTION_WORDS`，宿主可扩充。 */
   readonly actionWords?: readonly string[];
+  /** 这个任务要不要思考（宿主按定制 Agent 给）。不传、返回空都用模型的默认。 */
+  readonly thinkingOf?: (task: PlanInput['task']) => 'off' | 'auto' | undefined;
 }
 
 /**
@@ -141,6 +143,7 @@ export class ReActPlanner implements Planner {
       return (task.denied ?? []).length > 0
         || matchActionTools(`${task.goal}\n${text}`, tools).some((t) => !called.includes(t.name));
     };
+    const thinking = this.opts.thinkingOf?.(task);
     const generate = async (msgs: readonly Message[], required: boolean, maxOutputTokens?: number) => {
       // 必须调工具的一轮不会有回答，不流式
       let held = false;
@@ -159,6 +162,7 @@ export class ReActPlanner implements Planner {
       const res = await decision.primary.generate({
         messages: msgs,
         ...(maxOutputTokens ? { maxOutputTokens } : {}),
+        ...(thinking ? { thinking } : {}),
         ...(tools.length > 0 ? { tools, toolChoice: required ? 'required' as const : 'auto' as const } : {}),
         signal,
         ...(onText ? { onText } : {}),

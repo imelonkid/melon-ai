@@ -91,6 +91,11 @@ export interface GenerateRequest {
   /** 要求模型按此 schema 输出。不支持的适配器需降级为提示词约束。 */
   readonly responseSchema?: JSONSchema;
   readonly maxOutputTokens?: number;
+  /**
+   * 思考：`off` 不要思考（写东西这类不需要推理的事，思考只是又慢又贵）；`auto` 或不填用模型 / 厂商的默认。
+   * 关不掉的（强制思考的模型、没有这个开关的厂商）适配器忽略它，照常调用。
+   */
+  readonly thinking?: 'off' | 'auto';
   readonly temperature?: number;
   readonly signal?: AbortSignal;
   /**

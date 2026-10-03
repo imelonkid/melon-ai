@@ -349,3 +349,12 @@ test('输出到了上限还没写出东西（思考太长）：加大输出上�
   assert.equal(step3.kind, 'final');
   assert.match(step3.kind === 'final' ? step3.answer : '', /^第一段第二段[\s\S]*没写完/);
 });
+
+test('思考开关：宿主按任务给（定制 Agent 可以关思考），每次问模型都带上', async () => {
+  const m = new StubModel([{ text: '好' }]);
+  await new ReActPlanner({ router: router(m), thinkingOf: (t) => (String(t.agentId) === 'a' ? 'off' : undefined) }).plan(input(), sig);
+  assert.equal(m.requests[0]!.thinking, 'off');
+  const m2 = new StubModel([{ text: '好' }]);
+  await new ReActPlanner({ router: router(m2) }).plan(input(), sig);
+  assert.equal(m2.requests[0]!.thinking, undefined);
+});

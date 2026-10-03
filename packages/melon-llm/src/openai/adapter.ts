@@ -12,6 +12,15 @@ import { toolNameCodec } from '../shared/toolname.js';
  * 用 `fetch` 而不是 openai SDK：这一层只需要 `/chat/completions` 一个端点，
  * 引 SDK 会为了几十行代码多打一个包 —— 对 Electron 的体积是实打实的。
  */
+/**
+ * 能关思考的：请求里带 `thinking: { type: 'disabled' }`（DeepSeek、智谱的官方文档，2026-10）。
+ * 智谱的 GLM-5.3 / GLM-5.3-Flash 是强制思考，关不掉 —— 不带。别家没有这个参数，也不带。
+ */
+const THINKING_OFF: Partial<Record<string, (model: string) => boolean>> = {
+  deepseek: () => true,
+  zhipu: (model) => !/^glm-5\.3(-flash)?$/i.test(model),
+};
+
 export const OPENAI_COMPATIBLE_PRESETS = {
   openai: { baseURL: 'https://api.openai.com/v1', env: 'OPENAI_API_KEY' },
   deepseek: { baseURL: 'https://api.deepseek.com/v1', env: 'DEEPSEEK_API_KEY' },
@@ -137,6 +146,7 @@ export class OpenAICompatibleChatModel implements ChatModel {
         body: JSON.stringify({
           model: this.id,
           max_tokens: req.maxOutputTokens ?? this.opts.maxTokens ?? 8_192,
+          ...(req.thinking === 'off' && this.opts.preset && THINKING_OFF[this.opts.preset]?.(this.id) ? { thinking: { type: 'disabled' } } : {}),
           messages: req.messages.map((m) => ({
             role: m.role === 'tool' ? 'user' : m.role,
             content: this.contentOf(m),

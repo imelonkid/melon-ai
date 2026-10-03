@@ -77,4 +77,6 @@ export interface AgentProfile {
   readonly name: string;
   readonly instructions?: string;
   readonly skills?: readonly string[];
+  /** 思考：`off` 这个 Agent 每次问模型都不要思考（写作类的通常不需要）；不填用模型的默认。 */
+  readonly thinking?: 'off' | 'auto';
 }
