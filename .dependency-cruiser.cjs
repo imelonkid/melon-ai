@@ -4,7 +4,7 @@
  * 详见 docs/architecture.md §4.3
  *
  * 两层规则：
- * 1. **包之间**：core ← skills ← engine ← agent；llm / store / audit 只认 core；
+ * 1. **包之间**：core ← skills ← engine ← agent；llm / store / audit / admin 只认 core；
  *    plugins（厂商实现）只认 core，且引擎任何包都不能依赖它 —— 插件永远是宿主按需引入的。
  * 2. **包内目录之间**：一个包按职责合并了几个组件，组件之间的方向同样要拦 ——
  *    例如 engine 里的 task（纯状态机）不能反过来依赖 runtime。
@@ -39,6 +39,7 @@ module.exports = {
     onlyCore('llm-only-core', pkg('llm'), pkg('llm')),
     onlyCore('store-only-core', pkg('store'), pkg('store')),
     onlyCore('audit-only-core', pkg('audit'), pkg('audit')),
+    onlyCore('admin-only-core', pkg('admin'), pkg('admin')),
     onlyCore('plugins-only-core', pkg('plugins'), pkg('plugins')),
     {
       name: 'nothing-depends-on-plugins',

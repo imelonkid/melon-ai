@@ -22,7 +22,7 @@ melon-ai 是**可嵌入的 AI Agent 引擎**。Jolly（`../jolly`）是基于它
 
 ## 模块规约：按业务域分包，不按功能加包
 
-当前 9 个包（详见 `docs/architecture.md` §3、§4）：
+当前 10 个包（详见 `docs/architecture.md` §3、§4）：
 
 ```
 core     契约：类型与端口，零运行时依赖
@@ -31,6 +31,7 @@ skills   技能：pipeline/ · policy/ · registry/（注册与审查）· built
 llm      模型：router/ · planner/ · openai/ · anthropic/（子路径）
 store    存储：sqlite/（子路径）
 audit    审计（横切，独立成包）
+admin    后台（横切，独立成包）：额度、花费汇总、站点设置，自带管理页面与接口
 plugins  扩展插件：厂商实现，每家一个子路径（bocha/）
 agent    组装：宿主入口
 testkit  测试替身
@@ -49,7 +50,7 @@ testkit  测试替身
 
 ## 依赖方向
 
-- 包之间：`core ← skills ← engine ← agent`；`llm` / `store` / `audit` / `memory` / `plugins` 只依赖 `core`。`agent` 是唯一允许依赖所有引擎包的组装层；**任何引擎包（含 `agent`）都不能依赖或转导出 `plugins`**，插件之间也互不引用。
+- 包之间：`core ← skills ← engine ← agent`；`llm` / `store` / `audit` / `admin` / `memory` / `plugins` 只依赖 `core`。`agent` 是唯一允许依赖所有引擎包的组装层；**任何引擎包（含 `agent`）都不能依赖或转导出 `plugins`**，插件之间也互不引用。
 - 包内目录之间同样有方向（如 `engine/task` 不能依赖 `engine/runtime`），由 `.dependency-cruiser.cjs` 强制。
 - **禁止循环依赖，包括测试依赖。** 测试需要别的包的对象时，优先由 testkit 提供替身。
 - **改了依赖规则，必须造一个违规验证它会挂**，再删掉。「没有报错」不等于「检查生效了」。

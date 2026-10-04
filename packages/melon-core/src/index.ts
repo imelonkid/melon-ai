@@ -6,6 +6,7 @@ export * from './skill.js';
 export * from './memory.js';
 export * from './model.js';
 export * from './usage.js';
+export * from './admin.js';
 export * from './search.js';
 export * from './image.js';
 export * from './canvas.js';

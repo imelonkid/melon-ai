@@ -9,6 +9,7 @@ import {
 
 export * from './stores.js';
 export * from './content.js';
+export * from './admin.js';
 
 export interface MemoryBundle extends StoreBundle {
   readonly audit: InMemoryAuditSink;

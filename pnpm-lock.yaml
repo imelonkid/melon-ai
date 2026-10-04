@@ -24,8 +24,24 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/melon-admin:
+    dependencies:
+      '@melon-ai/core':
+        specifier: workspace:*
+        version: link:../melon-core
+    devDependencies:
+      '@melon-ai/store':
+        specifier: workspace:*
+        version: link:../melon-store
+      '@melon-ai/testkit':
+        specifier: workspace:*
+        version: link:../melon-testkit
+
   packages/melon-agent:
     dependencies:
+      '@melon-ai/admin':
+        specifier: workspace:*
+        version: link:../melon-admin
       '@melon-ai/audit':
         specifier: workspace:*
         version: link:../melon-audit

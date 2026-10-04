@@ -47,6 +47,9 @@
       ],
       "@melon-ai/testkit": [
         "packages/melon-testkit/src/index.ts"
+      ],
+      "@melon-ai/admin": [
+        "packages/melon-admin/src/index.ts"
       ]
     }
   }

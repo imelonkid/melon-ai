@@ -362,13 +362,14 @@ vs「推理开始前框架必须准备好的东西」**。
 │           melon-memory（P1 待建） 三层记忆 + 上下文装配                │
 ├─────────────────────────────────────────────────────────────────────┤
 │ 横切      melon-audit          审计哈希链（合规与追溯，不属于任何业务域）│
+│           melon-admin          后台：额度、花费汇总、站点设置、管理页面  │
 │ 扩展      melon-plugins        厂商实现（bocha/ …），宿主按需引入     │
 │           melon-testkit        测试替身                              │
 ├─────────────────────────────────────────────────────────────────────┤
 │ 契约      melon-core           类型 + 端口。零运行时依赖。倒置中心    │
 └─────────────────────────────────────────────────────────────────────┘
 
-包之间：core ← skills ← engine ← agent；llm / store / audit / memory / plugins 只依赖 core。
+包之间：core ← skills ← engine ← agent；llm / store / audit / admin / memory / plugins 只依赖 core。
 plugins 不被任何引擎包依赖（含 agent）—— 它实现 core 的协议，由宿主按需引入。
 ```
 
@@ -448,11 +449,12 @@ plugins 不被任何引擎包依赖（含 agent）—— 它实现 core 的协�
 | | `sqlite/` | 全套存储端口的 SQLite 实现，`@melon-ai/store/sqlite` 子路径，可选 peer `better-sqlite3` | core | ✅ |
 | **@melon-ai/memory** | | 三层记忆 + 上下文装配与压缩（两者紧耦合，放一起） | core | P1 待建 |
 | **@melon-ai/audit** | | 审计：哈希链、维度脱敏、保留期、跨任务查询（§4.5）。横切关注点，独立成包 | core | ✅ |
-| **@melon-ai/agent** | | 组装：`createAgent(deps)`，宿主的入口。根入口只用 Web 标准 API（任何运行时可 import）；Node 专属的在子路径（`/node` `/sqlite` `/web` `/mail` `/agentskills`） | 全部 | ✅ |
+| **@melon-ai/admin** | | 后台（横切）：额度（通用 / 单独 / 不限；按天、滚动时间窗）、花费流水与汇总、站点设置；自带管理页面（`ui.html` 嵌进 `ui.ts`）和接口，宿主挂到自己的 HTTP 服务上。存储端口 `AdminStore` 在 core，实现在 store（内存、`sqlite/` 的 `openSqliteAdminStore`）。宿主经 `@melon-ai/agent/admin` 使用（§10 第 100 条） | core | ✅ |
+| **@melon-ai/agent** | | 组装：`createAgent(deps)`，宿主的入口。根入口只用 Web 标准 API（任何运行时可 import）；Node 专属的在子路径（`/node` `/sqlite` `/web` `/mail` `/agentskills` `/admin`） | 全部 | ✅ |
 | **@melon-ai/testkit** | | 内存替身、假模型、驱动器 | core, store | ✅ |
 | **@melon-ai/plugins** | `bocha/` | 扩展插件：厂商对 core 协议的实现，每家一个子路径。博查实现 `SearchProvider`（`@melon-ai/plugins/bocha`） | core | ✅ |
 
-**2026-09 由 14 个包合并为 8 个**（另有 memory 待建）；随后为厂商实现加了 `plugins`（第 9 个，见 §4.2 末尾）。旧包名与新位置对照 ——
+**2026-09 由 14 个包合并为 8 个**（另有 memory 待建）；随后为厂商实现加了 `plugins`（第 9 个，见 §4.2 末尾），为多用户宿主的后台加了 `admin`（第 10 个，§10 第 100 条）。旧包名与新位置对照 ——
 §10 中早于这次合并的条目保留旧包名，按此表对照：
 
 | 旧包 | 新位置 |
@@ -1406,6 +1408,18 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     - 模型：每个候选调用前问（只问带 `meta` 的调用，连接测试不问）。不让的跳过、换下一家；都不让 → `ToolError('FATAL', reason)`，任务以这个原因结束。
     - 按次收费的工具（有 `billing` 的）：执行前问，不让就不执行、不记账，工具结果是带原因的 FATAL 错误（提示模型告诉用户，不要再试）。
     - 宿主一般拿 `agent.usage` 的账本算已用多少，所以钩子是异步的。
+
+100. **后台（`@melon-ai/admin`，新包）。** 多用户的宿主每个用户一个引擎实例，「谁有多少额度、今天花了多少、网站叫什么」要跨实例看、要有地方改 ——
+    任何多用户宿主都要，所以放引擎（用户确认了新建包：横切关注点，且自带页面和接口层，同 audit 的理由）。宿主仍只装 `@melon-ai/agent`，走 `/admin` 子路径。
+    - 边界：引擎管额度（通用策略、单独策略、不限；时间窗默认「每天按北京时间 0 点 + 滚动 5 小时」，金额可改）、花费流水、汇总、站点设置、页面与接口；
+      宿主给用户名单（`principals.list` / 可选 `setStatus`）、管理员登录的校验（`auth.verify`）、哪些花费算额度（`meter(id, counts)` 的 `counts`）。
+      「用户」对引擎只是不透明的 `principal`。
+    - 接入一行：`createAgent({ ...admin.meter(userId, counts) })` = `spendGuard`（第 99 条）+ 新的 `onUsage`（每记一笔用量回调，宿主拿去跨实例汇总；出错只记日志）。
+      `onUsage` 在 `createAgent` 里包住存储的用量账本，不改宿主传进来的存储对象。
+    - 存储：端口 `AdminStore` 在 core；SQLite 实现单独一个库文件（宿主全局，不属于哪个实例的 `openSqliteStores`）。每次检查都读库不缓存 —— 后台、命令行、另一个进程改了立即生效。
+    - 页面：`ui.html` 由脚本嵌进 `ui.ts`（测试核对两边一致），深浅色跟随系统、可切换，网站名称在「设置」里改。
+      接口安全：会话令牌放 HttpOnly + SameSite=Strict 的 cookie（只在内存，重启要重新登录）、写操作只收 JSON、登录按用户名限速、页面带 CSP。
+    - `admin.ts` 与 `http.ts` 一度互相引用（类型也算），`lint:deps` 的 no-circular 拦下；改成接口层只认 `types.ts` 里的 `AdminApi`。
 
 #### 包结构合并（14 → 8）
 

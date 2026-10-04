@@ -128,6 +128,11 @@ export interface AgentOptions {
    * 模型换下一家（都不行就以这个原因结束），工具不执行。额度怎么算是宿主的事（可以用 `agent.usage` 的账本）。
    */
   readonly spendGuard?: SpendGuard;
+  /**
+   * 每记一笔用量（问一次模型、用一次按次收费的工具）之后回调。宿主拿它做跨实例的汇总（`@melon-ai/agent/admin`）。
+   * 回调出错只记日志，不影响任务。
+   */
+  readonly onUsage?: (record: UsageRecord) => void;
   readonly execute?: { timeoutMs?: number; maxRetries?: number; backoffBaseMs?: number };
   readonly pollIntervalMs?: number;
   /** 定时轮询间隔。默认 30s。 */
@@ -356,10 +361,25 @@ const TERMINAL = new Set<TaskState>(TERMINAL_STATES);
  * agent.on('task', (t) => render(t));
  * ```
  */
+/** 用量账本外面包一层：记完一笔通知宿主。不改存储本身（宿主可能在别处还用着它）。 */
+function tapUsage(base: Storage, onUsage: AgentOptions['onUsage'], logger: { log: (l: 'warn', m: string) => void }): Storage {
+  if (!onUsage) return base;
+  const ledger = base.usage;
+  const usage: typeof ledger = {
+    record: async (r) => {
+      await ledger.record(r);
+      try { onUsage(r); } catch (e) { logger.log('warn', `用量回调出错：${e instanceof Error ? e.message : String(e)}`); }
+    },
+    list: (q) => ledger.list(q),
+    rollup: (before) => ledger.rollup(before),
+  };
+  return Object.create(base, { usage: { value: usage, enumerable: true } }) as Storage;
+}
+
 export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> {
   const platform = opts.platform ?? defaultPlatform({ min: opts.logLevel ?? 'info' });
   const { logger } = platform;
-  const stores: Storage = opts.storage ?? opts.stores ?? memoryStorage();
+  const stores: Storage = tapUsage(opts.storage ?? opts.stores ?? memoryStorage(), opts.onUsage, logger);
   const defaultAgent = opts.agentId ?? 'default';
 
   let metering = opts.metering ?? {};
