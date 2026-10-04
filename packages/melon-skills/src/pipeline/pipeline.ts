@@ -1,7 +1,7 @@
 import type {
   AdmissionOutcome, AgentId, ApprovalRequest, AuditDraft, AuditRecorder, ArtifactStore,
   Clock, GrantStore, Hasher, IdempotencyStore, LogField, Logger, PolicyMode, QuotaSnapshot,
-  ResolvedTool, RiskClass, SchemaValidator, Task, ToolCall, ToolContext, ToolResolver, ToolResult, Tracer, UsageLedger,
+  ResolvedTool, RiskClass, SchemaValidator, SpendGuard, Task, ToolCall, ToolContext, ToolResolver, ToolResult, Tracer, UsageLedger,
 } from '@melon-ai/core';
 import { computeScope, decide } from '../policy/index.js';
 import { CircuitBreaker } from './breaker.js';
@@ -31,6 +31,8 @@ export interface PipelineDeps {
   readonly idempotencyTtlMs?: number;
   /** 用量账本：声明了 `billing` 的工具每次执行记一笔。不给就不记。 */
   readonly usage?: UsageLedger;
+  /** 花钱前的检查（宿主的额度）：声明了 `billing` 的工具执行前问一次，不让就不执行、把原因交给模型。 */
+  readonly spendGuard?: SpendGuard;
 }
 
 /**
@@ -254,7 +256,20 @@ export class ToolPipeline {
     };
 
     const cfg: ExecuteConfig = { ...DEFAULT_EXECUTE, ...this.deps.execute };
-    const ex = await execute(call.toolId, handler, call.args, cx, cfg, {
+    // 额度：按次收费的工具执行前问一次。不让就换成一个直接报这个原因的处理函数（不重试、不记账）
+    let run = handler;
+    let spendDenied = false;
+    if (descriptor.billing && this.deps.spendGuard) {
+      const d = await this.deps.spendGuard({
+        kind: 'tool', vendor: descriptor.billing.vendor,
+        meta: { taskId: task.id, agentId: task.agentId, taskKind: task.kind, trigger: task.trigger.type, purpose: 'tool' },
+      });
+      if (d) {
+        spendDenied = true;
+        run = async () => { throw new ToolError('FATAL', d.reason, { retriable: false, hint: '告诉用户原因，不要再试这个工具' }); };
+      }
+    }
+    const ex = await execute(call.toolId, run, call.args, cx, cfg, {
       now: () => this.deps.clock.now(),
       sleep: this.deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
       breaker: this.breaker,
@@ -275,7 +290,7 @@ export class ToolPipeline {
       else this.rememberRepeat(rKey, result);
     }
 
-    if (descriptor.billing && this.deps.usage) {
+    if (descriptor.billing && this.deps.usage && !spendDenied) {
       const b = descriptor.billing;
       // 只有成功的按次计费；记账失败不影响这次调用
       await this.deps.usage.record({

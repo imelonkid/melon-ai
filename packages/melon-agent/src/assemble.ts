@@ -1,4 +1,4 @@
-import type {
+import type { SpendGuard,
   AgentEngine, AgentId, AnswerDraft, AuditRecorder, AuditSink, ContextBundle, IdempotencyStore, ModelTool,
   Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, SchemaValidator, StoreBundle,
   Task, ToolResolver, ToolsetSnapshot,
@@ -26,6 +26,8 @@ export interface AssembleOptions {
   readonly retention?: RetentionPolicy;
   readonly toolset?: () => ToolsetSnapshot;
   readonly quotaOf?: (agentId: AgentId) => Promise<QuotaSnapshot | null>;
+  /** 花钱前的检查（宿主的额度）。 */
+  readonly spendGuard?: SpendGuard;
   /** 上下文装配。默认「目标 + 当前时间 + 最近步骤」（`basicContext`）；预算分配与压缩等 memory。 */
   readonly buildContext?: (task: Task) => Promise<ContextBundle>;
   /** 本轮可用的工具，带全量 schema。默认空数组 —— 不给工具模型就只能直答。 */
@@ -105,6 +107,7 @@ export async function assemble(opts: AssembleOptions): Promise<AssembledAgent> {
     ...(opts.execute ? { execute: opts.execute } : {}),
     // 按次收费的工具（搜索）每次执行记一笔
     usage: stores.usage,
+    ...(opts.spendGuard ? { spendGuard: opts.spendGuard } : {}),
   });
 
   const configured = opts.policy;

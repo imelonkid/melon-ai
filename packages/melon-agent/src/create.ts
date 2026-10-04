@@ -1,5 +1,5 @@
 import type {
-  CanvasKind, CanvasVersion, ThinkingLevel,
+  CanvasKind, CanvasVersion, ThinkingLevel, SpendGuard,
   AgentProfile,
   AgentId, AnswerDraft, ApprovalDecision, AuditSink, Grant, Memory, Budget, ContextBundle, IdempotencyStore, LogLevel, ModelEntry,
   ModelTool, Planner, Platform, PolicyMode, QuotaSnapshot, RetentionPolicy, Schedule, ScheduleId,
@@ -123,6 +123,11 @@ export interface AgentOptions {
   readonly platform?: Platform;
   readonly retention?: RetentionPolicy;
   readonly quotaOf?: (agentId: AgentId) => Promise<QuotaSnapshot | null>;
+  /**
+   * 花钱前的检查（宿主的额度）：每次问模型、每次用按次计费的工具之前问一次，返回原因就不花 ——
+   * 模型换下一家（都不行就以这个原因结束），工具不执行。额度怎么算是宿主的事（可以用 `agent.usage` 的账本）。
+   */
+  readonly spendGuard?: SpendGuard;
   readonly execute?: { timeoutMs?: number; maxRetries?: number; backoffBaseMs?: number };
   readonly pollIntervalMs?: number;
   /** 定时轮询间隔。默认 30s。 */
@@ -364,6 +369,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     ...(metering.maxAttempts ? { maxAttempts: metering.maxAttempts } : {}),
     now: () => platform.clock.now(),
     onLedgerError: (e) => logger.log('warn', `用量记账失败：${e instanceof Error ? e.message : String(e)}`),
+    ...(opts.spendGuard ? { guard: opts.spendGuard } : {}),
   });
   if (opts.routing) pool.route(opts.routing);
   // 价格簿：同步来的官方价格，选模型和记账都用它（手填的不覆盖）。第一次同步时和内置价格比
@@ -592,6 +598,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
     toolset: opts.toolset ?? (() => registry.toolset()),
     ...(opts.retention ? { retention: opts.retention } : {}),
     ...(opts.quotaOf ? { quotaOf: opts.quotaOf } : {}),
+    ...(opts.spendGuard ? { spendGuard: opts.spendGuard } : {}),
     ...(opts.execute ? { execute: opts.execute } : {}),
     ...(opts.pollIntervalMs !== undefined ? { pollIntervalMs: opts.pollIntervalMs } : {}),
     ...(opts.schedulePollMs !== undefined ? { schedulePollMs: opts.schedulePollMs } : {}),

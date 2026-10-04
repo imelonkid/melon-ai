@@ -1,4 +1,4 @@
-import type {
+import type { SpendGuard,
   CallMeta, ChatModel, ModelEntry, ModelRouter, ModelTier, RouteContext, RouteDecision, RouteIntent, Tokenizer, UsageLedger, UsageRecord,
 } from '@melon-ai/core';
 import { ToolError } from '@melon-ai/core';
@@ -19,6 +19,8 @@ export interface MeteringOptions {
   readonly maxAttempts?: number;
   readonly now?: () => number;
   readonly onLedgerError?: (e: unknown) => void;
+  /** 花钱前的检查（宿主的额度），见 `SpendGuard`。 */
+  readonly guard?: SpendGuard;
 }
 
 /** 账本里的一条 → 路由规则要的调用信息（预热统计时按当时的规则归类）。 */
@@ -185,6 +187,7 @@ export class ModelPool implements ModelRouter {
       ...(m.ledger ? { ledger: m.ledger } : {}),
       ...(m.fx ? { fx: m.fx } : {}),
       ...(m.onLedgerError ? { onLedgerError: m.onLedgerError } : {}),
+      ...(m.guard ? { guard: m.guard } : {}),
       // 每记一笔顺带更新路由的用量统计（按这次调用所属的任务类别）
       onRecord: (r) => {
         this.stats.record(r, rule.taskClass);

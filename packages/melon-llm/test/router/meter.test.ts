@@ -197,3 +197,24 @@ test('余额不足：同一家的其余模型不再试，直接换下一家；�
   assert.equal(isAccountError(new ToolError('FATAL', '鉴权失败（401）：invalid api key')), 'auth');
   assert.equal(isAccountError(new ToolError('RATE_LIMITED', '触发限流：Rate limit reached for requests')), null, '真正的限流不算');
 });
+
+test('额度：宿主不让用的厂商跳过、换下一家；都不让就以宿主的原因结束；没说为谁问的不问宿主', async () => {
+  const seen: string[] = [];
+  const pool = new ModelPool([entry('a', model('a', () => {}), PRICE), entry('b', model('b', () => {}), PRICE)], 'quality', {
+    ledger: ledger(),
+    guard: (c) => { seen.push(`${c.kind}:${c.vendor}`); return c.vendor === 'vendor-a' ? { reason: 'a 的额度用完了' } : null; },
+  });
+  const res = await (await pool.select('plan')).primary.generate({ messages: [], meta });
+  assert.equal(res.text, 'b 的回答');
+  assert.deepEqual(seen, ['model:vendor-a', 'model:vendor-b']);
+
+  const none = new ModelPool([entry('a', model('a', () => {}), PRICE)], 'quality', {
+    ledger: ledger(), guard: () => ({ reason: '今天的额度用完了', resumeAt: 1 }),
+  });
+  await assert.rejects((await none.select('plan')).primary.generate({ messages: [], meta }),
+    (e: unknown) => e instanceof ToolError && e.code === 'FATAL' && /额度用完/.test(e.message));
+
+  seen.length = 0;
+  await (await pool.select('plan')).primary.generate({ messages: [] });
+  assert.deepEqual(seen, []);
+});

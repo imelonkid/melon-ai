@@ -158,3 +158,22 @@ export interface PriceSync {
   readonly lastSuccessAt?: number;
   readonly notes?: readonly string[];
 }
+
+/**
+ * 花钱前的检查（宿主给）：每次要花钱的调用（问模型、按次计费的工具）之前问一次。返回 null 放行；返回原因就不调 ——
+ * 模型换下一家（都不行就以这个原因结束），工具这次不执行、把原因交给模型。
+ * 引擎不管额度怎么算（按天、滚动几小时、按人）：那是宿主的策略，宿主可以用 `agent.usage` 的账本自己算。
+ */
+export interface SpendCheck {
+  readonly kind: 'model' | 'tool';
+  /** 哪一家（模型的 egress、工具 billing 的 vendor）。 */
+  readonly vendor: string;
+  readonly meta?: CallMeta;
+}
+export interface SpendDenial {
+  /** 给用户看的原因（会出现在任务的失败原因里）。 */
+  readonly reason: string;
+  /** 什么时候恢复（毫秒时间戳），没有就不说。 */
+  readonly resumeAt?: number;
+}
+export type SpendGuard = (check: SpendCheck) => Promise<SpendDenial | null> | SpendDenial | null;

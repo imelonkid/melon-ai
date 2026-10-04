@@ -41,7 +41,7 @@ export type {
   ApprovalDecision, ApprovalRequest, Grant, Memory, SkillProvider, ToolContext, ToolOutput, Message, AnswerDraft,
   ModelPrice, Currency, UsageRecord, UsageQuery, ModelTier, RouteContext, PlanPricing, PriceSource, PriceSheet, PriceSync, PriceChange,
   ModelProvider, ModelOverride, ModelListing, CatalogModel, VendorCatalog, Attachment, OutputFile,
-  ThinkingLevel, AgentProfile, CanvasKind, CanvasVersion,
+  ThinkingLevel, AgentProfile, CanvasKind, CanvasVersion, SpendGuard, SpendCheck, SpendDenial,
 } from '@melon-ai/core';
 
 /** 兼容旧名。 */

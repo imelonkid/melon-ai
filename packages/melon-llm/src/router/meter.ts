@@ -1,7 +1,8 @@
 import type {
   CallMeta, ChatModel, GenerateRequest, GenerateResult, ModelCapabilities, ModelEntry, ModelPrice,
-  UsageLedger, UsageRecord,
+  SpendDenial, SpendGuard, UsageLedger, UsageRecord,
 } from '@melon-ai/core';
+import { ToolError } from '@melon-ai/core';
 import { convert } from '../shared/money.js';
 import type { FxRates } from '../shared/money.js';
 
@@ -137,6 +138,8 @@ export interface MeterOptions {
   readonly onLedgerError?: (e: unknown) => void;
   /** 每记一笔回调一次（路由的用量统计据此更新）。没有账本也会回调。 */
   readonly onRecord?: (r: UsageRecord) => void;
+  /** 花钱前的检查（宿主的额度）：不让花的候选跳过；都不让就以它的原因结束。只查有调用信息（meta）的调用。 */
+  readonly guard?: SpendGuard;
 }
 
 const errCode = (e: unknown): string => (e as { code?: string })?.code ?? 'ERROR';
@@ -165,9 +168,15 @@ export class FailoverModel implements ChatModel {
     const tries = this.candidates;
     let attempt = 0;
     let last: unknown;
+    let denied: SpendDenial | null = null;
     for (let i = 0; i < tries.length && attempt < max; i++) {
       const entry = tries[i]!;
       if (deadVendors.has(entry.egress)) continue;
+      // 额度：这一家不让花就换下一家（不算一次尝试）
+      if (this.opts.guard && req.meta) {
+        const d = await this.opts.guard({ kind: 'model', vendor: entry.egress, meta: req.meta });
+        if (d) { denied = d; continue; }
+      }
       attempt += 1;
       if (attempt > 1) req.onRetry?.();
       const started = this.opts.now();
@@ -205,6 +214,8 @@ export class FailoverModel implements ChatModel {
         failed.push({ egress: entry.egress, model: entry.model.id, errorCode: errCode(e) });
       }
     }
+    // 一个都没试成：全是额度不让 —— 说宿主给的原因，不重试
+    if (!last && denied) throw new ToolError('FATAL', denied.reason, { retriable: false });
     throw last ?? new Error('没有可用的模型');
   }
 

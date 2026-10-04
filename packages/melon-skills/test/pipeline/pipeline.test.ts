@@ -32,6 +32,7 @@ async function harness(opts: {
   enabled?: boolean;
   idempotency?: boolean;
   usage?: { record: (r: never) => Promise<void>; list: () => Promise<never[]>; rollup: () => Promise<number> };
+  spendGuard?: (c: { kind: string; vendor: string }) => { reason: string } | null;
 } = {}) {
   const clock = new FakeClock(1000);
   const hasher = new NodeHasher();
@@ -52,6 +53,7 @@ async function harness(opts: {
     clock, hasher, tracer: new RecordingTracer(new SeqIdGen()), logger,
     ...(opts.idempotency ? { idempotency: idem } : {}),
     ...(opts.usage ? { usage: opts.usage as never } : {}),
+    ...(opts.spendGuard ? { spendGuard: opts.spendGuard } : {}),
     sleep: async () => {},
     execute: { timeoutMs: 50, maxRetries: 2, backoffBaseMs: 0 },
   });
@@ -409,4 +411,34 @@ test('按次收费的工具：每次真的执行记一笔（价格、厂商、�
     [rows[0]!.purpose, rows[0]!.egress, rows[0]!.model, rows[0]!.cost, rows[0]!.priced, rows[0]!.taskId],
     ['tool', 'bocha', 'web.search', 0.036, true, t.id],
   );
+});
+
+test('额度：按次收费的工具执行前问宿主，不让就不执行、不记账，结果带上原因', async () => {
+  const rows: unknown[] = [];
+  const usage = { record: async (r: never) => { rows.push(r); }, list: async () => [], rollup: async () => 0 };
+  const checks: { kind: string; vendor: string }[] = [];
+  let ran = 0;
+  const search = desc({
+    id: asToolId('web.search'), skillId: asSkillId('web'), name: 'search', risk: 'read', idempotent: true, scopeKeys: [],
+    input: { required: ['query'], properties: { query: { type: 'string' } } },
+    billing: { vendor: 'bocha', perCall: { amount: 0.036, currency: 'CNY' } },
+  });
+  const h = await harness({
+    descriptor: search, usage,
+    handler: async () => { ran++; return { summary: '搜到 3 条' }; },
+    spendGuard: (c) => { checks.push(c); return { reason: '今天的额度用完了' }; },
+  });
+  const out = await h.pipeline.execute(task(), { ...toolCall('web.search', 'h1'), args: { query: 'AI' } });
+  assert.deepEqual(checks.map((c) => [c.kind, c.vendor]), [['tool', 'bocha']]);
+  assert.equal(ran, 0);
+  assert.equal(rows.length, 0);
+  assert.equal(out.error?.code, 'FATAL');
+  assert.match(out.error?.message ?? '', /额度用完/);
+});
+
+test('额度：不收费的工具不问宿主', async () => {
+  let asked = 0;
+  const h = await harness({ spendGuard: () => { asked++; return { reason: 'x' }; } });
+  await h.pipeline.execute(task(), toolCall('mail.send', 'h2'));
+  assert.equal(asked, 0);
 });
