@@ -9,6 +9,7 @@ import { ADMIN_HTML } from './ui.js';
  * - 会话令牌放 HttpOnly、SameSite=Strict 的 cookie（路径限定在后台下），只存在内存里：服务重启要重新登录。
  * - 写操作只收 `application/json`（跨站表单发不出来），再加上 SameSite，挡住跨站请求伪造。
  * - 登录失败按用户名限速：10 分钟内错 5 次就先拒绝。
+ * - 还在用初始密码的（`mustChangePassword`）：登录后只能改密码、退出，别的接口一律 403。
  */
 
 export interface AdminRequest {
@@ -72,7 +73,7 @@ export interface AdminHandlerOptions {
 export function adminHandler(admin: AdminApi, o: AdminHandlerOptions): (req: AdminRequest, res: AdminResponse) => boolean {
   const base = o.basePath.replace(/\/+$/, '');
   const now = o.now ?? Date.now;
-  const sessions = new Map<string, { name: string; exp: number }>();
+  const sessions = new Map<string, { name: string; username: string; mustChange: boolean; exp: number }>();
   const fails = new Map<string, { n: number; until: number }>();
 
   const send = (res: AdminResponse, status: number, body: unknown, extra: Record<string, string | string[]> = {}) => {
@@ -102,7 +103,10 @@ export function adminHandler(admin: AdminApi, o: AdminHandlerOptions): (req: Adm
 
     if (path === '/api/meta' && method === 'GET') {
       const me = who(req);
-      return send(res, 200, { ok: true, site: await admin.settings(), me: me ? { name: me.name } : null, canSetStatus: !!admin.principals.setStatus, windows: admin.quota.windows, symbol: admin.symbol });
+      return send(res, 200, {
+        ok: true, site: await admin.settings(), me: me ? { name: me.name, mustChangePassword: me.mustChange } : null,
+        canSetStatus: !!admin.principals.setStatus, canChangePassword: !!admin.auth.changePassword, windows: admin.quota.windows, symbol: admin.symbol,
+      });
     }
     if (path === '/api/login' && method === 'POST') {
       const b = await readJson(req);
@@ -118,8 +122,9 @@ export function adminHandler(admin: AdminApi, o: AdminHandlerOptions): (req: Adm
       }
       fails.delete(username.toLowerCase());
       const t = token();
-      sessions.set(t, { name: ok.name, exp: now() + SESSION_MS });
-      return send(res, 200, { ok: true, me: { name: ok.name } }, { 'set-cookie': cookie(req, t, SESSION_MS / 1000) });
+      const mustChange = !!ok.mustChangePassword;
+      sessions.set(t, { name: ok.name, username, mustChange, exp: now() + SESSION_MS });
+      return send(res, 200, { ok: true, me: { name: ok.name, mustChangePassword: mustChange } }, { 'set-cookie': cookie(req, t, SESSION_MS / 1000) });
     }
     if (path === '/api/logout' && method === 'POST') {
       const t = cookieOf(req);
@@ -128,7 +133,20 @@ export function adminHandler(admin: AdminApi, o: AdminHandlerOptions): (req: Adm
     }
 
     // 以下都要登录
-    if (!who(req)) throw new HttpErr(401, 'unauthorized', '请先登录');
+    const me = who(req);
+    if (!me) throw new HttpErr(401, 'unauthorized', '请先登录');
+
+    if (path === '/api/password' && method === 'POST') {
+      if (!admin.auth.changePassword) throw new HttpErr(404, 'unsupported', '这个服务不支持在后台改密码');
+      const b = await readJson(req);
+      try { await admin.auth.changePassword(me.username, String(b['oldPassword'] ?? ''), String(b['newPassword'] ?? '')); }
+      catch (e) { throw new HttpErr(400, 'bad_password', e instanceof Error ? e.message : String(e)); }
+      // 这个人的其他后台会话都作废（改密码常常是因为担心泄露）
+      for (const [k, v] of sessions) if (v.username.toLowerCase() === me.username.toLowerCase() && v !== me) sessions.delete(k);
+      me.mustChange = false;
+      return send(res, 200, { ok: true });
+    }
+    if (me.mustChange) throw new HttpErr(403, 'must_change_password', '第一次登录要先改密码');
 
     if (path === '/api/overview' && method === 'GET') return send(res, 200, { ok: true, overview: await admin.overview() });
     if (path === '/api/users' && method === 'GET') return send(res, 200, { ok: true, users: await admin.users() });

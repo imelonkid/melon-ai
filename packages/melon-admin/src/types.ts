@@ -20,8 +20,19 @@ export interface PrincipalSource {
 }
 
 /** 管理员登录：宿主校验（只让它认可的管理员进）。不通过返回 null。 */
+export interface AdminIdentity {
+  readonly name: string;
+  /** 还在用初始密码：登录后只能先改密码，别的都不让做。 */
+  readonly mustChangePassword?: boolean;
+}
+
+/**
+ * 管理员登录。不给就用后台自带的管理员账号（`BuiltinAdminAuth`：第一次启动 `admin.bootstrap()` 给初始账号和密码）。
+ */
 export interface AdminAuth {
-  verify(username: string, password: string): Promise<{ readonly name: string } | null> | { readonly name: string } | null;
+  verify(username: string, password: string): Promise<AdminIdentity | null> | AdminIdentity | null;
+  /** 改密码（要原密码）。不合格抛错，错误信息直接给用户看。不给就不能在后台改密码。 */
+  changePassword?(username: string, oldPassword: string, newPassword: string): Promise<void> | void;
 }
 
 /** 这一笔算不算额度。 */
@@ -38,7 +49,10 @@ export interface ServiceStatus {
 export interface AdminOptions {
   readonly store: AdminStore;
   readonly principals: PrincipalSource;
-  readonly auth: AdminAuth;
+  /** 管理员登录的校验；不给就用后台自带的管理员账号。 */
+  readonly auth?: AdminAuth;
+  /** 自带管理员账号第一次启动时的用户名（默认 admin）。宿主给了 `auth` 时不用。 */
+  readonly initialAdmin?: string;
   /** 网站名称的初始值；管理员在「设置」里改了以改的为准。 */
   readonly siteName?: string;
   /** 后台用的币种（额度、花费都按它），默认人民币。 */

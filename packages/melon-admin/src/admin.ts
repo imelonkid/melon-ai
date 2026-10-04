@@ -2,6 +2,7 @@ import type { AdminStore, Currency, SpendGuard, UsageRecord } from '@melon-ai/co
 import { QuotaBook, startOfDay } from './quota.js';
 import type { AdminApi, AdminAuth, AdminOptions, CountsFn, DayRow, Overview, PrincipalSource, SiteSettings, UserRow } from './types.js';
 import { adminHandler } from './http.js';
+import { BuiltinAdminAuth } from './accounts.js';
 import type { AdminRequest, AdminResponse } from './http.js';
 import type { QuotaStatus } from './quota.js';
 
@@ -37,13 +38,23 @@ export class Admin implements AdminApi {
       store: o.store, now: this.now, currencySymbol: this.symbol,
       ...(o.windows ? { windows: o.windows } : {}), ...(o.defaults ? { defaults: o.defaults } : {}), ...(o.reason ? { reason: o.reason } : {}),
     });
+    this.authImpl = o.auth ?? new BuiltinAdminAuth(o.store);
     const day = this.quota.windows.find((w) => w.kind === 'day') as { tzOffsetMinutes: number } | undefined;
     this.tz = day?.tzOffsetMinutes ?? 480;
   }
 
   get store(): AdminStore { return this.o.store; }
   get principals(): PrincipalSource { return this.o.principals; }
-  get auth(): AdminAuth { return this.o.auth; }
+  get auth(): AdminAuth { return this.authImpl; }
+  private readonly authImpl: AdminAuth;
+
+  /**
+   * 第一次启动：用的是自带管理员账号、还一个都没有时，建一个，返回用户名和一次性初始密码（宿主打印出来，只这一次）。
+   * 已经有了、或者登录由宿主校验，返回 null。第一次登录必须先改密码。
+   */
+  async bootstrap(): Promise<{ username: string; password: string } | null> {
+    return this.authImpl instanceof BuiltinAdminAuth ? this.authImpl.bootstrap(this.o.initialAdmin ?? 'admin') : null;
+  }
 
   /**
    * 给某个用户的引擎实例用：`spendGuard`（花钱前检查额度）+ `onUsage`（每笔用量记进后台）。

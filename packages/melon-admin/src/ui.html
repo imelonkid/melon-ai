@@ -29,9 +29,10 @@ a { color: var(--accent); text-decoration: none; cursor: pointer; }
 .hidden { display: none !important; }
 svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
-#login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
-#login form { width: 100%; max-width: 340px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 28px 24px; display: flex; flex-direction: column; gap: 12px; }
-#login h1 { font-size: 20px; margin: 0 0 6px; }
+#login, #change { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+#login form, #change form { width: 100%; max-width: 340px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 28px 24px; display: flex; flex-direction: column; gap: 12px; }
+#login h1, #change h1 { font-size: 20px; margin: 0 0 6px; }
+#change .note { color: var(--sub); font-size: 13px; margin: -4px 0 4px; }
 
 #app { display: flex; min-height: 100vh; }
 nav { width: 200px; flex: none; background: var(--panel); border-right: 1px solid var(--line); padding: 14px 10px; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; transition: width .18s ease; overflow: hidden; }
@@ -129,6 +130,19 @@ tr.detail td { background: var(--bg); cursor: default; }
   </form>
 </div>
 
+<div id="change" class="hidden">
+  <form id="changeForm" autocomplete="off">
+    <h1 id="changeTitle">设置新密码</h1>
+    <div class="note" id="changeNote">这是第一次登录，先换掉初始密码。</div>
+    <input type="password" id="co" placeholder="原密码" autocomplete="current-password">
+    <input type="password" id="cn" placeholder="新密码（至少 8 位，字母加数字）" autocomplete="new-password" required>
+    <input type="password" id="cc" placeholder="再输一次新密码" autocomplete="new-password" required>
+    <div class="err" id="changeErr"></div>
+    <button class="btn primary" type="submit" id="changeSubmit">保存并进入</button>
+    <a id="changeCancel" class="hidden" style="text-align:center;font-size:13px">取消</a>
+  </form>
+</div>
+
 <div id="app" class="hidden">
   <nav>
     <div class="brand"><span id="siteName">后台</span><button class="iconbtn fold" id="fold" title="收起"><svg class="i" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button></div>
@@ -137,7 +151,7 @@ tr.detail td { background: var(--bg); cursor: default; }
     <a data-page="policy"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5c0-1.2 1.1-2 2.5-2s2.5.8 2.5 2-1.1 1.8-2.5 2.2-2.5 1-2.5 2.3 1.1 2 2.5 2 2.5-.8 2.5-2"/></svg><span class="t">额度策略</span></a>
     <a data-page="settings"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span class="t">设置</span></a>
     <div class="foot">
-      <span class="t"><span id="meName"></span> · <a id="logout">退出</a></span>
+      <span class="t"><span id="meName"></span> · <a id="pw" class="hidden">改密码</a><span id="pwDot" class="hidden"> · </span><a id="logout">退出</a></span>
       <button class="iconbtn" id="theme" title="深浅色"></button>
     </div>
   </nav>
@@ -156,6 +170,7 @@ async function api(path, body) {
   const r = await fetch('api/' + path, body === undefined ? { cache: 'no-store' } : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({ ok: false, error: { message: '服务器返回了 ' + r.status } }));
   if (r.status === 401 && path !== 'login') { showLogin(); throw new Error('请先登录'); }
+  if (j.error?.code === 'must_change_password') { META.me = { ...META.me, mustChangePassword: true }; showChange(true); throw new Error(j.error.message); }
   if (!j.ok) throw new Error(j.error?.message || '出错了');
   return j;
 }
@@ -352,18 +367,58 @@ $('#fold').onclick = () => {
   try { localStorage.setItem('melon-admin.folded', on ? '1' : '0'); } catch { /* 隐私模式 */ }
 };
 
-function showLogin() { $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); $('#lu').focus(); }
+// 刚登录时输的密码（只在内存里）：第一次登录改密码时不用再输一遍原密码
+let LOGIN_PW = '';
+
+function showOnly(id) { ['login', 'change', 'app'].forEach((x) => $('#' + x).classList.toggle('hidden', x !== id)); }
+function showLogin() { LOGIN_PW = ''; showOnly('login'); $('#lu').focus(); }
+
+/** 改密码：第一次登录（必须改，改完进后台）或者自己点「改密码」（可以取消）。 */
+function showChange(forced) {
+  showOnly('change');
+  $('#changeTitle').textContent = forced ? '设置新密码' : '改密码';
+  $('#changeNote').classList.toggle('hidden', !forced);
+  $('#co').classList.toggle('hidden', forced && !!LOGIN_PW);
+  $('#changeCancel').classList.toggle('hidden', forced);
+  $('#changeSubmit').textContent = forced ? '保存并进入' : '保存';
+  ['co', 'cn', 'cc'].forEach((x) => { $('#' + x).value = ''; });
+  $('#changeErr').textContent = '';
+  (forced && LOGIN_PW ? $('#cn') : $('#co')).focus();
+}
+
 function showApp() {
-  $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
+  if (META.me?.mustChangePassword) { showChange(true); return; }
+  showOnly('app');
   $('#meName').textContent = META.me?.name || '';
+  $('#pw').classList.toggle('hidden', !META.canChangePassword);
+  $('#pwDot').classList.toggle('hidden', !META.canChangePassword);
   go(location.hash.slice(1) || 'overview');
 }
+
+$('#changeForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const forced = !!META.me?.mustChangePassword;
+  const oldPassword = forced && LOGIN_PW ? LOGIN_PW : $('#co').value;
+  const nw = $('#cn').value;
+  if (!oldPassword) { $('#changeErr').textContent = '要填原密码'; return; }
+  if (nw.length < 8 || !/[a-zA-Z]/.test(nw) || !/\d/.test(nw)) { $('#changeErr').textContent = '新密码至少 8 位，要有字母和数字'; return; }
+  if (nw !== $('#cc').value) { $('#changeErr').textContent = '两次输的新密码不一样'; return; }
+  try {
+    await api('password', { oldPassword, newPassword: nw });
+    LOGIN_PW = '';
+    META.me = { ...META.me, mustChangePassword: false };
+    showApp();
+  } catch (err) { $('#changeErr').textContent = err.message; }
+};
+$('#changeCancel').onclick = () => showApp();
+$('#pw').onclick = () => showChange(false);
 
 $('#loginForm').onsubmit = async (e) => {
   e.preventDefault();
   $('#loginErr').textContent = '';
   try {
     const r = await api('login', { username: $('#lu').value, password: $('#lp').value });
+    LOGIN_PW = r.me.mustChangePassword ? $('#lp').value : '';
     $('#lp').value = '';
     META.me = r.me;
     showApp();
