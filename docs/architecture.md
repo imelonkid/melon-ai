@@ -1420,8 +1420,11 @@ Jolly 是第一个宿主，也是这套契约唯一的真实压力源 —— §1
     - 页面：`ui.html` 由脚本嵌进 `ui.ts`（测试核对两边一致），深浅色跟随系统、可切换，网站名称在「设置」里改。
       接口安全：会话令牌放 HttpOnly + SameSite=Strict 的 cookie（只在内存，重启要重新登录）、写操作只收 JSON、登录按用户名限速、页面带 CSP。
     - `admin.ts` 与 `http.ts` 一度互相引用（类型也算），`lint:deps` 的 no-circular 拦下；改成接口层只认 `types.ts` 里的 `AdminApi`。
-    - 管理员登录两种：宿主校验（`auth`，Jolly 用自己的账号）或后台自带的管理员账号（不给 `auth` 时；存在后台存储里，PBKDF2-SHA256，用 Web Crypto 不引 node:*）。
-      第一次启动 `admin.bootstrap()` 建 `admin` + 一次性初始密码交给宿主打印；`verify` 可以带 `mustChangePassword`，
+    - 管理员账号是后台自己的（推荐，Jolly 也用这个）：和宿主的用户账号分开，存在后台存储里（PBKDF2-SHA256，用 Web Crypto 不引 node:*）。
+      宿主也可以给 `auth` 自己校验。一度让 Jolly 用它自己的账号登录后台、初始账号叫 `JOLLY_ADMIN_USER` —— 被指出后台是 melon-ai 的，改回自带账号。
+      第一次启动 `admin.bootstrap({ username, password })`：部署约定 `MELON_ADMIN_USER` / `MELON_ADMIN_PASSWORD`（宿主读环境变量，引擎不碰 process.env），
+      没给用户名叫 admin，没给密码生成一次性初始密码交给宿主打印（给了的当作部署者自己定的，不强制改）；忘了密码 `resetAdminPassword`。
+      默认网站名称「melon-ai 管理后台」；`verify` 可以带 `mustChangePassword`，
       这样的会话只能改密码（`auth.changePassword`）和退出，其余接口 403；改完这个人的其他后台会话作废。
 
 #### 包结构合并（14 → 8）

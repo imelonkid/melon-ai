@@ -49,11 +49,20 @@ export class Admin implements AdminApi {
   private readonly authImpl: AdminAuth;
 
   /**
-   * 第一次启动：用的是自带管理员账号、还一个都没有时，建一个，返回用户名和一次性初始密码（宿主打印出来，只这一次）。
-   * 已经有了、或者登录由宿主校验，返回 null。第一次登录必须先改密码。
+   * 第一次启动：自带管理员账号一个都没有时建一个。
+   * 部署时约定用环境变量 `MELON_ADMIN_USER` / `MELON_ADMIN_PASSWORD` 传进来（宿主读，引擎不碰 process.env）：
+   * 没给用户名就叫 admin；没给密码就生成一次性初始密码返回（宿主打印出来，只这一次），第一次登录必须先改。
+   * 给了密码的当作部署者自己定的，不强制改。已经有账号、或者登录由宿主校验，返回 null。
    */
-  async bootstrap(): Promise<{ username: string; password: string } | null> {
-    return this.authImpl instanceof BuiltinAdminAuth ? this.authImpl.bootstrap(this.o.initialAdmin ?? 'admin') : null;
+  async bootstrap(initial: { username?: string | undefined; password?: string | undefined } = {}): Promise<{ username: string; password: string; generated: boolean } | null> {
+    if (!(this.authImpl instanceof BuiltinAdminAuth)) return null;
+    return this.authImpl.bootstrap(initial.username?.trim() || 'admin', initial.password || undefined);
+  }
+
+  /** 忘了密码：给自带管理员账号换一个一次性初始密码（下次登录必须改），返回新密码。没有这个账号抛错。 */
+  async resetAdminPassword(username = 'admin'): Promise<string> {
+    if (!(this.authImpl instanceof BuiltinAdminAuth)) throw new Error('管理员登录由宿主校验，请在宿主那边重置');
+    return this.authImpl.reset(username);
   }
 
   /**
@@ -97,7 +106,7 @@ export class Admin implements AdminApi {
   async settings(): Promise<SiteSettings> {
     const s = ((await this.o.store.getSetting('site')) ?? {}) as Partial<SiteSettings>;
     return {
-      siteName: typeof s.siteName === 'string' && s.siteName.trim() ? s.siteName : (this.o.siteName ?? 'melon-ai 后台'),
+      siteName: typeof s.siteName === 'string' && s.siteName.trim() ? s.siteName : (this.o.siteName ?? 'melon-ai 管理后台'),
       theme: s.theme === 'light' || s.theme === 'dark' ? s.theme : 'system',
     };
   }

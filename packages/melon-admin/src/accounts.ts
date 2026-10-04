@@ -66,11 +66,22 @@ export class BuiltinAdminAuth implements AdminAuth {
     return { username, name, salt: hex(salt), hash: await derive(password, salt, ITERATIONS), iterations: ITERATIONS, mustChangePassword };
   }
 
-  async bootstrap(username: string): Promise<{ username: string; password: string } | null> {
+  async bootstrap(username: string, given?: string): Promise<{ username: string; password: string; generated: boolean } | null> {
     if ((await this.accounts()).length) return null;
+    if (given !== undefined) { const weak = weakAdminPassword(given); if (weak) throw new Error(`管理员密码不合格：${weak}`); }
+    const password = given ?? initialAdminPassword();
+    await this.store.setSetting(KEY, [await this.make(username, password, given === undefined)]);
+    return { username, password, generated: given === undefined };
+  }
+
+  async reset(username: string): Promise<string> {
+    const list = await this.accounts();
+    const i = list.findIndex((x) => x.username.toLowerCase() === username.toLowerCase());
+    if (i < 0) throw new Error(`没有管理员「${username}」`);
     const password = initialAdminPassword();
-    await this.store.setSetting(KEY, [await this.make(username, password, true)]);
-    return { username, password };
+    list[i] = await this.make(list[i]!.username, password, true, list[i]!.name);
+    await this.store.setSetting(KEY, list);
+    return password;
   }
 
   async verify(username: string, password: string): Promise<AdminIdentity | null> {

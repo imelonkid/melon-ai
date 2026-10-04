@@ -21,6 +21,18 @@ test('自带管理员账号：第一次启动给 admin + 一次性初始密码�
   await admin.auth.changePassword!('admin', first!.password, 'Better1234');
   assert.deepEqual(await admin.auth.verify('admin', 'Better1234'), { name: 'admin' });
   assert.equal(await admin.auth.verify('admin', first!.password), null);
+  // 忘了密码：重置成新的一次性初始密码，下次登录必须改
+  const again = await admin.resetAdminPassword('admin');
+  assert.deepEqual(await admin.auth.verify('admin', again), { name: 'admin', mustChangePassword: true });
+  await assert.rejects(admin.resetAdminPassword('nobody'), /没有管理员/);
+});
+
+test('部署时给了用户名和密码（MELON_ADMIN_USER / MELON_ADMIN_PASSWORD）：用它们，当作自己定的不强制改；密码不合格拒绝', async () => {
+  const a = make();
+  assert.deepEqual(await a.bootstrap({ username: 'root', password: 'Chosen1234' }), { username: 'root', password: 'Chosen1234', generated: false });
+  assert.deepEqual(await a.auth.verify('root', 'Chosen1234'), { name: 'root' });
+  await assert.rejects(make().bootstrap({ password: 'weak' }), /不合格/);
+  assert.equal((await make().settings()).siteName, 'melon-ai 管理后台');
 });
 
 test('宿主给了登录校验：bootstrap 不建账号', async () => {

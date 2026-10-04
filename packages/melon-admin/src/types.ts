@@ -27,7 +27,8 @@ export interface AdminIdentity {
 }
 
 /**
- * 管理员登录。不给就用后台自带的管理员账号（`BuiltinAdminAuth`：第一次启动 `admin.bootstrap()` 给初始账号和密码）。
+ * 管理员登录。不给（推荐）就用后台自带的管理员账号（`BuiltinAdminAuth`）：和宿主的用户账号分开，
+ * 第一次启动 `admin.bootstrap()` 建初始账号，第一次登录必须改密码。
  */
 export interface AdminAuth {
   verify(username: string, password: string): Promise<AdminIdentity | null> | AdminIdentity | null;
@@ -51,8 +52,6 @@ export interface AdminOptions {
   readonly principals: PrincipalSource;
   /** 管理员登录的校验；不给就用后台自带的管理员账号。 */
   readonly auth?: AdminAuth;
-  /** 自带管理员账号第一次启动时的用户名（默认 admin）。宿主给了 `auth` 时不用。 */
-  readonly initialAdmin?: string;
   /** 网站名称的初始值；管理员在「设置」里改了以改的为准。 */
   readonly siteName?: string;
   /** 后台用的币种（额度、花费都按它），默认人民币。 */
