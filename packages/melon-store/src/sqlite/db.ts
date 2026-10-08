@@ -206,7 +206,9 @@ CREATE TABLE IF NOT EXISTS usage (
   currency    TEXT NOT NULL,
   priced      INTEGER NOT NULL,
   ms          INTEGER NOT NULL,
-  billing     TEXT
+  billing     TEXT,
+  account     TEXT,
+  grp         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_at ON usage(at);
 
@@ -307,7 +309,7 @@ export class SqliteContext {
    * 给已有的表补上后来加的列。只加不删、可空，老数据照常能读 —— 同样不升 SCHEMA_VERSION（§10 第 47 条）。
    */
   private addColumns(): void {
-    const add: [table: string, col: string, type: string][] = [['usage', 'billing', 'TEXT']];
+    const add: [table: string, col: string, type: string][] = [['usage', 'billing', 'TEXT'], ['usage', 'account', 'TEXT'], ['usage', 'grp', 'TEXT']];
     for (const [table, col, type] of add) {
       const cols = (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
       if (!cols.includes(col)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);

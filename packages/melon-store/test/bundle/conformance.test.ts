@@ -195,3 +195,23 @@ test('[SQLite] 用量账本：老库（没有 billing 列）打开时自动补�
   assert.equal((await b.usage.list({ from: 0, to: 10 }))[0]!.billing, 'plan');
   b.context.close();
 });
+
+test('[SQLite] 用量账本：账户、分组能存能读（宿主据此分「自己的 / 共享的」），按天汇总也不丢；老库自动补列', async () => {
+  const { default: Database } = await import('better-sqlite3');
+  const file = join(mkdtempSync(join(tmpdir(), 'melon-acct-')), 'a.db');
+  openSqliteStores({ file, dims: 3 }).context.close();
+  const raw = new Database(file);
+  raw.exec('ALTER TABLE usage DROP COLUMN account');
+  raw.exec('ALTER TABLE usage DROP COLUMN grp');
+  raw.close();
+  const b = openSqliteStores({ file, dims: 3 });
+  const base = { calls: 1, purpose: 'plan', egress: 'deepseek', model: 'flash', ok: true, inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, cost: 1, currency: 'CNY' as const, priced: true, ms: 1 };
+  await b.usage.record({ ...base, at: 1, account: 'shared:deepseek', group: 'shared' });
+  await b.usage.record({ ...base, at: 2, group: 'own' });
+  const rows = await b.usage.list({ from: 0, to: 10 });
+  assert.deepEqual(rows.map((r) => [r.account ?? '-', r.group ?? '-']), [['shared:deepseek', 'shared'], ['-', 'own']]);
+  await b.usage.rollup(86_400_000);
+  const rolled = await b.usage.list({ from: 0, to: 86_400_000 });
+  assert.deepEqual(rolled.map((r) => [r.account ?? '-', r.group ?? '-', r.calls]).sort(), [['-', 'own', 1], ['shared:deepseek', 'shared', 1]], '汇总按账户、分组分开');
+  b.context.close();
+});

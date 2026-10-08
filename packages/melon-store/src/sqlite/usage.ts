@@ -8,6 +8,8 @@ type Row = {
   purpose: string; egress: string; model: string; ok: number; error_code: string | null; attempt: number | null;
   in_tokens: number; cached_tokens: number; out_tokens: number; cost: number; currency: string; priced: number; ms: number;
   billing: string | null;
+  account: string | null;
+  grp: string | null;
 };
 
 const toRecord = (r: Row): UsageRecord => ({
@@ -21,10 +23,12 @@ const toRecord = (r: Row): UsageRecord => ({
   inputTokens: r.in_tokens, cachedInputTokens: r.cached_tokens, outputTokens: r.out_tokens,
   cost: r.cost, currency: r.currency as Currency, priced: r.priced === 1, ms: r.ms,
   ...(r.billing === 'plan' ? { billing: 'plan' as const } : {}),
+  ...(r.account ? { account: r.account } : {}),
+  ...(r.grp ? { group: r.grp } : {}),
 });
 
 const INSERT = `INSERT INTO usage (at, rolled, calls, task_id, agent_id, task_kind, trig, purpose, egress, model, ok, error_code,
-  attempt, in_tokens, cached_tokens, out_tokens, cost, currency, priced, ms, billing) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+  attempt, in_tokens, cached_tokens, out_tokens, cost, currency, priced, ms, billing, account, grp) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 export class SqliteUsageLedger implements UsageLedger {
   constructor(private readonly cx: SqliteContext) {}
@@ -34,7 +38,7 @@ export class SqliteUsageLedger implements UsageLedger {
       r.at, rolled ? 1 : 0, r.calls, r.taskId ?? null, r.agentId ?? null, r.taskKind ?? null, r.trigger ?? null,
       r.purpose, r.egress, r.model, r.ok ? 1 : 0, r.errorCode ?? null, r.attempt ?? null,
       r.inputTokens, r.cachedInputTokens, r.outputTokens, r.cost, r.currency, r.priced ? 1 : 0, Math.round(r.ms),
-      r.billing ?? null,
+      r.billing ?? null, r.account ?? null, r.group ?? null,
     );
   }
 
