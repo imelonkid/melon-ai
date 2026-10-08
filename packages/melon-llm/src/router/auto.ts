@@ -248,12 +248,23 @@ export function rankAuto(i: AutoRankInput): { readonly ranked: readonly ModelEnt
   };
 
   const all = i.entries.map(judge);
-  let pool = all.filter((c) => c.eligible);
-  // 一个够档的都没有（都没定档、档次都不够）：退回到能用的里挑，不让任务直接失败 —— 路由页会把这个情况标出来
-  const fellBack = pool.length === 0;
-  if (fellBack) {
-    pool = all.filter((c) => c.entry.enabled !== false && !(i.ctx?.needsTools && !c.entry.model.capabilities.tools)
-      && !(i.ctx?.needsVision && !c.entry.model.capabilities.vision));
+  const usable = (c: (typeof all)[number]) => c.entry.enabled !== false && !(i.ctx?.needsTools && !c.entry.model.capabilities.tools)
+    && !(i.ctx?.needsVision && !c.entry.model.capabilities.vision);
+  // 按分组优先级一组一组来：优先的那组只要有能用的就先用它 —— 组里一个够档的都没有（都没定档、档次都不够）时
+  // 在组里退回到能用的挑，不跳去下一组（「配了自己的就先用自己的」）；整组都用不了才轮到下一组。
+  // 后面各组照样排进来：前面的都失败了按顺序兜底。只有一组时就是原来的行为。
+  const prios = [...new Set(all.map((c) => c.entry.priority ?? 0))].sort((a, b) => a - b);
+  const pool: (typeof all)[number][] = [];
+  let fellBack = false;
+  for (const p of prios) {
+    const inGroup = all.filter((c) => (c.entry.priority ?? 0) === p);
+    let picked = inGroup.filter((c) => c.eligible);
+    const fb = picked.length === 0;
+    if (fb) picked = inGroup.filter(usable);
+    if (!picked.length) continue;
+    // 路由页上的「退回」说的是现在会用的那组
+    if (!pool.length) fellBack = fb;
+    pool.push(...picked);
   }
 
   const order = (a: (typeof all)[number], b: (typeof all)[number]): number => {

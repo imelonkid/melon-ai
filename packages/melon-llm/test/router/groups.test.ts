@@ -36,11 +36,21 @@ test('优先级：自己的分组整组排在前面，哪怕宿主提供的更�
   assert.deepEqual(pool.explain({ taskClass: 'chat' }, {}, { groups: ['own'] }).ranked.map((c) => c.key), ['deepseek/flash'], '只看某几个分组');
 });
 
-test('按分组的规则：自己的模型达不到用户要的档次时用宿主的；宿主那组可以单独指定模型', async () => {
-  const pool = new ModelPool([own('mini', 'basic', CNY(0.1, 0.1)), shared('flash', 'standard', CNY(1, 4)), shared('pro', 'strong', CNY(4, 12))], 'auto', { now: () => NOW });
+test('配了自己的就先用自己的：自己那组档次都不够时在组里退回，不跳去宿主的；自己的都失败了才用宿主的（宿主那组可以单独指定模型）', async () => {
+  let ownCalls = 0;
+  const flaky = { fail: false };
+  const pool = new ModelPool([
+    own('mini', 'basic', CNY(0.1, 0.1), () => { ownCalls++; if (flaky.fail) throw new ToolError('UPSTREAM', '上游 502'); }),
+    shared('flash', 'standard', CNY(1, 4)), shared('pro', 'strong', CNY(4, 12)),
+  ], 'auto', { now: () => NOW });
   pool.route(() => ({ taskClass: 'chat', byGroup: { own: { minTier: 'standard' }, shared: { pin: 'shared:deepseek/pro' } } }));
   const r1 = await (await pool.select('plan', undefined, { meta })).primary.generate({ messages: [], meta });
-  assert.deepEqual([r1.group, r1.modelId], ['shared', 'pro'], '自己的只有基础档，不够；宿主那组固定用 pro');
+  assert.deepEqual([r1.group, r1.modelId], ['own', 'mini'], '自己的只有基础档，照样先用自己的');
+  assert.equal(pool.explain({ taskClass: 'chat', byGroup: { own: { minTier: 'standard' } } }).fellBack, true, '路由页标「退回」');
+  flaky.fail = true;
+  const r2 = await (await pool.select('plan', undefined, { meta })).primary.generate({ messages: [], meta });
+  assert.deepEqual([r2.group, r2.modelId], ['shared', 'pro'], '自己的失败了，宿主那组按它的规则固定用 pro');
+  assert.equal(ownCalls, 2);
 });
 
 test('兜底：自己的都失败了换宿主的（尝试次数按组各自算）；用量记录和花钱前的检查带上账户与分组', async () => {
