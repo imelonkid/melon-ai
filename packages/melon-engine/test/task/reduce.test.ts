@@ -326,7 +326,7 @@ test('derived 迁移不能走到 allowed 之外的状态', () => {
   assert.ok(TRANSITIONS['PLANNING+PlanProduced']?.allowed?.includes('SUSPENDED'));
 });
 
-// ───────── pendingCall 生命周期（集成 Jolly 时暴露的 bug）─────────
+// ───────── pendingCall 生命周期（接入首个宿主时暴露的 bug）─────────
 
 test('pendingCall 只在 AWAITING_APPROVAL / ADMITTING / EXECUTING 期间存在', () => {
   const call = toolCall('mail.send', 'h1');

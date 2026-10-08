@@ -408,7 +408,7 @@ test('被沙箱拦下：工具错误里的拦截信息（联网 / 读 / 写）�
 
 test('本地文件：第一次先问；「始终允许」按文件夹 —— 子文件夹、另外两个工具都放行，别的文件夹照样问；路径写错不打扰用户；宿主能替用户预先允许', async () => {
   const { mkdirSync, writeFileSync } = await import('node:fs');
-  const root = mkdtempSync(join(tmpdir(), 'jolly-files-'));
+  const root = mkdtempSync(join(tmpdir(), 'melon-files-'));
   const dl = join(root, 'Downloads');
   const docs = join(root, 'Documents');
   mkdirSync(join(dl, '报表'), { recursive: true });
@@ -491,7 +491,7 @@ test('没执行的调用也要回喂给模型：参数不合法、问之前的�
 
 test('附件：这一轮的上下文里有附件的开头和句柄，能读全文；任务算读过不可信内容；追问时沿用的附件还读得到。生成的文件随事件落盘', async () => {
   const { outputs } = await import('../src/files.js');
-  const out = mkdtempSync(join(tmpdir(), 'jolly-out-'));
+  const out = mkdtempSync(join(tmpdir(), 'melon-out-'));
   const long = `部门,费用\n${'产品部,1280\n'.repeat(400)}最后一行,9999`;
   const { entry: e, model } = entry([
     call('builtin.artifact_read', { ref: 'REF', offset: 3000 }), '最后一行是 9999',
@@ -539,7 +539,7 @@ test('附件：这一轮的上下文里有附件的开头和句柄，能读全�
 test('整理文件：允许查看不等于允许整理（单独问、单独「始终允许」）；改动随事件落盘，宿主据此撤销；读过文件名的任务整理照样问', async () => {
   const { mkdirSync, writeFileSync, existsSync, realpathSync } = await import('node:fs');
   const { FILES_ORGANIZE_GRANT_KEY, undoState, undoChanges } = await import('../src/files.js');
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'jolly-org-')));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'melon-org-')));
   const dl = join(root, 'Downloads');
   mkdirSync(dl);
   writeFileSync(join(dl, 'a.pdf'), 'a');

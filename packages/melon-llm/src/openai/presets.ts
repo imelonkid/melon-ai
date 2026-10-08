@@ -74,7 +74,7 @@ export const TIERS: Readonly<Record<string, ModelTier>> = {
 
 const PRESETS = {
   // 官方文档（2026-10）：deepseek-flash / deepseek-v4-pro 上下文 1M、输出最多 384K。默认输出给 32K：
-  // 思考模式的思考也算在输出里，8K 常常想完就没了（Jolly 里重写一整段聊天记录时，想了 37 秒、一个字没写出来）
+  // 思考模式的思考也算在输出里，8K 常常想完就没了（宿主里重写一整段聊天记录时，想了 37 秒、一个字没写出来）
   deepseek: { preset: 'deepseek', label: 'DeepSeek', model: 'deepseek-flash', quality: 6, costUSD: 0.3, egress: 'deepseek', contextWindow: 1_000_000, maxTokens: 32_000 },
   qwen: { preset: 'qwen', label: '通义千问', model: 'qwen-max', quality: 6, costUSD: 0.4, egress: 'aliyun', contextWindow: 32_000 },
   openai: { preset: 'openai', label: 'GPT', model: 'gpt-4o', quality: 8, costUSD: 2.5, egress: 'openai' },

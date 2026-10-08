@@ -279,7 +279,7 @@ test('技能描述保留中文全角标点', () => {
 
 test('沙箱（macOS Seatbelt）：只能写工作目录；受保护的位置不能读；联网默认关、按技能放行；被拦下时报出拦了什么', { skip: process.platform !== 'darwin' }, async () => {
   const r = root();
-  // 宿主存 key 的目录；工作目录放在它里面（Jolly 就是这样摆的）—— 工作目录照样能读写
+  // 宿主存 key 的目录；工作目录放在它里面（有的宿主就是这样摆的）—— 工作目录照样能读写
   const secret = mkdtempSync(join(tmpdir(), 'secret-'));
   const outside = mkdtempSync(join(tmpdir(), 'outside-'));
   const work = join(secret, 'skill-work');
