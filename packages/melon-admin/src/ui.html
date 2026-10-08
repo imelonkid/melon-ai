@@ -326,7 +326,7 @@ function newUserForm(box) {
   };
 }
 
-const windowName = (w) => w.kind === 'day' ? '每天' : '每 ' + w.hours + ' 小时';
+const windowName = (w) => w.kind === 'day' ? '每天' : w.kind === 'week' ? '每周' : '每 ' + w.hours + ' 小时';
 function vendorRow(s, v, cur) {
   return '<div class="item" data-vendor="' + esc(v.id) + '" data-kind="' + esc(s.kind) + '">' +
     '<div class="row"><span class="grow"><b>' + esc(v.label) + '</b>' + (v.note ? ' <span class="faint">' + esc(v.note) + '</span>' : '') + '</span>' +

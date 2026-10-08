@@ -17,7 +17,7 @@ export interface WindowStatus {
   readonly used: number;
   /** 不限时没有。 */
   readonly limit?: number;
-  /** 什么时候恢复（自然日：下一个 0 点；滚动：用量降到限额以下的时刻）。不限时没有。 */
+  /** 什么时候恢复（自然日 / 自然周：下一次 0 点清零；滚动：用量降到限额以下的时刻）。不限时没有。 */
   readonly resetAt?: number;
 }
 
@@ -37,6 +37,22 @@ const startOfDay = (now: number, tz: number) => {
   return Math.floor((now + off) / DAY) * DAY - off;
 };
 
+/** 这一周的起点：本地时间这周 `startsOn`（0 = 周日）的 0 点。 */
+const startOfWeek = (now: number, tz: number, startsOn = 1) => {
+  const day0 = startOfDay(now, tz);
+  const dow = new Date(day0 + tz * 60_000).getUTCDay();
+  return day0 - ((dow - startsOn + 7) % 7) * DAY;
+};
+
+/** 时间窗现在从哪一刻算起、自然日 / 自然周的下一次清零。 */
+function span(w: QuotaWindow, now: number): { from: number; next?: number } {
+  if (w.kind === 'day') { const from = startOfDay(now, w.tzOffsetMinutes); return { from, next: from + DAY }; }
+  if (w.kind === 'week') { const from = startOfWeek(now, w.tzOffsetMinutes, w.weekStartsOn); return { from, next: from + 7 * DAY }; }
+  return { from: now - w.hours * HOUR };
+}
+
+const WEEKDAY = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
 const clock = (t: number, tz: number) => {
   const d = new Date(t + tz * 60_000);
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
@@ -44,9 +60,9 @@ const clock = (t: number, tz: number) => {
 
 export const defaultReason: ReasonFn = (w, { currencySymbol, tzOffsetMinutes }) => {
   const amount = `${currencySymbol}${w.limit}`;
-  return w.kind === 'day'
-    ? `${w.label}的额度（${amount}）用完了，明天 0 点恢复。`
-    : `${w.label}的额度（${amount}）用完了，${clock(w.resetAt ?? 0, tzOffsetMinutes)} 左右恢复。`;
+  if (w.kind === 'day') return `${w.label}的额度（${amount}）用完了，明天 0 点恢复。`;
+  if (w.kind === 'week') return `${w.label}的额度（${amount}）用完了，下${WEEKDAY[new Date((w.resetAt ?? 0) + tzOffsetMinutes * 60_000).getUTCDay()]} 0 点恢复。`;
+  return `${w.label}的额度（${amount}）用完了，${clock(w.resetAt ?? 0, tzOffsetMinutes)} 左右恢复。`;
 };
 
 export interface QuotaBookOptions {
@@ -124,11 +140,11 @@ export class QuotaBook {
     const lim = await this.limits(principal);
     const windows: WindowStatus[] = [];
     for (const w of this.windows) {
-      const from = w.kind === 'day' ? startOfDay(now, w.tzOffsetMinutes) : now - w.hours * HOUR;
+      const { from, next } = span(w, now);
       const used = await this.store.sumCounted(principal, from);
       if (!lim) { windows.push({ id: w.id, label: w.label, kind: w.kind, used }); continue; }
       const limit = lim[w.id]!;
-      const resetAt = w.kind === 'day' ? from + DAY : await this.rollingReset(principal, from, w.hours, limit, now);
+      const resetAt = next ?? await this.rollingReset(principal, from, (w as { hours: number }).hours, limit, now);
       windows.push({ id: w.id, label: w.label, kind: w.kind, used, limit, resetAt });
     }
     return { mode: p.mode, unlimited: !lim, windows };
@@ -146,13 +162,14 @@ export class QuotaBook {
     return now;
   }
 
-  /** 花钱前的检查：哪个时间窗用完了就返回原因（自然日优先说）。 */
+  /** 花钱前的检查：哪个时间窗用完了就返回原因（几个都用完了，说最晚恢复的那个）。 */
   async check(principal: string): Promise<SpendDenial | null> {
     const s = await this.status(principal);
     if (s.unlimited) return null;
-    const out = s.windows.find((w) => w.limit !== undefined && w.used >= w.limit);
+    const out = s.windows.filter((w) => w.limit !== undefined && w.used >= w.limit)
+      .sort((a, b) => (b.resetAt ?? 0) - (a.resetAt ?? 0))[0];
     if (!out) return null;
-    const tz = this.windows.find((w) => w.kind === 'day') as { tzOffsetMinutes?: number } | undefined;
+    const tz = this.windows.find((w) => w.kind !== 'rolling') as { tzOffsetMinutes?: number } | undefined;
     return { reason: this.reason(out, { currencySymbol: this.currencySymbol, tzOffsetMinutes: tz?.tzOffsetMinutes ?? 480 }), ...(out.resetAt ? { resumeAt: out.resetAt } : {}) };
   }
 }
@@ -162,4 +179,4 @@ function validAmount(v: unknown): number | undefined {
   return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : undefined;
 }
 
-export { startOfDay };
+export { startOfDay, startOfWeek };

@@ -110,3 +110,31 @@ test('站点设置：网站名称默认取宿主给的，管理员改了以改�
 test('页面源文件和嵌进代码的一致（改了 ui.html 要跑 scripts/embed-ui.mjs）', () => {
   assert.equal(ADMIN_HTML_FOR_TEST, readFileSync(new URL('../src/ui.html', import.meta.url), 'utf8'));
 });
+
+test('自然周窗口：从这周一 0 点（宿主时区）算起，用完时说下周一恢复；周日晚上也算这周', async () => {
+  const store = new InMemoryAdminStore();
+  // 2026-10-04 是周日
+  const admin = createAdmin({
+    store, now: () => NOW,
+    principals: { list: () => [{ id: 'u1', name: 'a', status: 'active' as const }] },
+    auth: { verify: () => null },
+    windows: [
+      { id: '5h', label: '这 5 小时', kind: 'rolling', hours: 5 },
+      { id: 'week', label: '本周', kind: 'week', tzOffsetMinutes: 480 },
+    ],
+    defaults: { '5h': 100, week: 3 },
+  });
+  const m = admin.meter('u1');
+  m.onUsage(rec(Date.parse('2026-09-28T00:30:00+08:00'), 1)); // 这周一
+  m.onUsage(rec(Date.parse('2026-09-27T23:00:00+08:00'), 50)); // 上周日，不算
+  m.onUsage(rec(NOW - HOUR, 2.5));
+  await new Promise((r) => setImmediate(r));
+  const s = await admin.status('u1');
+  const w = s.windows.find((x) => x.id === 'week')!;
+  assert.equal(w.used, 3.5);
+  assert.equal(w.kind, 'week');
+  assert.equal(w.resetAt, Date.parse('2026-10-05T00:00:00+08:00'));
+  const d = await m.spendGuard({ kind: 'model', vendor: 'deepseek' });
+  assert.match(d?.reason ?? '', /本周的额度（¥3）用完了，下周一 0 点恢复/);
+  assert.equal(d?.resumeAt, Date.parse('2026-10-05T00:00:00+08:00'));
+});

@@ -23,6 +23,8 @@ export interface QuotaPolicy {
  */
 export type QuotaWindow =
   | { readonly id: string; readonly label: string; readonly kind: 'day'; readonly tzOffsetMinutes: number }
+  /** 自然周：从每周的 `weekStartsOn`（0 = 周日 … 6 = 周六，默认 1 = 周一）0 点起算。 */
+  | { readonly id: string; readonly label: string; readonly kind: 'week'; readonly tzOffsetMinutes: number; readonly weekStartsOn?: number }
   | { readonly id: string; readonly label: string; readonly kind: 'rolling'; readonly hours: number };
 
 /** 一笔花费。宿主的每次调用都记（`counted` 标出算不算额度），概览里的调用次数、失败数也从这里来。 */

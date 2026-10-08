@@ -46,7 +46,7 @@ export class Admin implements AdminApi {
     });
     this.authImpl = o.auth ?? new BuiltinAdminAuth(o.store);
     this.shared = o.resources?.length || o.routing ? new SharedResources(o.store, o.resources ?? [], o.testResource, o.routing) : null;
-    const day = this.quota.windows.find((w) => w.kind === 'day') as { tzOffsetMinutes: number } | undefined;
+    const day = this.quota.windows.find((w) => w.kind !== 'rolling') as { tzOffsetMinutes: number } | undefined;
     this.tz = day?.tzOffsetMinutes ?? 480;
   }
 
