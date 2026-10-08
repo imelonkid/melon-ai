@@ -123,10 +123,12 @@ export class ModelPool implements ModelRouter {
    * 某类任务现在会选谁、为什么、预估多少钱。给宿主的路由页用，不发请求。
    * 直接给规则（不经宿主的分类函数）：路由页按类别逐个问。
    */
-  explain(rule: RoutingRule, ctx: RouteContext = {}): RouteExplanation {
+  explain(rule: RoutingRule, ctx: RouteContext = {}, opts: { readonly groups?: readonly string[] } = {}): RouteExplanation {
     const m = this.metering;
+    // 只看某几个分组（宿主的路由页常只解释用户自己的那组）
+    const live = opts.groups ? this.live().filter((e) => opts.groups!.includes(e.group ?? '')) : this.live();
     return rankAuto({
-      entries: this.live(), rule, ctx, stats: this.stats, health: this.health, quota: this.quota,
+      entries: live, rule, ctx, stats: this.stats, health: this.health, quota: this.quota,
       now: (m.now ?? (() => Date.now()))(), ...(m.fx ? { fx: m.fx } : {}),
     }).explanation;
   }

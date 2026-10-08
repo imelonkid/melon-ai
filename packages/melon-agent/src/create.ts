@@ -248,7 +248,8 @@ export interface MelonAgent extends Omit<AssembledAgent, 'schedules'> {
     /** 用一次最便宜的调用验证模型可用（key、网络、模型名）。 */
     test(entry: ModelEntry): Promise<ModelTestResult>;
     /** 某类任务现在会选哪个模型、为什么、预估每次多少钱。不发请求。 */
-    explain(rule: RoutingRule, ctx?: RouteContext): RouteExplanation;
+    /** 某类任务现在会选谁、为什么。`groups`：只看这几个分组的模型（`ModelEntry.group`；没分组的是空串）。 */
+    explain(rule: RoutingRule, ctx?: RouteContext, opts?: { readonly groups?: readonly string[] }): RouteExplanation;
     /** 这个账号在这家能用哪些模型（`/models`）。宿主做「新发现的模型」。适配器不支持时返回 null。 */
     discover(entry: ModelEntry, signal?: AbortSignal): Promise<readonly string[] | null>;
     /** 模型目录：每家（`providers`）最新可用的模型、档次怎么定的、价格从哪来、参不参与路由。 */
@@ -871,7 +872,7 @@ export async function createAgent(opts: AgentOptions = {}): Promise<MelonAgent> 
         return r;
       },
       accounts: () => pool.accounts(),
-      explain: (rule, ctx) => pool.explain(rule, ctx),
+      explain: (rule, ctx, opts) => pool.explain(rule, ctx, opts),
       discover: async (entry, signal) => (entry.model.listModels ? entry.model.listModels(signal) : null),
       catalog: () => catalog.expand(book).catalogs,
       refresh: (vendor) => refreshCatalog(vendor),

@@ -33,6 +33,7 @@ test('优先级：自己的分组整组排在前面，哪怕宿主提供的更�
   assert.equal(res.group, 'own');
   assert.equal(res.account, undefined, '自己的就是厂商本身，没有单独的账户名');
   assert.deepEqual(pool.explain({ taskClass: 'chat' }).ranked.map((c) => c.key), ['deepseek/flash', 'shared:deepseek/flash']);
+  assert.deepEqual(pool.explain({ taskClass: 'chat' }, {}, { groups: ['own'] }).ranked.map((c) => c.key), ['deepseek/flash'], '只看某几个分组');
 });
 
 test('按分组的规则：自己的模型达不到用户要的档次时用宿主的；宿主那组可以单独指定模型', async () => {
