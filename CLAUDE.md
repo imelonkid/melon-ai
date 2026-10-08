@@ -47,7 +47,7 @@ skills   技能：pipeline/ · policy/ · registry/（注册与审查）· built
 llm      模型：router/ · planner/ · openai/ · anthropic/（子路径）
 store    存储：sqlite/（子路径）
 audit    审计（横切，独立成包）
-admin    后台（横切，独立成包）：额度、花费汇总、站点设置，自带管理页面与接口
+admin    后台（横切，独立成包）：额度、花费汇总、站点设置；可选的通用管理页面（宿主可以只当库用，不挂页面）
 plugins  扩展插件：厂商实现，每家一个子路径（bocha/）
 agent    组装：宿主入口
 testkit  测试替身

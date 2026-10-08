@@ -150,8 +150,6 @@ tr.detail td { background: var(--bg); cursor: default; }
     <a data-page="overview"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span class="t">概览</span></a>
     <a data-page="users"><svg class="i" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.8.7 3 2.4 3.5 5.2"/></svg><span class="t">用户</span></a>
     <a data-page="policy"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5c0-1.2 1.1-2 2.5-2s2.5.8 2.5 2-1.1 1.8-2.5 2.2-2.5 1-2.5 2.3 1.1 2 2.5 2 2.5-.8 2.5-2"/></svg><span class="t">额度策略</span></a>
-    <a data-page="resources" class="hidden"><svg class="i" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg><span class="t">共享资源</span></a>
-    <a data-page="routing" class="hidden"><svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M8.5 6h3a3 3 0 0 1 3 3v0M8.5 18h3a3 3 0 0 0 3-3v0M14.5 9v6"/></svg><span class="t">路由规则</span></a>
     <a data-page="settings"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span class="t">设置</span></a>
     <div class="foot">
       <span class="t"><span id="meName"></span> · <a id="pw" class="hidden">改密码</a><span id="pwDot" class="hidden"> · </span><a id="logout">退出</a></span>
@@ -234,12 +232,9 @@ const PAGES = {
     const shown = users.filter((u) => !q || (u.name + ' ' + (u.username || '')).toLowerCase().includes(q));
     const wins = META.windows;
     main.innerHTML = '<h2>用户</h2><div class="row" style="margin-bottom:12px"><input type="search" id="q" placeholder="搜索用户" value="' + esc(q) + '"><span class="faint grow">共 ' + users.length + ' 人 · 点一行改额度、看近 30 天</span>' +
-      (META.canCreateUser ? '<button class="btn primary" id="newUser">＋ 新建用户</button>' : '') + '</div>' +
-      '<div id="newUserBox"></div>' +
+      '</div>' +
       '<div class="panel tablewrap"><table><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>额度策略</th>' + wins.map((w) => '<th>' + esc(w.label) + '</th>').join('') + '<th>今日调用</th><th>最近活动</th></tr></thead><tbody>' +
       (shown.length ? shown.map((u) => userRow(u, wins)).join('') : '<tr><td colspan="' + (6 + wins.length) + '" class="empty">没有用户</td></tr>') + '</tbody></table></div>';
-    const nb = $('#newUser');
-    if (nb) nb.onclick = () => newUserForm($('#newUserBox'));
     const qi = $('#q');
     qi.oninput = () => { clearTimeout(qi._t); qi._t = setTimeout(() => render(), 250); };
     if (q) { qi.focus(); qi.setSelectionRange(q.length, q.length); }
@@ -263,36 +258,6 @@ const PAGES = {
     };
   },
 
-  /** 共享资源：宿主统一提供给所有用户的模型、搜索……（表单照宿主的描述画，密钥只显示打码）。 */
-  async resources(main) {
-    const { sections, values } = await api('resources');
-    main.innerHTML = '<h2>共享资源</h2><div class="muted" style="margin:-8px 0 16px">统一提供给所有用户。用户没配自己的，就用这里的（花费计入额度）。密钥只显示打码，不改就留着。</div>' +
-      sections.map((s) => '<h3>' + esc(s.title) + '</h3>' + (s.note ? '<div class="faint" style="margin:-4px 0 8px">' + esc(s.note) + '</div>' : '') +
-        '<div class="panel list">' + s.vendors.map((v) => vendorRow(s, v, values[s.kind][v.id])).join('') + '</div>').join('');
-    main.querySelectorAll('[data-vendor]').forEach((el) => bindVendor(el));
-  },
-
-  /** 路由规则：每类任务的最低档次、固定用哪个（只管共享的模型；用户自己的模型按用户自己的规则）。 */
-  async routing(main) {
-    const { classes, tiers, options, rules } = await api('routing');
-    main.innerHTML = '<h2>路由规则</h2><div class="muted" style="margin:-8px 0 16px">只管共享的模型：每类任务至少要什么档次、要不要固定用某个模型。不固定就在够档的里挑最便宜的。</div>' +
-      '<div class="panel tablewrap"><table><thead><tr><th>任务</th><th>最低档次</th><th>固定用</th></tr></thead><tbody>' +
-      classes.map((c) => '<tr><td><div>' + esc(c.label) + '</div>' + (c.note ? '<div class="faint">' + esc(c.note) + '</div>' : '') + '</td>' +
-        '<td><select data-class="' + esc(c.id) + '" data-field="minTier"><option value="">不限</option>' +
-        tiers.map((t) => '<option value="' + esc(t.id) + '"' + (rules[c.id]?.minTier === t.id ? ' selected' : '') + '>' + esc(t.label) + '</option>').join('') + '</select></td>' +
-        '<td><select data-class="' + esc(c.id) + '" data-field="pin"><option value="">自动挑</option>' +
-        options.map((o) => '<option value="' + esc(o.key) + '"' + (rules[c.id]?.pin === o.key ? ' selected' : '') + '>' + esc(o.label) + '</option>').join('') +
-        (rules[c.id]?.pin && !options.some((o) => o.key === rules[c.id].pin) ? '<option value="' + esc(rules[c.id].pin) + '" selected>' + esc(rules[c.id].pin) + '（现在用不了）</option>' : '') +
-        '</select></td></tr>').join('') + '</tbody></table></div>' +
-      '<div class="row" style="margin-top:12px"><button class="btn primary" id="saveRouting">保存</button><span id="routingMsg"></span></div>';
-    $('#saveRouting').onclick = async () => {
-      const next = {};
-      main.querySelectorAll('select[data-class]').forEach((sel) => { (next[sel.dataset.class] ??= {})[sel.dataset.field] = sel.value || undefined; });
-      try { await api('routing', { rules: next }); $('#routingMsg').innerHTML = '<span class="saved">已保存，立即生效</span>'; }
-      catch (e) { $('#routingMsg').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
-    };
-  },
-
   async settings(main) {
     const s = META.site;
     main.innerHTML = '<h2>设置</h2><div class="panel pad"><div class="form">' +
@@ -309,59 +274,7 @@ const PAGES = {
   },
 };
 
-/** 新建用户：用户名、显示名；成功后显示一次性初始密码。 */
-function newUserForm(box) {
-  box.innerHTML = '<div class="panel pad" style="margin-bottom:12px"><div class="form"><div class="amounts">' +
-    '<div class="field"><label>用户名（登录用）</label><input type="text" id="nuName" placeholder="比如 xiaomei"></div>' +
-    '<div class="field"><label>显示名</label><input type="text" id="nuDisplay" placeholder="比如 小美（不填同用户名）"></div></div>' +
-    '<div class="row"><button class="btn primary" id="nuOk">建档</button><button class="btn" id="nuCancel">取消</button><span id="nuMsg"></span></div></div></div>';
-  $('#nuName').focus();
-  $('#nuCancel').onclick = () => { box.innerHTML = ''; };
-  $('#nuOk').onclick = async () => {
-    try {
-      const r = await api('users', { username: $('#nuName').value, name: $('#nuDisplay').value });
-      box.innerHTML = '<div class="panel pad" style="margin-bottom:12px"><span class="saved">已建档。初始密码：<b class="mono">' + esc(r.initialPassword) + '</b>（只显示这一次，请转告本人；第一次登录要改密码）</span> <a id="nuDone">好的</a></div>';
-      $('#nuDone').onclick = () => { box.innerHTML = ''; render(); };
-    } catch (e) { $('#nuMsg').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
-  };
-}
-
 const windowName = (w) => w.kind === 'day' ? '每天' : w.kind === 'week' ? '每周' : '每 ' + w.hours + ' 小时';
-function vendorRow(s, v, cur) {
-  return '<div class="item" data-vendor="' + esc(v.id) + '" data-kind="' + esc(s.kind) + '">' +
-    '<div class="row"><span class="grow"><b>' + esc(v.label) + '</b>' + (v.note ? ' <span class="faint">' + esc(v.note) + '</span>' : '') + '</span>' +
-    '<span class="chip ' + (cur.enabled ? 'unlimited' : '') + '">' + (cur.enabled ? '已启用' : '未启用') + '</span></div>' +
-    '<div class="amounts" style="margin-top:10px">' + v.fields.map((f) =>
-      '<div class="field" style="min-width:220px;flex:1"><label>' + esc(f.label) + (f.optional ? '（可不填）' : '') + '</label>' +
-      '<input type="' + (f.secret ? 'password' : 'text') + '" data-field="' + esc(f.key) + '" autocomplete="off" ' +
-      (f.secret ? 'placeholder="' + (cur.filled[f.key] ? esc(cur.values[f.key]) + '（不改就留空）' : esc(f.placeholder || '')) + '"' : 'value="' + esc(cur.values[f.key]) + '" placeholder="' + esc(f.placeholder || '') + '"') + '>' +
-      (f.help ? '<span class="faint">' + esc(f.help) + '</span>' : '') + '</div>').join('') + '</div>' +
-    '<div class="row" style="margin-top:8px"><label class="row" style="gap:6px"><input type="checkbox" data-enabled' + (cur.enabled ? ' checked' : '') + '> 启用</label>' +
-    '<button class="btn primary" data-act="save">保存</button><button class="btn" data-act="test">测试</button><span class="grow" data-msg></span></div></div>';
-}
-
-function bindVendor(el) {
-  const collect = () => {
-    const values = {};
-    el.querySelectorAll('input[data-field]').forEach((i) => { values[i.dataset.field] = i.type === 'password' && !i.value ? '__KEEP__' : i.value; });
-    return values;
-  };
-  const msg = (h) => { el.querySelector('[data-msg]').innerHTML = h; };
-  el.querySelector('[data-act="save"]').onclick = async () => {
-    try {
-      await api('resources', { kind: el.dataset.kind, vendor: el.dataset.vendor, enabled: el.querySelector('[data-enabled]').checked, values: collect() });
-      render();
-    } catch (e) { msg('<span class="err">' + esc(e.message) + '</span>'); }
-  };
-  el.querySelector('[data-act="test"]').onclick = async () => {
-    msg('<span class="faint">正在测试…</span>');
-    try {
-      const { result } = await api('resources/test', { kind: el.dataset.kind, vendor: el.dataset.vendor, values: collect() });
-      msg(result.ok ? '<span class="saved">' + esc(result.message || '连通') + '</span>' : '<span class="err">' + esc(result.message) + '</span>');
-    } catch (e) { msg('<span class="err">' + esc(e.message) + '</span>'); }
-  };
-}
-
 const stat = (k, v, s, cls = '') => '<div class="panel pad stat"><div class="k">' + esc(k) + '</div><div class="v ' + cls + '">' + v + '</div><div class="s">' + s + '</div></div>';
 
 function userRow(u, wins) {
@@ -387,7 +300,6 @@ async function userDetail(u, main) {
         : mode === 'default' ? '<div class="faint">按通用策略：' + META.windows.map((w) => esc(windowName(w)) + ' ' + limitText(def[w.id])).join(' · ') + '</div>'
         : '<div class="faint">不限额度（花费照样记录）</div>') +
       '<div class="row"><button class="btn primary" id="saveQuota">保存额度</button>' +
-      (META.canResetPassword ? '<button class="btn" id="resetPw">重置密码</button>' : '') +
       (META.canSetStatus ? '<button class="btn ' + (u.status === 'disabled' ? '' : 'danger') + '" id="toggleStatus">' + (u.status === 'disabled' ? '启用' : '停用') + '</button>' : '') +
       '<span id="quotaMsg"></span></div></div>' +
       '<div><div class="faint" style="margin-bottom:4px">近 30 天每天的花费</div>' + bars(days) + '</div></div>';
@@ -397,14 +309,6 @@ async function userDetail(u, main) {
       cell.querySelectorAll('input[data-w]').forEach((i) => amounts[i.dataset.w] = Number(i.value));
       try { await api('users/' + encodeURIComponent(u.id) + '/quota', { mode, amounts }); render(); }
       catch (e) { $('#quotaMsg', cell).innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
-    };
-    const rp = $('#resetPw', cell);
-    if (rp) rp.onclick = async () => {
-      if (!confirm('重置「' + u.name + '」的密码？会生成一次性初始密码，这个用户的所有设备会退出，下次登录要改密码。')) return;
-      try {
-        const r = await api('users/' + encodeURIComponent(u.id) + '/reset', {});
-        $('#quotaMsg', cell).innerHTML = '<span class="saved">新的初始密码：<b class="mono">' + esc(r.initialPassword) + '</b>（只显示这一次，请转告本人）</span>';
-      } catch (e) { $('#quotaMsg', cell).innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
     };
     const tg = $('#toggleStatus', cell);
     if (tg) tg.onclick = async () => {
@@ -425,8 +329,7 @@ async function render() {
 }
 
 function go(page) {
-  const allowed = PAGES[page] && (page !== 'resources' || META?.hasResources) && (page !== 'routing' || META?.hasRouting);
-  PAGE = allowed ? page : 'overview';
+  PAGE = PAGES[page] ? page : 'overview';
   if (location.hash.slice(1) !== PAGE) history.replaceState(null, '', '#' + PAGE);
   OPEN = null;
   render();
@@ -491,8 +394,6 @@ function showApp() {
   $('#meName').textContent = META.me?.name || '';
   $('#pw').classList.toggle('hidden', !META.canChangePassword);
   $('#pwDot').classList.toggle('hidden', !META.canChangePassword);
-  $('nav a[data-page="resources"]').classList.toggle('hidden', !META.hasResources);
-  $('nav a[data-page="routing"]').classList.toggle('hidden', !META.hasRouting);
   go(location.hash.slice(1) || 'overview');
 }
 

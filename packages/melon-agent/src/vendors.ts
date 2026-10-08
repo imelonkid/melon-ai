@@ -1,22 +1,40 @@
 import type { ModelEntry, ModelProvider } from '@melon-ai/core';
 import { deepseek, kimi, openai, qwen, zhipu } from '@melon-ai/llm';
 import type { ProviderOptions } from '@melon-ai/llm';
-import type { ResourceVendor } from '@melon-ai/admin';
+
+/** 接一家模型要填的一个值（宿主据此画自己的配置表单）。 */
+export interface ModelVendorField {
+  readonly key: string;
+  readonly label: string;
+  /** 密钥类：宿主存起来、只显示打码。 */
+  readonly secret?: boolean;
+  readonly optional?: boolean;
+  readonly placeholder?: string;
+  readonly help?: string;
+}
+
+/** 一家模型厂商：id 和要填的值。 */
+export interface ModelVendor {
+  readonly id: string;
+  readonly label: string;
+  readonly note?: string;
+  readonly fields: readonly ModelVendorField[];
+}
 
 /**
- * 引擎自带的模型厂商（OpenAI 兼容协议的预设）：给宿主的配置表单用（比如后台的「共享资源 · 模型」），
+ * 引擎自带的模型厂商（OpenAI 兼容协议的预设）：接一家要填哪些值（宿主据此画自己的配置表单），
  * 再用 `providerFrom` 把填好的值变成 `ModelProvider` 交给引擎 —— 宿主不用自己写厂商适配。
  * Claude 在 `@melon-ai/agent/anthropic` 子路径（要额外装 SDK），不在这里。
  */
 const MAKERS: Readonly<Record<string, (o: ProviderOptions) => ModelEntry>> = { deepseek, qwen, zhipu, kimi, openai };
 
-const fields = (env: string): ResourceVendor['fields'] => [
+const fields = (env: string): ModelVendor['fields'] => [
   { key: 'apiKey', label: 'API key', secret: true, placeholder: `${env} 那个 key` },
   { key: 'baseURL', label: '服务地址', optional: true, placeholder: '不填用官方地址', help: '走代理或自建网关时才填' },
   { key: 'models', label: '只用这些模型', optional: true, placeholder: '逗号分隔；不填按官方能用的全部', help: '比如只想用便宜的那个' },
 ];
 
-export const MODEL_VENDORS: readonly ResourceVendor[] = [
+export const MODEL_VENDORS: readonly ModelVendor[] = [
   { id: 'deepseek', label: 'DeepSeek', note: '深度求索', fields: fields('DeepSeek') },
   { id: 'qwen', label: '通义千问', note: '阿里云百炼', fields: fields('百炼') },
   { id: 'zhipu', label: '智谱', note: '智谱 AI', fields: fields('智谱') },

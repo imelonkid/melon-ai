@@ -17,69 +17,6 @@ export interface PrincipalSource {
   list(): Promise<readonly Principal[]> | readonly Principal[];
   /** 停用 / 启用。不给就不显示这个操作。 */
   setStatus?(id: string, status: 'active' | 'disabled'): Promise<void> | void;
-  /** 新建用户（账号在宿主那边）：返回 id 和一次性初始密码，后台显示一次。不给就不显示「新建用户」。出错抛出，信息给管理员看。 */
-  create?(input: { readonly username: string; readonly name: string }): Promise<{ readonly id: string; readonly initialPassword: string }> | { readonly id: string; readonly initialPassword: string };
-  /** 重置密码：返回新的一次性初始密码。不给就不显示「重置密码」。 */
-  resetPassword?(id: string): Promise<string> | string;
-}
-
-/** 共享资源的一个表单字段（宿主描述，后台照着画）。 */
-export interface ResourceField {
-  readonly key: string;
-  readonly label: string;
-  /** 密钥类：存起来，后台只显示打码，回传 `__KEEP__` 表示不改。 */
-  readonly secret?: boolean;
-  readonly optional?: boolean;
-  readonly placeholder?: string;
-  readonly help?: string;
-}
-
-/** 一家厂商（或一种服务）要填什么。 */
-export interface ResourceVendor {
-  readonly id: string;
-  readonly label: string;
-  readonly note?: string;
-  readonly fields: readonly ResourceField[];
-}
-
-/**
- * 一类共享资源（宿主统一提供给所有用户的）：比如「模型」「搜索」。
- * 后台只按描述存配置、画表单；配置怎么用（造模型、接搜索）是宿主的事。
- */
-export interface ResourceSection {
-  readonly kind: string;
-  readonly title: string;
-  readonly note?: string;
-  /** 能不能同时启用多家（模型可以好几家，搜索一般只用一家）。默认可以。 */
-  readonly multiple?: boolean;
-  readonly vendors: readonly ResourceVendor[];
-}
-
-/** 存下来的一家的配置。 */
-export interface ResourceConfig {
-  readonly enabled: boolean;
-  readonly values: Readonly<Record<string, string>>;
-}
-
-/** 全部共享资源的配置：`kind → 厂商 id → 配置`。 */
-export type ResourceConfigs = Readonly<Record<string, Readonly<Record<string, ResourceConfig>>>>;
-
-/** 宿主提供的连通性测试（后台「测试」按钮）。 */
-export type ResourceTestFn = (kind: string, vendorId: string, values: Readonly<Record<string, string>>) => Promise<{ readonly ok: boolean; readonly message: string }>;
-
-/** 路由规则页：宿主告诉后台有哪些任务类别、能固定哪些模型。规则怎么用由宿主决定（通常交给引擎的 `RoutingRule.byGroup`）。 */
-export interface RoutingSpec {
-  readonly classes: readonly { readonly id: string; readonly label: string; readonly note?: string }[];
-  /** 可选的档次（默认 基础 / 标准 / 强）。 */
-  readonly tiers?: readonly { readonly id: string; readonly label: string }[];
-  /** 能固定的模型（key 和显示名），比如共享模型里现在可用的那些。 */
-  readonly options?: () => Promise<readonly { readonly key: string; readonly label: string }[]> | readonly { readonly key: string; readonly label: string }[];
-}
-
-/** 一类任务的规则。 */
-export interface RoutingRuleConfig {
-  readonly minTier?: string;
-  readonly pin?: string;
 }
 
 /** 管理员登录：宿主校验（只让它认可的管理员进）。不通过返回 null。 */
@@ -128,11 +65,6 @@ export interface AdminOptions {
   readonly reason?: ReasonFn;
   /** 概览里的「服务」卡片。 */
   readonly service?: () => Promise<ServiceStatus> | ServiceStatus;
-  /** 共享资源（宿主统一提供给用户的模型、搜索……）：给了就有「共享资源」页。 */
-  readonly resources?: readonly ResourceSection[];
-  readonly testResource?: ResourceTestFn;
-  /** 共享模型的路由规则：给了就有「路由规则」页。 */
-  readonly routing?: RoutingSpec;
   /** 花费流水留几天（默认 90）。 */
   readonly retentionDays?: number;
   readonly now?: () => number;
@@ -181,24 +113,4 @@ export interface AdminApi {
   users(): Promise<UserRow[]>;
   daily(days: number, principal?: string): Promise<DayRow[]>;
   status(principal: string): Promise<QuotaStatus>;
-  /** 共享资源与路由规则（宿主配了才有）。 */
-  readonly shared: SharedApi | null;
-}
-
-/** 给页面看的一家：密钥只给打码和「填没填」。 */
-export interface ResourceView {
-  readonly enabled: boolean;
-  readonly values: Readonly<Record<string, string>>;
-  readonly filled: Readonly<Record<string, boolean>>;
-}
-
-/** 接口层要用的共享资源能力（`SharedResources` 实现它）。 */
-export interface SharedApi {
-  readonly sections: readonly ResourceSection[];
-  readonly routing?: RoutingSpec | undefined;
-  view(): Promise<Record<string, Record<string, ResourceView>>>;
-  set(kind: string, vendorId: string, patch: { readonly enabled?: boolean; readonly values?: Readonly<Record<string, unknown>> }): Promise<void>;
-  runTest(kind: string, vendorId: string, values: Readonly<Record<string, unknown>>): Promise<{ ok: boolean; message: string }>;
-  routingRules(): Promise<Record<string, RoutingRuleConfig>>;
-  setRoutingRules(rules: Readonly<Record<string, RoutingRuleConfig>>): Promise<Record<string, RoutingRuleConfig>>;
 }

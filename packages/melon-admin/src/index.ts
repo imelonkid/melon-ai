@@ -7,4 +7,3 @@ export * from './types.js';
 export * from './admin.js';
 export * from './http.js';
 export * from './accounts.js';
-export * from './resources.js';

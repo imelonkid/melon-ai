@@ -3,7 +3,6 @@ import { QuotaBook, startOfDay } from './quota.js';
 import type { AdminApi, AdminAuth, AdminOptions, CountsFn, DayRow, Overview, PrincipalSource, SiteSettings, UserRow } from './types.js';
 import { adminHandler } from './http.js';
 import { BuiltinAdminAuth } from './accounts.js';
-import { SharedResources } from './resources.js';
 import type { AdminRequest, AdminResponse } from './http.js';
 import type { QuotaStatus } from './quota.js';
 
@@ -23,11 +22,6 @@ const DAY = 86_400_000;
  */
 export class Admin implements AdminApi {
   readonly quota: QuotaBook;
-  /**
-   * 共享资源（宿主统一提供给用户的模型、搜索……）与路由规则：`configs()` 拿明文配置造模型，`routingRules()` 拿规则，
-   * `watch(cb)` 在管理员改了之后重新接。宿主没配 `resources` / `routing` 时为 null。
-   */
-  readonly shared: SharedResources | null;
   readonly currency: Currency;
   readonly symbol: string;
   private readonly o: AdminOptions;
@@ -45,7 +39,6 @@ export class Admin implements AdminApi {
       ...(o.windows ? { windows: o.windows } : {}), ...(o.defaults ? { defaults: o.defaults } : {}), ...(o.reason ? { reason: o.reason } : {}),
     });
     this.authImpl = o.auth ?? new BuiltinAdminAuth(o.store);
-    this.shared = o.resources?.length || o.routing ? new SharedResources(o.store, o.resources ?? [], o.testResource, o.routing) : null;
     const day = this.quota.windows.find((w) => w.kind !== 'rolling') as { tzOffsetMinutes: number } | undefined;
     this.tz = day?.tzOffsetMinutes ?? 480;
   }

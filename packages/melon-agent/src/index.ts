@@ -50,4 +50,4 @@ export type { AssembleOptions, AssembledAgent } from './assemble.js';
 
 // 引擎自带的模型厂商：配置表单的描述 + 按填好的值造 ModelProvider（宿主不用自己写厂商适配）
 export { MODEL_VENDORS, providerFrom } from './vendors.js';
-export type { ProviderFromOptions } from './vendors.js';
+export type { ProviderFromOptions, ModelVendor, ModelVendorField } from './vendors.js';

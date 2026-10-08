@@ -1,6 +1,5 @@
 import type { AdminApi } from './types.js';
 import { ADMIN_HTML } from './ui.js';
-import { DEFAULT_TIERS } from './resources.js';
 
 /**
  * 后台的接口与页面，宿主挂到自己的 HTTP 服务上（Node 的 `http` 或兼容的 req / res）。
@@ -107,8 +106,6 @@ export function adminHandler(admin: AdminApi, o: AdminHandlerOptions): (req: Adm
       return send(res, 200, {
         ok: true, site: await admin.settings(), me: me ? { name: me.name, mustChangePassword: me.mustChange } : null,
         canSetStatus: !!admin.principals.setStatus, canChangePassword: !!admin.auth.changePassword, windows: admin.quota.windows, symbol: admin.symbol,
-        canCreateUser: !!admin.principals.create, canResetPassword: !!admin.principals.resetPassword,
-        hasResources: !!admin.shared?.sections.length, hasRouting: !!admin.shared?.routing,
       });
     }
     if (path === '/api/login' && method === 'POST') {
@@ -153,50 +150,6 @@ export function adminHandler(admin: AdminApi, o: AdminHandlerOptions): (req: Adm
 
     if (path === '/api/overview' && method === 'GET') return send(res, 200, { ok: true, overview: await admin.overview() });
     if (path === '/api/users' && method === 'GET') return send(res, 200, { ok: true, users: await admin.users() });
-    if (path === '/api/users' && method === 'POST') {
-      if (!admin.principals.create) throw new HttpErr(404, 'unsupported', '这个服务不支持在后台新建用户');
-      const b = await readJson(req);
-      const username = String(b['username'] ?? '').trim();
-      const name = String(b['name'] ?? '').trim() || username;
-      if (!username) throw new HttpErr(400, 'bad_request', '要填用户名');
-      try { return send(res, 200, { ok: true, ...(await admin.principals.create({ username, name })) }); }
-      catch (e) { throw new HttpErr(400, 'create_failed', e instanceof Error ? e.message : String(e)); }
-    }
-    const reset = /^\/api\/users\/([^/]+)\/reset$/.exec(path);
-    if (reset && method === 'POST') {
-      if (!admin.principals.resetPassword) throw new HttpErr(404, 'unsupported', '这个服务不支持在后台重置密码');
-      try { return send(res, 200, { ok: true, initialPassword: await admin.principals.resetPassword(decodeURIComponent(reset[1]!)) }); }
-      catch (e) { throw new HttpErr(400, 'reset_failed', e instanceof Error ? e.message : String(e)); }
-    }
-    if (path.startsWith('/api/resources') || path.startsWith('/api/routing')) {
-      const sh = admin.shared;
-      if (!sh) throw new HttpErr(404, 'unsupported', '这个服务没有共享资源');
-      if (path === '/api/resources' && method === 'GET') return send(res, 200, { ok: true, sections: sh.sections, values: await sh.view() });
-      if (path === '/api/resources' && method === 'POST') {
-        const b = await readJson(req);
-        try {
-          await sh.set(String(b['kind'] ?? ''), String(b['vendor'] ?? ''), {
-            ...(typeof b['enabled'] === 'boolean' ? { enabled: b['enabled'] } : {}),
-            ...(b['values'] && typeof b['values'] === 'object' ? { values: b['values'] as Record<string, unknown> } : {}),
-          });
-        } catch (e) { throw new HttpErr(400, 'bad_request', e instanceof Error ? e.message : String(e)); }
-        return send(res, 200, { ok: true, values: await sh.view() });
-      }
-      if (path === '/api/resources/test' && method === 'POST') {
-        const b = await readJson(req);
-        return send(res, 200, { ok: true, result: await sh.runTest(String(b['kind'] ?? ''), String(b['vendor'] ?? ''), (b['values'] ?? {}) as Record<string, unknown>) });
-      }
-      if (path === '/api/routing' && method === 'GET') {
-        const spec = sh.routing;
-        if (!spec) throw new HttpErr(404, 'unsupported', '这个服务没有路由规则');
-        const options = spec.options ? await spec.options() : [];
-        return send(res, 200, { ok: true, classes: spec.classes, tiers: spec.tiers ?? DEFAULT_TIERS, options, rules: await sh.routingRules() });
-      }
-      if (path === '/api/routing' && method === 'POST') {
-        const b = await readJson(req);
-        return send(res, 200, { ok: true, rules: await sh.setRoutingRules((b['rules'] ?? {}) as Record<string, { minTier?: string; pin?: string }>) });
-      }
-    }
     const daily = /^\/api\/users\/([^/]+)\/daily$/.exec(path);
     if (daily && method === 'GET') {
       const days = Math.min(90, Math.max(1, Number(new URL(req.url ?? '/', 'http://x').searchParams.get('days')) || 30));
