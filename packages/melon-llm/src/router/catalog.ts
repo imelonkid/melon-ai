@@ -18,6 +18,9 @@ import type { PriceBook } from './prices.js';
  *   不从价格文档里猜 —— 文档里常有已弃用的旧别名（DeepSeek 的 deepseek-v4-flash），账号未必能用；
  * - 用户加的模型不在列表里了：标「已下架」，不参与路由（调了也是报错）。
  */
+/** 模型列表按账户存：同一家厂商接了两个账户（各自的 key 能用的模型可能不同）时互不覆盖。 */
+const keyOf = (p: ModelProvider): string => p.id ?? p.vendor;
+
 export class ModelCatalog {
   private readonly listings = new Map<string, ModelListing>();
   private providers: readonly ModelProvider[] = [];
@@ -36,12 +39,13 @@ export class ModelCatalog {
   setProviders(providers: readonly ModelProvider[]): readonly string[] {
     this.providers = providers;
     return providers
-      .filter((p) => p.fingerprint !== undefined && this.listings.get(p.vendor)?.fingerprint !== p.fingerprint)
-      .map((p) => p.vendor);
+      .filter((p) => p.fingerprint !== undefined && this.listings.get(keyOf(p))?.fingerprint !== p.fingerprint)
+      .map(keyOf);
   }
 
+  /** 接入的账户（没有单独账户的就是厂商）。 */
   get vendors(): readonly string[] {
-    return this.providers.map((p) => p.vendor);
+    return this.providers.map(keyOf);
   }
 
   /** 上次成功拉列表距今多久；从没成功过为 Infinity。 */
@@ -53,7 +57,7 @@ export class ModelCatalog {
   /** 拉一家或全部的模型列表。一家失败不影响别家；适配器不支持列模型的跳过。 */
   async refresh(vendor?: string): Promise<readonly ModelListing[]> {
     const out: ModelListing[] = [];
-    for (const p of this.providers.filter((x) => !vendor || x.vendor === vendor)) {
+    for (const p of this.providers.filter((x) => !vendor || keyOf(x) === vendor)) {
       const r = await this.refreshOne(p);
       if (r) out.push(r);
     }
@@ -61,26 +65,27 @@ export class ModelCatalog {
   }
 
   private async refreshOne(p: ModelProvider): Promise<ModelListing | null> {
-    const prev = this.listings.get(p.vendor);
+    const key = keyOf(p);
+    const prev = this.listings.get(key);
     const at = this.opts.now();
     let next: ModelListing;
     try {
       const model = p.make().model;
       if (!model.listModels) return null;
       const ids = [...new Set(await model.listModels(AbortSignal.timeout(this.opts.timeoutMs ?? 20_000)))];
-      next = { vendor: p.vendor, at, ok: true, ids, lastSuccessAt: at, ...(p.fingerprint !== undefined ? { fingerprint: p.fingerprint } : {}) };
+      next = { vendor: key, at, ok: true, ids, lastSuccessAt: at, ...(p.fingerprint !== undefined ? { fingerprint: p.fingerprint } : {}) };
     } catch (e) {
       // 换了 key 之后失败：上次的列表是旧账号的，不能再当成这个账号能用的
       const same = prev && prev.fingerprint === p.fingerprint;
       next = {
-        vendor: p.vendor, at, ok: false, error: e instanceof Error ? e.message : String(e),
+        vendor: key, at, ok: false, error: e instanceof Error ? e.message : String(e),
         ...(same && prev.ids ? { ids: prev.ids } : {}),
         ...(same && prev.lastSuccessAt !== undefined ? { lastSuccessAt: prev.lastSuccessAt } : {}),
         ...(p.fingerprint !== undefined ? { fingerprint: p.fingerprint } : {}),
       };
     }
     await this.opts.store.put(next);
-    this.listings.set(p.vendor, next);
+    this.listings.set(key, next);
     return next;
   }
 
@@ -89,7 +94,7 @@ export class ModelCatalog {
     const entries: ModelEntry[] = [];
     const catalogs: VendorCatalog[] = [];
     for (const p of this.providers) {
-      const r = expandOne(p, this.listings.get(p.vendor), book ?? null);
+      const r = expandOne(p, this.listings.get(keyOf(p)), book ?? null);
       entries.push(...r.entries);
       catalogs.push(r.catalog);
     }
@@ -148,6 +153,8 @@ function expandOne(p: ModelProvider, listing: ModelListing | undefined, book: Pr
     const { tier: _t, price: _p, priceSource: _s, ...rest } = b.entry;
     entries.push({
       ...rest, ...(p.label && !rest.label ? { label: p.label } : {}),
+      ...(p.id !== undefined && p.id !== p.vendor ? { account: p.id } : {}),
+      ...(p.group !== undefined ? { group: p.group } : {}), ...(p.priority !== undefined ? { priority: p.priority } : {}),
       ...(tier ? { tier } : {}), ...(price ? { price } : {}), ...(priceSource ? { priceSource } : {}),
     });
   }
@@ -155,7 +162,8 @@ function expandOne(p: ModelProvider, listing: ModelListing | undefined, book: Pr
   return {
     entries,
     catalog: {
-      vendor: p.vendor, ...(p.label ? { label: p.label } : {}), ...(listing ? { listing } : {}),
+      vendor: p.vendor, ...(p.id !== undefined && p.id !== p.vendor ? { account: p.id } : {}), ...(p.group !== undefined ? { group: p.group } : {}),
+      ...(p.label ? { label: p.label } : {}), ...(listing ? { listing } : {}),
       models, others: others.sort(),
     },
   };

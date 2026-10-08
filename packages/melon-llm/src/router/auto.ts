@@ -1,5 +1,5 @@
 import type { CallMeta, ModelEntry, ModelTier, PlanPricing, RouteContext, UsageRecord } from '@melon-ai/core';
-import { TIER_RANK } from '@melon-ai/core';
+import { TIER_RANK, accountOf } from '@melon-ai/core';
 import { convert } from '../shared/money.js';
 import type { FxRates } from '../shared/money.js';
 import { costOf, isPeak } from './meter.js';
@@ -19,13 +19,18 @@ import type { HealthStats } from './meter.js';
 export interface RoutingRule {
   readonly taskClass: string;
   readonly minTier?: ModelTier;
-  /** 固定的模型，`厂商/模型 id`（与用量账本的写法一致）。 */
+  /** 固定的模型，`厂商/模型 id`（与用量账本的写法一致；单独的账户写 `账户/模型 id`）。 */
   readonly pin?: string;
+  /**
+   * 按分组单独定（`ModelEntry.group`）：比如用户自己的模型按用户的规则、宿主提供的按宿主的规则。
+   * 某个分组没写就用上面的 `minTier` / `pin`。
+   */
+  readonly byGroup?: Readonly<Record<string, { readonly minTier?: ModelTier; readonly pin?: string }>>;
 }
 export type RoutingRules = (meta: CallMeta | undefined) => RoutingRule;
 
 /** 模型的标识：`厂商/模型 id`。账本、固定、解释里都用它。 */
-export const modelKey = (e: ModelEntry): string => `${e.egress}/${e.model.id}`;
+export const modelKey = (e: ModelEntry): string => `${accountOf(e)}/${e.model.id}`;
 
 /** 典型用量的初始值：这类任务还没跑够 5 次时用。 */
 export const DEFAULT_TYPICAL = { inputTokens: 4000, outputTokens: 600 } as const;
@@ -50,7 +55,7 @@ export class UsageStats {
     // 汇总行（calls > 1）只给用量页看；这里要的是单次调用的典型值
     if (r.calls !== 1) return;
     this.rows.push({
-      at: r.at, taskClass, model: `${r.egress}/${r.model}`, ok: r.ok,
+      at: r.at, taskClass, model: `${r.account ?? r.egress}/${r.model}`, ok: r.ok,
       in: r.inputTokens, cached: r.cachedInputTokens, out: r.outputTokens, ms: r.ms,
     });
     const since = this.now() - WEEK;
@@ -203,11 +208,17 @@ export interface AutoRankInput {
 export function rankAuto(i: AutoRankInput): { readonly ranked: readonly ModelEntry[]; readonly explanation: RouteExplanation } {
   const { rule } = i;
   const typical = i.stats.typical(rule.taskClass);
-  const min = rule.minTier ? TIER_RANK[rule.minTier] : 1;
+  /** 这个模型所在分组的规则（没单独写就用总的）。 */
+  const ruleOf = (e: ModelEntry) => {
+    const g = e.group !== undefined ? rule.byGroup?.[e.group] : undefined;
+    return { minTier: g?.minTier ?? rule.minTier, pin: g && 'pin' in g ? g.pin : rule.pin };
+  };
 
   const judge = (e: ModelEntry): RouteCandidate & { entry: ModelEntry; usd: number | null; ms: number } => {
     const key = modelKey(e);
-    const pinned = rule.pin === key;
+    const r = ruleOf(e);
+    const min = r.minTier ? TIER_RANK[r.minTier] : 1;
+    const pinned = r.pin === key;
     let reason: string | undefined;
     if (e.enabled === false) reason = '未启用';
     else if (i.ctx?.needsTools && !e.model.capabilities.tools) reason = '不支持工具';
@@ -217,7 +228,7 @@ export function rankAuto(i: AutoRankInput): { readonly ranked: readonly ModelEnt
     else if (!pinned && TIER_RANK[e.tier!] < min) reason = '档次不够';
     const cache = i.stats.cacheRate(key);
     // 套餐：按次不另计，预估 0 —— 够档时优先用；额度快满时让位
-    const windows = e.plan && i.quota ? i.quota.usage(e.egress, e.plan.quotas) : [];
+    const windows = e.plan && i.quota ? i.quota.usage(accountOf(e), e.plan.quotas) : [];
     const nearQuota = windows.some((w) => w.limit > 0 && w.used / w.limit >= PLAN_YIELD_AT);
     const amount = e.plan ? 0 : e.price
       ? costOf(e.price, { inputTokens: typical.inputTokens, cachedInputTokens: Math.round(typical.inputTokens * cache), outputTokens: typical.outputTokens }, i.now)
@@ -246,6 +257,10 @@ export function rankAuto(i: AutoRankInput): { readonly ranked: readonly ModelEnt
   }
 
   const order = (a: (typeof all)[number], b: (typeof all)[number]): number => {
+    // 分组优先级最先：优先级高的分组整组排在前面，失败了才轮到下一组
+    const pa = a.entry.priority ?? 0;
+    const pb = b.entry.priority ?? 0;
+    if (pa !== pb) return pa - pb;
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
     if (a.demoted !== b.demoted) return a.demoted ? 1 : -1;
     // 有价格的在前：没价格的不知道贵不贵，不该凭空排到便宜的前面

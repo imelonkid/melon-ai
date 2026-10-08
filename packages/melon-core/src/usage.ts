@@ -86,6 +86,9 @@ export interface UsageRecord {
   readonly purpose: string;
   /** 厂商（`ModelEntry.egress`）。 */
   readonly egress: string;
+  /** 账户、分组（`ModelEntry.account` / `group`）。一家一个账户、不分组时不填。 */
+  readonly account?: string;
+  readonly group?: string;
   /** 实际应答的模型 id。 */
   readonly model: string;
   readonly ok: boolean;
@@ -168,6 +171,9 @@ export interface SpendCheck {
   readonly kind: 'model' | 'tool';
   /** 哪一家（模型的 egress、工具 billing 的 vendor）。 */
   readonly vendor: string;
+  /** 模型的账户、分组（宿主据此判断这笔钱算不算额度，比如只算宿主提供的那组）。 */
+  readonly account?: string;
+  readonly group?: string;
   readonly meta?: CallMeta;
 }
 export interface SpendDenial {

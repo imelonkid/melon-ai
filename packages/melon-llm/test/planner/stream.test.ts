@@ -190,7 +190,7 @@ test('用量：一步里问了几次模型就加几次，记在 via.usage 上；
     capabilities: { contextWindow: 1000, maxOutputTokens: 100, tools: true, jsonSchema: true, promptCache: false },
     async generate() {
       return {
-        text: '好的，我来处理这件事情，请稍等片刻。邮件已发送给 a@b.com', modelId: 'b', stopReason: 'stop', egress: 'vendor-b',
+        text: '好的，我来处理这件事情，请稍等片刻。邮件已发送给 a@b.com', modelId: 'b', stopReason: 'stop', egress: 'vendor-b', group: 'shared',
         failedAttempts: [{ egress: 'vendor-a', model: 'a', errorCode: 'UPSTREAM' }],
         usage: { inputTokens: 100, outputTokens: 20, costUSD: 0.01, cost: { amount: 0.07, currency: 'CNY' } },
       };
@@ -203,4 +203,5 @@ test('用量：一步里问了几次模型就加几次，记在 via.usage 上；
   assert.ok(Math.abs((step.via?.usage?.costUSD ?? 0) - 0.02) < 1e-12);
   assert.ok(Math.abs((step.via?.usage?.cost?.amount ?? 0) - 0.14) < 1e-12);
   assert.deepEqual(step.via?.egress?.split(',').sort(), ['vendor-a', 'vendor-b']);
+  assert.equal(step.via?.groups, 'shared', '哪个分组的模型答的（宿主据此说「这次用了兜底的模型」）');
 });

@@ -243,6 +243,8 @@ export interface PlanVia {
   readonly modelId?: string;
   /** 这一步的上下文发给了哪家（`ModelEntry.egress`）。运行时据此记「数据去向」审计。 */
   readonly egress?: string;
+  /** 这一步是哪个（些）分组的模型答的（`ModelEntry.group`，逗号分隔）。宿主据此告诉用户「这次用了兜底的模型」。 */
+  readonly groups?: string;
   /**
    * 模型这一步的思考过程（支持的模型才有：DeepSeek 推理模式的 `reasoning_content`、Claude 的 thinking 块）。
    * 只为给人看、事后排查：**不回灌进以后的上下文**（又贵又会让模型把推测当成事实），截断到 `MAX_REASONING_CHARS`。

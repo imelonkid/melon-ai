@@ -1,7 +1,7 @@
 import type { SpendGuard,
   CallMeta, ChatModel, ModelEntry, ModelRouter, ModelTier, RouteContext, RouteDecision, RouteIntent, Tokenizer, UsageLedger, UsageRecord,
 } from '@melon-ai/core';
-import { ToolError } from '@melon-ai/core';
+import { ToolError, accountOf } from '@melon-ai/core';
 import { HeuristicTokenizer, PolicyRouter } from './policy.js';
 import type { RouteStrategy } from './policy.js';
 import { AccountStatus, FailoverModel, HealthStats } from './meter.js';
@@ -74,11 +74,11 @@ export class ModelPool implements ModelRouter {
 
   /** 去掉账户暂停的厂商；全都暂停了就都留着（总比没有模型强，也许已经充值了）。 */
   private usable<T extends ModelEntry>(list: readonly T[]): readonly T[] {
-    const ok = list.filter((e) => !this.account.down(e.egress));
+    const ok = list.filter((e) => !this.account.down(accountOf(e)));
     return ok.length > 0 ? ok : list;
   }
 
-  /** 账户出了问题的厂商（余额不足、key 失效）：宿主的资源页据此提示用户去充值或换 key。 */
+  /** 账户出了问题的厂商（余额不足、key 失效；按账户记，键是 `ModelEntry.account ?? egress`）：宿主的资源页据此提示用户去充值或换 key。 */
   accounts(): readonly AccountProblem[] {
     return this.account.list();
   }
@@ -115,7 +115,7 @@ export class ModelPool implements ModelRouter {
     this.health.seed(models.filter((r) => r.at > now - this.health.windowMs));
     for (const r of models) {
       this.stats.record(r, this.rules(metaOf(r)).taskClass);
-      if (r.billing === 'plan' && r.ok) for (let k = 0; k < r.calls; k++) this.quota.add(r.egress, r.at);
+      if (r.billing === 'plan' && r.ok) for (let k = 0; k < r.calls; k++) this.quota.add(r.account ?? r.egress, r.at);
     }
   }
 
@@ -170,7 +170,7 @@ export class ModelPool implements ModelRouter {
         .filter((e) => !ctx.needsVision || e.model.capabilities.vision);
     if (ranked.length === 0 && ctx.needsVision) {
       // 能看图的都没启用，或者都暂停了（余额不足）：说清楚，别让看不了图的模型去猜
-      const paused = this.account.list().length > 0 && this.entries.some((e) => e.model.capabilities.vision && this.account.down(e.egress));
+      const paused = this.account.list().length > 0 && this.entries.some((e) => e.model.capabilities.vision && this.account.down(accountOf(e)));
       throw new ToolError('FATAL', paused
         ? '能看图的模型现在用不了（账户余额不足或 key 失效），这次没法看图'
         : '当前启用的模型都看不了图', { retriable: false, hint: paused ? '去模型设置里给这家充值，或启用另一家能看图的' : '启用一个能看图的模型（如智谱 GLM-5.3-Flash、通义 Qwen-VL、Claude、GPT-4o）' });
@@ -191,7 +191,7 @@ export class ModelPool implements ModelRouter {
       // 每记一笔顺带更新路由的用量统计（按这次调用所属的任务类别）
       onRecord: (r) => {
         this.stats.record(r, rule.taskClass);
-        if (r.billing === 'plan' && r.ok) this.quota.add(r.egress, r.at);
+        if (r.billing === 'plan' && r.ok) this.quota.add(r.account ?? r.egress, r.at);
       },
     });
     return {

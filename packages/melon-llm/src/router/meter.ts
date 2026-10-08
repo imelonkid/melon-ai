@@ -2,7 +2,7 @@ import type {
   CallMeta, ChatModel, GenerateRequest, GenerateResult, ModelCapabilities, ModelEntry, ModelPrice,
   SpendDenial, SpendGuard, UsageLedger, UsageRecord,
 } from '@melon-ai/core';
-import { ToolError } from '@melon-ai/core';
+import { ToolError, accountOf } from '@melon-ai/core';
 import { convert } from '../shared/money.js';
 import type { FxRates } from '../shared/money.js';
 
@@ -163,20 +163,29 @@ export class FailoverModel implements ChatModel {
   async generate(req: GenerateRequest): Promise<GenerateResult> {
     const max = Math.max(1, this.opts.maxAttempts);
     const failed: { egress: string; model: string; errorCode: string }[] = [];
-    // 账户出了问题的厂商（余额不足、key 失效）：它的其余模型不再试，名额留给别家
-    const deadVendors = new Set<string>();
+    // 账户出了问题的（余额不足、key 失效）：它的其余模型不再试，名额留给别的账户
+    const deadAccounts = new Set<string>();
     const tries = this.candidates;
     let attempt = 0;
+    // 尝试次数按分组优先级各自算：优先的那组都失败了，兜底的那组照样有机会（用户自己的 key 都不行时还能用宿主提供的）
+    const perPriority = new Map<number, number>();
     let last: unknown;
     let denied: SpendDenial | null = null;
-    for (let i = 0; i < tries.length && attempt < max; i++) {
+    for (let i = 0; i < tries.length; i++) {
       const entry = tries[i]!;
-      if (deadVendors.has(entry.egress)) continue;
+      const acct = accountOf(entry);
+      const prio = entry.priority ?? 0;
+      if ((perPriority.get(prio) ?? 0) >= max) continue;
+      if (deadAccounts.has(acct)) continue;
       // 额度：这一家不让花就换下一家（不算一次尝试）
       if (this.opts.guard && req.meta) {
-        const d = await this.opts.guard({ kind: 'model', vendor: entry.egress, meta: req.meta });
+        const d = await this.opts.guard({
+          kind: 'model', vendor: entry.egress, meta: req.meta,
+          ...(entry.account !== undefined ? { account: entry.account } : {}), ...(entry.group !== undefined ? { group: entry.group } : {}),
+        });
         if (d) { denied = d; continue; }
       }
+      perPriority.set(prio, (perPriority.get(prio) ?? 0) + 1);
       attempt += 1;
       if (attempt > 1) req.onRetry?.();
       const started = this.opts.now();
@@ -196,10 +205,14 @@ export class FailoverModel implements ChatModel {
             : {}),
         };
         this.opts.health.record(entry.model.id, true, at);
-        // 答上来了：这家的账户没问题（充过值了）
-        this.opts.accounts?.clear(entry.egress);
+        // 答上来了：这个账户没问题（充过值了）
+        this.opts.accounts?.clear(acct);
         await this.book(req.meta, entry, attempt, { ok: true, usage: { ...usage, modelId: res.modelId }, at, ms: at - started });
-        return { ...res, usage, egress: entry.egress, ...(failed.length ? { failedAttempts: failed } : {}) };
+        return {
+          ...res, usage, egress: entry.egress,
+          ...(entry.account !== undefined ? { account: entry.account } : {}), ...(entry.group !== undefined ? { group: entry.group } : {}),
+          ...(failed.length ? { failedAttempts: failed } : {}),
+        };
       } catch (e) {
         const at = this.opts.now();
         this.opts.health.record(entry.model.id, false, at);
@@ -207,8 +220,8 @@ export class FailoverModel implements ChatModel {
         if (req.signal?.aborted) throw e;
         const account = isAccountError(e);
         if (account) {
-          deadVendors.add(entry.egress);
-          this.opts.accounts?.mark(entry.egress, account, e instanceof Error ? e.message : String(e));
+          deadAccounts.add(acct);
+          this.opts.accounts?.mark(acct, account, e instanceof Error ? e.message : String(e));
         }
         last = e;
         failed.push({ egress: entry.egress, model: entry.model.id, errorCode: errCode(e) });
@@ -230,6 +243,7 @@ export class FailoverModel implements ChatModel {
     if (!meta) return;
     const rec: UsageRecord = {
       at: r.at, calls: 1, purpose: meta.purpose, egress: entry.egress, model: r.usage?.modelId ?? entry.model.id,
+      ...(entry.account !== undefined ? { account: entry.account } : {}), ...(entry.group !== undefined ? { group: entry.group } : {}),
       ok: r.ok, attempt, ms: r.ms,
       ...(meta.taskId !== undefined ? { taskId: meta.taskId } : {}),
       ...(meta.agentId !== undefined ? { agentId: meta.agentId } : {}),

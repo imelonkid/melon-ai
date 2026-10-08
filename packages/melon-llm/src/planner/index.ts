@@ -57,6 +57,8 @@ export class ReActPlanner implements Planner {
     let modelId: string | undefined;
     // 数据去向：这一步发给过的每一家（换过模型时不止一家），都要进审计
     const egress = new Set<string>();
+    // 哪个（些）分组的模型答的：宿主据此告诉用户「这次用了兜底的模型」
+    const groups = new Set<string>();
     // 这一步可能问了模型好几次（守卫纠正、参数退回），每次的思考都留下 —— 看的人要知道它为什么改了主意
     const thoughts: string[] = [];
     // 每次的真实用量都加上：任务的费用预算靠它生效
@@ -66,6 +68,7 @@ export class ReActPlanner implements Planner {
       for (const f of res.failedAttempts ?? []) egress.add(f.egress);
       const to = res.egress ?? fallbackEgress;
       if (to) egress.add(to);
+      if (res.group) groups.add(res.group);
       if (res.reasoning?.trim()) thoughts.push(res.reasoning.trim());
       usage = addUsage(usage, res.usage);
     });
@@ -76,6 +79,7 @@ export class ReActPlanner implements Planner {
       via: {
         ...(promptRef ? { promptRef } : {}), ...(modelId ? { modelId } : {}),
         ...(egress.size ? { egress: [...egress].join(',') } : {}),
+        ...(groups.size ? { groups: [...groups].join(',') } : {}),
         ...(reasoning ? { reasoning } : {}),
         ...(usage ? { usage } : {}),
       },

@@ -46,6 +46,8 @@ export interface UsageSummary extends UsageTotals {
   readonly groups: {
     readonly model: readonly UsageGroup[];
     readonly egress: readonly UsageGroup[];
+    /** 按模型分组（`ModelEntry.group`）；没分组的 key 是空串。 */
+    readonly group: readonly UsageGroup[];
     readonly taskKind: readonly UsageGroup[];
     readonly trigger: readonly UsageGroup[];
     readonly purpose: readonly UsageGroup[];
@@ -115,15 +117,16 @@ export function summarizeUsage(records: readonly UsageRecord[], o: SummaryOption
   }
 
   let total = ZERO;
-  const dims = { model: new Map<string, UsageTotals>(), egress: new Map(), taskKind: new Map(), trigger: new Map(), purpose: new Map(), custom: new Map(), tool: new Map() } as
+  const dims = { model: new Map<string, UsageTotals>(), egress: new Map(), group: new Map(), taskKind: new Map(), trigger: new Map(), purpose: new Map(), custom: new Map(), tool: new Map() } as
     Record<keyof UsageSummary['groups'], Map<string, UsageTotals>>;
   for (const r of records) {
     if (r.at < o.from || r.at >= o.to) continue;
     const cost = r.priced ? convert(r.cost, r.currency, currency, o.fx) : 0;
     total = add(total, r, cost);
-    const modelKey = `${r.egress}/${r.model}`;
+    // 和路由的 modelKey 一致：同一家的另一个账户单独算
+    const modelKey = `${r.account ?? r.egress}/${r.model}`;
     const keys: Record<keyof UsageSummary['groups'], string> = {
-      model: modelKey, egress: r.egress, taskKind: r.taskKind ?? '', trigger: r.trigger ?? '', purpose: r.purpose,
+      model: modelKey, egress: r.egress, group: r.group ?? '', taskKind: r.taskKind ?? '', trigger: r.trigger ?? '', purpose: r.purpose,
       custom: o.classify ? o.classify(r) : '',
       tool: modelKey,
     };
@@ -147,7 +150,7 @@ export function summarizeUsage(records: readonly UsageRecord[], o: SummaryOption
     buckets: [...cells.entries()].sort((a, b) => a[0] - b[0])
       .map(([start, c]) => ({ start, ...c.totals, byModel: grouped(c.byModel) })),
     groups: {
-      model: grouped(dims.model), egress: grouped(dims.egress), taskKind: grouped(dims.taskKind),
+      model: grouped(dims.model), egress: grouped(dims.egress), group: grouped(dims.group), taskKind: grouped(dims.taskKind),
       trigger: grouped(dims.trigger), purpose: grouped(dims.purpose), custom: grouped(dims.custom), tool: grouped(dims.tool),
     },
   };

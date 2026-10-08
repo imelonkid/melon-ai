@@ -130,6 +130,9 @@ export interface GenerateResult {
   readonly usage: Usage;
   /** 实际应答的厂商（失败换了模型时不是首选那家）。由路由层填，适配器不填。 */
   readonly egress?: string;
+  /** 实际应答的账户、分组（`ModelEntry.account` / `group`）。由路由层填。 */
+  readonly account?: string;
+  readonly group?: string;
   /** 这次结果之前失败过几次（换过几个模型）。由路由层填。 */
   readonly failedAttempts?: readonly { readonly egress: string; readonly model: string; readonly errorCode: string }[];
   readonly modelId: string;
@@ -214,12 +217,26 @@ export interface ModelEntry {
   readonly priceSource?: 'manual' | 'builtin' | 'synced';
   /** 套餐计费（固定月费 + 额度，如阿里 Coding Plan）。有它时按次不另计费，路由优先用、额度快满时让位。 */
   readonly plan?: PlanPricing;
-  /** 数据发往的供应商标识。进审计，支撑「数据不出境」这类合规要求。 */
+  /** 数据发往的供应商标识。进审计，支撑「数据不出境」这类合规要求。价格也按它查。 */
   readonly egress: string;
+  /**
+   * 账户：同一家厂商可以接好几个账户（比如用户自己的 key 和宿主统一提供的 key）。
+   * 账户状态（余额不足、key 失效时暂停）、套餐额度、模型列表都按账户分开。不填就是 `egress`（一家一个账户）。
+   */
+  readonly account?: string;
+  /**
+   * 分组与优先级：路由先在优先级高（数小）的分组里挑，挑不出、都失败了才换下一组 ——
+   * 比如「用户自己的模型优先，宿主提供的兜底」。不填 `priority` 当作 0，所有模型在同一组。
+   */
+  readonly group?: string;
+  readonly priority?: number;
   readonly enabled?: boolean;
   /** 给人看的名字，如「DeepSeek」。 */
   readonly label?: string;
 }
+
+/** 账户标识：没有单独的账户就是厂商。 */
+export const accountOf = (e: { readonly egress: string; readonly account?: string }): string => e.account ?? e.egress;
 
 /**
  * 模型的档次：基础（分类、摘要这类辅助调用够用）/ 标准（日常对话与任务）/ 强（难题）。
@@ -258,6 +275,11 @@ export interface Embedder {
 export interface ModelProvider {
   /** 厂商标识，与 `ModelEntry.egress` 一致。 */
   readonly vendor: string;
+  /** 账户标识（同一家厂商接了多个账户时区分它们）。不填就是 `vendor`。 */
+  readonly id?: string;
+  /** 这个账户的模型属于哪个分组、优先级（见 `ModelEntry.group`）。 */
+  readonly group?: string;
+  readonly priority?: number;
   readonly label?: string;
   /** 造一个模型条目（带引擎内置的档次、价格）。不给 id 时用这家的默认模型。认不出的 id 可以抛错。 */
   make(modelId?: string): ModelEntry;
@@ -315,6 +337,9 @@ export interface CatalogModel {
 
 export interface VendorCatalog {
   readonly vendor: string;
+  /** 账户、分组（这家接了单独的账户时）。 */
+  readonly account?: string;
+  readonly group?: string;
   readonly label?: string;
   readonly listing?: ModelListing;
   /** 目录里的模型（官方的 + 用户加的），按档次从强到弱。 */
