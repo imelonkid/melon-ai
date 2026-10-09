@@ -12,6 +12,8 @@
  * 服务器是第三方代码：输出不可信（读过的任务之后对外操作要确认）；「只读」标注不采信，所有工具第一次都问，
  * 标了「有破坏性」的每次都问；说明过审查；本机命令跑在沙箱里（密钥、钥匙串、宿主数据不能读写）。
  * `enabled: false`：照样连接、列出工具给用户过目，但不提供给 Agent —— 新加的服务器先这样。
+ * 连不过去、只能由对方反向接进来的（用户手机上的能力等）：`transport: { kind: 'custom', create: () => transport }`，
+ * 宿主把自己已有的长连接包成 MCP 的 Transport（每次连接调一次 `create()`）。
  */
 export { mcp, McpServerProvider, parseMcpServers, mcpSlug } from '@melon-ai/skills/mcp';
 export type { McpServerConfig, McpTransportConfig, McpOptions, McpStatus, McpState, McpToolView } from '@melon-ai/skills/mcp';

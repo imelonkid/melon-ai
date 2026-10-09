@@ -17,7 +17,13 @@ export type McpTransportConfig =
   /** 本机命令（stdio），如 `npx -y @modelcontextprotocol/server-filesystem ~/Documents`。 */
   | { readonly kind: 'stdio'; readonly command: string; readonly args?: readonly string[]; readonly env?: Readonly<Record<string, string>>; readonly cwd?: string }
   /** 远程地址（Streamable HTTP，连不上再试旧的 SSE）。key 放在请求头里。 */
-  | { readonly kind: 'http'; readonly url: string; readonly headers?: Readonly<Record<string, string>> };
+  | { readonly kind: 'http'; readonly url: string; readonly headers?: Readonly<Record<string, string>> }
+  /**
+   * 宿主自己提供的连接：服务器连不过去、只能由对方反向接进来的（用户手机、浏览器插件、另一台电脑经宿主已有的长连接），
+   * 宿主把那条通道包成 MCP 的 Transport 交给引擎。每次连接（含断线重连）调一次 `create()` 拿一个新的。
+   * 不跑在沙箱里（不是本机命令）；审查、授权、输出不可信照常。
+   */
+  | { readonly kind: 'custom'; readonly create: () => Transport };
 
 export interface McpServerConfig {
   /** 服务器的名字（用户起的）。工具 id 的前缀由它规整而来：`github` → `github.create_issue`。 */
@@ -266,6 +272,7 @@ export class McpServerProvider implements SkillProvider {
 
   private makeTransport(): Transport {
     const t = this.config.transport;
+    if (t.kind === 'custom') return t.create();
     if (t.kind === 'http') {
       const init = t.headers ? { requestInit: { headers: { ...t.headers } } } : {};
       // SDK 的类型在 exactOptionalPropertyTypes 下对不上（可选属性没写 | undefined），运行时就是 Transport

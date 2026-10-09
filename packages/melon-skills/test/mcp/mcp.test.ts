@@ -167,3 +167,43 @@ test('MCP：名字规整 —— 中文名不会都变成同一个前缀（取不
   assert.equal(mcpSlug('GitHub 工具', 32), 'github');
   assert.notEqual(mcpSlug('123', 32), mcpSlug('456', 32));
 });
+
+test('MCP：宿主提供的连接（custom）—— 每次连接调一次 create()；列工具、调用、审查照常，不进沙箱；断了会用新的连接重连', async () => {
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+  const { Server } = await import('@modelcontextprotocol/sdk/server/index.js');
+  const { ListToolsRequestSchema, CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
+  let made = 0;
+  const servers: { close: () => Promise<void> }[] = [];
+  const create = () => {
+    made += 1;
+    const [client, server] = InMemoryTransport.createLinkedPair();
+    const s = new Server({ name: 'device', version: '1.0.0' }, { capabilities: { tools: {} } });
+    s.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [{ name: 'reminder_set', description: '设一个到点提醒', inputSchema: { type: 'object' as const, properties: { title: { type: 'string' } }, required: ['title'] } }],
+    }));
+    s.setRequestHandler(CallToolRequestSchema, async (req) => ({
+      content: [{ type: 'text' as const, text: `已设好：${String((req.params.arguments as { title?: string })?.title ?? '')}` }],
+    }));
+    void s.connect(server);
+    servers.push(s);
+    return client;
+  };
+  const p = mcp({ name: 'phone', transport: { kind: 'custom', create } });
+  try {
+    const st = await p.ready();
+    assert.equal(st.state, 'ready', st.error);
+    assert.equal(made, 1);
+    assert.deepEqual(st.server, { name: 'device', version: '1.0.0' });
+    assert.equal(st.tools.find((t) => t.name === 'reminder_set')?.risk, 'external', '宿主接进来的也照常按对外操作');
+    const [b] = await p.list();
+    const out = await (b!.handlers.get('phone.reminder_set') as ToolHandler)({ title: '开会' }, cx());
+    assert.equal(out.summary, '已设好：开会');
+    assert.equal(b!.skill.tools.find((t) => t.id === 'phone.reminder_set')?.untrustedOutput, true);
+
+    // 对方断开：用 create() 拿一个新连接重连
+    await servers[0]!.close();
+    for (let i = 0; i < 100 && !(made >= 2 && p.status().state === 'ready'); i++) await new Promise((r) => setTimeout(r, 30));
+    assert.ok(made >= 2, '断线后重新 create()');
+    assert.equal(p.status().state, 'ready');
+  } finally { await p.close(); }
+});
