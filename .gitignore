@@ -4,3 +4,8 @@ dist/
 .DS_Store
 *.db
 *.db-journal
+
+# 密钥不进 git
+.env
+.env.*
+!.env.example
